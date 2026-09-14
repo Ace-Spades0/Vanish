@@ -218,6 +218,35 @@ export default function ChatPage() {
     setMessages((prev) => prev.filter((m) => m.id !== id))
   }
 
+  // CLEAR ALL CHAT (flagged)
+  const clearAllChat = async () => {
+    if (!user || !conversationId) return
+
+    const confirmClear = confirm(
+      'Are you sure you want to clear this entire chat? This action will be logged.'
+    )
+    if (!confirmClear) return
+
+    await supabase
+      .from('messages')
+      .update({ deleted: true })
+      .eq('conversation_id', conversationId)
+
+    await supabase.from('audit_logs').insert({
+      conversation_id: conversationId,
+      payload: {
+        action: 'clear_chat',
+        cleared_by: user.id,
+        cleared_at: new Date().toISOString(),
+        target_username: targetUsername,
+      },
+    })
+
+    setMessages([])
+    setPhotoCount(0)
+    alert('Chat cleared')
+  }
+
   const blockUser = async () => {
     if (!user || !targetUser) return
     if (!confirm(`Block ${targetUsername}?`)) return
@@ -277,10 +306,16 @@ export default function ChatPage() {
           <p className="text-xs text-zinc-500">Chatting with</p>
           <h1 className="text-lg font-bold text-cyan-400">{targetUsername}</h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
             {photoCount}/2 photos
           </span>
+          <button
+            onClick={clearAllChat}
+            className="text-xs bg-orange-600 hover:bg-orange-500 px-3 py-1.5 rounded-lg transition"
+          >
+            Clear Chat
+          </button>
           <button
             onClick={reportUser}
             className="text-xs bg-yellow-600 hover:bg-yellow-500 px-3 py-1.5 rounded-lg transition"
@@ -327,11 +362,22 @@ export default function ChatPage() {
                 }`}
               >
                 {msg.type === 'image' ? (
-                  <img
-                    src={msg.content}
-                    alt="photo"
-                    className="rounded-xl max-w-full max-h-64 object-cover"
-                  />
+                  <div className="relative">
+                    <img
+                      src={msg.content}
+                      alt="photo"
+                      className="rounded-xl max-w-full max-h-64 object-cover"
+                    />
+                    <a
+                      href={msg.content}
+                      download
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-xs px-2 py-1 rounded-lg"
+                    >
+                      Download
+                    </a>
+                  </div>
                 ) : (
                   msg.content
                 )}
