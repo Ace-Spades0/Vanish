@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import Image from 'next/image'
 
 export default function LandingPage() {
   const [loading, setLoading] = useState(true)
@@ -34,6 +35,19 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-black text-white">
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
+        
+        {/* Logo */}
+        <div className="mb-6">
+          <Image
+            src="/logo.png"
+            alt="Vanish Logo"
+            width={110}
+            height={110}
+            className="mx-auto"
+            priority
+          />
+        </div>
+
         <h1 className="text-6xl md:text-7xl font-bold tracking-tight mb-4">
           VANISH
         </h1>
@@ -72,7 +86,7 @@ export default function LandingPage() {
             <div className="text-3xl mb-3">🛡️</div>
             <h3 className="font-semibold mb-2">Anti-Interrogation</h3>
             <p className="text-zinc-400 text-sm">
-              Too many questions? Chat expires in 30 minutes.
+              Too many questions? Chat expires early.
             </p>
           </div>
 

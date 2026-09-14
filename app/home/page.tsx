@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import Image from 'next/image'
 
 export default function HomePage() {
   const [user, setUser] = useState<any>(null)
@@ -13,12 +14,10 @@ export default function HomePage() {
   useEffect(() => {
     const loadData = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-
       if (!user) {
         router.push('/auth')
         return
       }
-
       setUser(user)
 
       const { data: profileData } = await supabase
@@ -31,7 +30,6 @@ export default function HomePage() {
         const hoursPassed =
           (Date.now() - new Date(profileData.username_claimed_at).getTime()) /
           (1000 * 60 * 60)
-
         if (hoursPassed < 24) {
           setProfile(profileData)
         } else {
@@ -40,10 +38,8 @@ export default function HomePage() {
       } else {
         setProfile(null)
       }
-
       setLoading(false)
     }
-
     loadData()
   }, [])
 
@@ -62,6 +58,19 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
+      
+      {/* Logo */}
+      <div className="mb-5">
+        <Image
+          src="/logo.png"
+          alt="Vanish Logo"
+          width={90}
+          height={90}
+          className="mx-auto"
+          priority
+        />
+      </div>
+
       <h1 className="text-5xl font-bold mb-2 tracking-tight">VANISH</h1>
       <p className="text-zinc-400 mb-10">Talk freely. Stay private.</p>
 
