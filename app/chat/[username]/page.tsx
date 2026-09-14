@@ -15,7 +15,8 @@ export default function ChatPage() {
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [conversationId, setConversationId] = useState('')
-  const [photoCount, setPhotoCount] = useState(0)
+  const [fileCount, setFileCount] = useState(0)   // max 2
+  const [videoCount, setVideoCount] = useState(0) // max 1
   const [blocked, setBlocked] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
@@ -112,7 +113,8 @@ export default function ChatPage() {
 
       if (existingMessages && isMounted) {
         setMessages(existingMessages)
-        setPhotoCount(existingMessages.filter((m) => m.type === 'image').length)
+        setFileCount(existingMessages.filter((m) => m.type === 'file' || m.type === 'image').length)
+        setVideoCount(existingMessages.filter((m) => m.type === 'video').length)
       }
 
       if (!isMounted) return
@@ -138,8 +140,11 @@ export default function ChatPage() {
             if (prev.some((m) => m.id === payload.new.id)) return prev
             return [...prev, payload.new]
           })
-          if (payload.new.type === 'image') {
-            setPhotoCount((prev) => prev + 1)
+          if (payload.new.type === 'file' || payload.new.type === 'image') {
+            setFileCount((prev) => prev + 1)
+          }
+          if (payload.new.type === 'video') {
+            setVideoCount((prev) => prev + 1)
           }
         }
       )
@@ -185,32 +190,56 @@ export default function ChatPage() {
     })
   }
 
-  const uploadPhoto = async (e: any) => {
-    if (photoCount >= 2) {
-      alert('Maximum 2 photos allowed in this chat')
-      return
-    }
-
+  const uploadFile = async (e: any) => {
     const file = e.target.files?.[0]
     if (!file || !user || !conversationId) return
+
+    const isVideo = file.type.startsWith('video/')
+    const isImage = file.type.startsWith('image/')
+
+    // Limits
+    if (isVideo) {
+      if (videoCount >= 1) {
+        alert('Only 1 video allowed in this chat')
+        return
+      }
+      if (file.size > 30 * 1024 * 1024) {
+        alert('Video must be smaller than 30 MB')
+        return
+      }
+    } else {
+      if (fileCount >= 2) {
+        alert('Maximum 2 files allowed in this chat')
+        return
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('File must be smaller than 10 MB')
+        return
+      }
+    }
 
     const fileName = `${conversationId}/${Date.now()}-${file.name}`
     const { error } = await supabase.storage.from('chat-photos').upload(fileName, file)
 
     if (error) {
-      alert('Failed to upload photo')
+      alert('Failed to upload file')
       return
     }
 
     const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
 
+    const type = isVideo ? 'video' : isImage ? 'image' : 'file'
+
     await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
       content: data.publicUrl,
-      type: 'image',
+      type,
       expires_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
     })
+
+    // Reset input
+    e.target.value = ''
   }
 
   const deleteMessage = async (id: string) => {
@@ -218,7 +247,6 @@ export default function ChatPage() {
     setMessages((prev) => prev.filter((m) => m.id !== id))
   }
 
-  // CLEAR ALL CHAT (flagged)
   const clearAllChat = async () => {
     if (!user || !conversationId) return
 
@@ -243,7 +271,8 @@ export default function ChatPage() {
     })
 
     setMessages([])
-    setPhotoCount(0)
+    setFileCount(0)
+    setVideoCount(0)
     alert('Chat cleared')
   }
 
@@ -301,6 +330,7 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
+      {/* Header */}
       <div className="bg-zinc-900/95 backdrop-blur p-4 flex items-center justify-between border-b border-zinc-800">
         <div>
           <p className="text-xs text-zinc-500">Chatting with</p>
@@ -308,7 +338,10 @@ export default function ChatPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
-            {photoCount}/2 photos
+            {fileCount}/2 files
+          </span>
+          <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
+            {videoCount}/1 video
           </span>
           <button
             onClick={clearAllChat}
@@ -337,6 +370,7 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-20">
@@ -361,7 +395,8 @@ export default function ChatPage() {
                     : 'bg-zinc-800 text-white rounded-bl-md'
                 }`}
               >
-                {msg.type === 'image' ? (
+                {/* IMAGE */}
+                {msg.type === 'image' && (
                   <div className="relative">
                     <img
                       src={msg.content}
@@ -378,9 +413,49 @@ export default function ChatPage() {
                       Download
                     </a>
                   </div>
-                ) : (
-                  msg.content
                 )}
+
+                {/* VIDEO */}
+                {msg.type === 'video' && (
+                  <div className="relative">
+                    <video
+                      src={msg.content}
+                      controls
+                      className="rounded-xl max-w-full max-h-64"
+                    />
+                    <a
+                      href={msg.content}
+                      download
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-xs px-2 py-1 rounded-lg"
+                    >
+                      Download
+                    </a>
+                  </div>
+                )}
+
+                {/* FILE */}
+                {msg.type === 'file' && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">📄</span>
+                    <div>
+                      <p className="font-medium">File</p>
+                      <a
+                        href={msg.content}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs underline opacity-80 hover:opacity-100"
+                      >
+                        Download file
+                      </a>
+                    </div>
+                  </div>
+                )}
+
+                {/* TEXT */}
+                {msg.type === 'text' && msg.content}
 
                 {msg.sender_id === user?.id && (
                   <button
@@ -397,14 +472,16 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Input */}
       <div className="bg-zinc-900 p-4 border-t border-zinc-800">
         <div className="flex gap-3 items-center">
-          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-4 py-3 rounded-xl text-lg transition">
-            📷
+          {/* File / Photo / Video upload */}
+          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-4 py-3 rounded-xl text-lg transition" title="Upload file, photo or video">
+            📎
             <input
               type="file"
-              accept="image/*"
-              onChange={uploadPhoto}
+              accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip"
+              onChange={uploadFile}
               className="hidden"
             />
           </label>
@@ -425,6 +502,9 @@ export default function ChatPage() {
             Send
           </button>
         </div>
+        <p className="text-xs text-zinc-500 mt-2 text-center">
+          Max 2 files (10MB) • Max 1 video (30MB)
+        </p>
       </div>
     </div>
   )
