@@ -15,7 +15,7 @@ export default function ChatPage() {
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [conversationId, setConversationId] = useState('')
-  const [fileCount, setFileCount] = useState(0)   // max 2
+  const [fileCount, setFileCount] = useState(0)   // max 4
   const [videoCount, setVideoCount] = useState(0) // max 1
   const [blocked, setBlocked] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -208,8 +208,8 @@ export default function ChatPage() {
         return
       }
     } else {
-      if (fileCount >= 2) {
-        alert('Maximum 2 files allowed in this chat')
+      if (fileCount >= 4) {
+        alert('Maximum 4 files allowed in this chat')
         return
       }
       if (file.size > 10 * 1024 * 1024) {
@@ -238,7 +238,6 @@ export default function ChatPage() {
       expires_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
     })
 
-    // Reset input
     e.target.value = ''
   }
 
@@ -338,7 +337,7 @@ export default function ChatPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
-            {fileCount}/2 files
+            {fileCount}/4 files
           </span>
           <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
             {videoCount}/1 video
@@ -395,7 +394,6 @@ export default function ChatPage() {
                     : 'bg-zinc-800 text-white rounded-bl-md'
                 }`}
               >
-                {/* IMAGE */}
                 {msg.type === 'image' && (
                   <div className="relative">
                     <img
@@ -415,7 +413,6 @@ export default function ChatPage() {
                   </div>
                 )}
 
-                {/* VIDEO */}
                 {msg.type === 'video' && (
                   <div className="relative">
                     <video
@@ -435,7 +432,6 @@ export default function ChatPage() {
                   </div>
                 )}
 
-                {/* FILE */}
                 {msg.type === 'file' && (
                   <div className="flex items-center gap-3">
                     <span className="text-2xl">📄</span>
@@ -454,7 +450,6 @@ export default function ChatPage() {
                   </div>
                 )}
 
-                {/* TEXT */}
                 {msg.type === 'text' && msg.content}
 
                 {msg.sender_id === user?.id && (
@@ -475,8 +470,10 @@ export default function ChatPage() {
       {/* Input */}
       <div className="bg-zinc-900 p-4 border-t border-zinc-800">
         <div className="flex gap-3 items-center">
-          {/* File / Photo / Video upload */}
-          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-4 py-3 rounded-xl text-lg transition" title="Upload file, photo or video">
+          <label
+            className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-4 py-3 rounded-xl text-lg transition"
+            title="Upload file, photo or video"
+          >
             📎
             <input
               type="file"
@@ -503,7 +500,7 @@ export default function ChatPage() {
           </button>
         </div>
         <p className="text-xs text-zinc-500 mt-2 text-center">
-          Max 2 files (10MB) • Max 1 video (30MB)
+          Max 4 files (10MB) • Max 1 video (30MB)
         </p>
       </div>
     </div>
