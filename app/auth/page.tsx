@@ -167,6 +167,23 @@ export default function AuthPage() {
         {message && (
           <p className="mt-6 text-center text-sm text-cyan-400">{message}</p>
         )}
+
+        {/* Terms & Privacy links */}
+        <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
+          <button
+            onClick={() => router.push('/terms')}
+            className="hover:text-cyan-400 transition"
+          >
+            Terms
+          </button>
+          <span>•</span>
+          <button
+            onClick={() => router.push('/privacy')}
+            className="hover:text-cyan-400 transition"
+          >
+            Privacy
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -12,15 +12,12 @@ export default function LandingPage() {
   useEffect(() => {
     const checkAuth = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-
       if (user) {
         router.push('/home')
         return
       }
-
       setLoading(false)
     }
-
     checkAuth()
   }, [])
 
@@ -36,7 +33,6 @@ export default function LandingPage() {
     <div className="min-h-screen bg-black text-white">
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
         
-        {/* Logo */}
         <div className="mb-6">
           <Image
             src="/logo.png"
@@ -51,9 +47,11 @@ export default function LandingPage() {
         <h1 className="text-6xl md:text-7xl font-bold tracking-tight mb-4">
           VANISH
         </h1>
+
         <p className="text-xl md:text-2xl text-zinc-400 mb-3">
           Talk freely. Stay private.
         </p>
+
         <p className="text-zinc-500 max-w-md mb-10 text-sm md:text-base">
           Temporary usernames. Messages that disappear. No permanent identity.
         </p>
@@ -97,6 +95,23 @@ export default function LandingPage() {
               Pick a new name every 24 hours. Fully temporary identity.
             </p>
           </div>
+        </div>
+
+        {/* Terms & Privacy links */}
+        <div className="mt-16 flex items-center gap-4 text-sm text-zinc-500">
+          <button
+            onClick={() => router.push('/terms')}
+            className="hover:text-cyan-400 transition"
+          >
+            Terms of Service
+          </button>
+          <span>•</span>
+          <button
+            onClick={() => router.push('/privacy')}
+            className="hover:text-cyan-400 transition"
+          >
+            Privacy & Security
+          </button>
         </div>
       </div>
     </div>
