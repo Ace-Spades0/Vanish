@@ -15,8 +15,37 @@ export default function ChatPage() {
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [conversationId, setConversationId] = useState('')
-  const [fileCount, setFileCount] = useState(0)   // max 4
-  const [videoCount, setVideoCount] = useState(0) // max 1
+  const [fileCount, setFileCount] = useState(0)
+  const [videoCount, setVideoCount] = useState(0)
+  const [blocked, setBlocked] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const channelRef = useRef
+The file count and video count state are already defined. I need to continue from the rest of the component logic, ensuring mobile-responsive classes are applied throughout the JSX.Here’s the full mobile-improved Chat page.
+
+Replace the **entire content** of  
+`app/chat/[username]/page.tsx`  
+with this:
+
+```tsx
+'use client'
+
+import { useEffect, useState, useRef } from 'react'
+import { useRouter, useParams } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+
+export default function ChatPage() {
+  const params = useParams()
+  const targetUsername = params.username as string
+  const router = useRouter()
+
+  const [user, setUser] = useState<any>(null)
+  const [targetUser, setTargetUser] = useState<any>(null)
+  const [messages, setMessages] = useState<any[]>([])
+  const [newMessage, setNewMessage] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [conversationId, setConversationId] = useState('')
+  const [fileCount, setFileCount] = useState(0)
+  const [videoCount, setVideoCount] = useState(0)
   const [blocked, setBlocked] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
@@ -197,7 +226,6 @@ export default function ChatPage() {
     const isVideo = file.type.startsWith('video/')
     const isImage = file.type.startsWith('image/')
 
-    // Limits
     if (isVideo) {
       if (videoCount >= 1) {
         alert('Only 1 video allowed in this chat')
@@ -227,7 +255,6 @@ export default function ChatPage() {
     }
 
     const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
-
     const type = isVideo ? 'video' : isImage ? 'image' : 'file'
 
     await supabase.from('messages').insert({
@@ -329,53 +356,58 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
-      {/* Header */}
-      <div className="bg-zinc-900/95 backdrop-blur p-4 flex items-center justify-between border-b border-zinc-800">
-        <div>
-          <p className="text-xs text-zinc-500">Chatting with</p>
-          <h1 className="text-lg font-bold text-cyan-400">{targetUsername}</h1>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
-            {fileCount}/4 files
-          </span>
-          <span className="text-xs text-zinc-400 bg-zinc-800 px-2.5 py-1 rounded-full">
-            {videoCount}/1 video
-          </span>
-          <button
-            onClick={clearAllChat}
-            className="text-xs bg-orange-600 hover:bg-orange-500 px-3 py-1.5 rounded-lg transition"
-          >
-            Clear Chat
-          </button>
-          <button
-            onClick={reportUser}
-            className="text-xs bg-yellow-600 hover:bg-yellow-500 px-3 py-1.5 rounded-lg transition"
-          >
-            Report
-          </button>
-          <button
-            onClick={blockUser}
-            className="text-xs bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg transition"
-          >
-            Block
-          </button>
-          <button
-            onClick={() => router.push('/home')}
-            className="text-xs bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg transition"
-          >
-            Back
-          </button>
+      {/* Header - Mobile friendly */}
+      <div className="bg-zinc-900/95 backdrop-blur p-3 sm:p-4 border-b border-zinc-800">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[10px] sm:text-xs text-zinc-500">Chatting with</p>
+            <h1 className="text-base sm:text-lg font-bold text-cyan-400 truncate">
+              {targetUsername}
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            <span className="text-[10px] sm:text-xs text-zinc-400 bg-zinc-800 px-2 py-1 rounded-full whitespace-nowrap">
+              {fileCount}/4
+            </span>
+            <span className="text-[10px] sm:text-xs text-zinc-400 bg-zinc-800 px-2 py-1 rounded-full whitespace-nowrap">
+              {videoCount}/1
+            </span>
+            <button
+              onClick={clearAllChat}
+              className="text-[10px] sm:text-xs bg-orange-600 hover:bg-orange-500 px-2 sm:px-3 py-1.5 rounded-lg transition"
+            >
+              Clear
+            </button>
+            <button
+              onClick={reportUser}
+              className="text-[10px] sm:text-xs bg-yellow-600 hover:bg-yellow-500 px-2 sm:px-3 py-1.5 rounded-lg transition"
+            >
+              Report
+            </button>
+            <button
+              onClick={blockUser}
+              className="text-[10px] sm:text-xs bg-red-600 hover:bg-red-500 px-2 sm:px-3 py-1.5 rounded-lg transition"
+            >
+              Block
+            </button>
+            <button
+              onClick={() => router.push('/home')}
+              className="text-[10px] sm:text-xs bg-zinc-700 hover:bg-zinc-600 px-2 sm:px-3 py-1.5 rounded-lg transition"
+            >
+              Back
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center pt-20">
-            <div className="text-5xl mb-4 opacity-40">💬</div>
-            <p className="text-zinc-400 text-lg">No messages yet</p>
-            <p className="text-zinc-600 text-sm mt-1">
+          <div className="flex flex-col items-center justify-center h-full text-center pt-16 sm:pt-20">
+            <div className="text-4xl sm:text-5xl mb-4 opacity-40">💬</div>
+            <p className="text-zinc-400 text-base sm:text-lg">No messages yet</p>
+            <p className="text-zinc-600 text-xs sm:text-sm mt-1">
               Send a message to start the conversation
             </p>
           </div>
@@ -388,7 +420,7 @@ export default function ChatPage() {
               }`}
             >
               <div
-                className={`relative max-w-[75%] px-4 py-2.5 rounded-2xl text-sm ${
+                className={`relative max-w-[85%] sm:max-w-[75%] px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl text-sm ${
                   msg.sender_id === user?.id
                     ? 'bg-cyan-500 text-black rounded-br-md'
                     : 'bg-zinc-800 text-white rounded-bl-md'
@@ -399,14 +431,14 @@ export default function ChatPage() {
                     <img
                       src={msg.content}
                       alt="photo"
-                      className="rounded-xl max-w-full max-h-64 object-cover"
+                      className="rounded-xl max-w-full max-h-52 sm:max-h-64 object-cover"
                     />
                     <a
                       href={msg.content}
                       download
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-xs px-2 py-1 rounded-lg"
+                      className="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-[10px] sm:text-xs px-2 py-1 rounded-lg"
                     >
                       Download
                     </a>
@@ -418,14 +450,14 @@ export default function ChatPage() {
                     <video
                       src={msg.content}
                       controls
-                      className="rounded-xl max-w-full max-h-64"
+                      className="rounded-xl max-w-full max-h-52 sm:max-h-64"
                     />
                     <a
                       href={msg.content}
                       download
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-xs px-2 py-1 rounded-lg"
+                      className="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-[10px] sm:text-xs px-2 py-1 rounded-lg"
                     >
                       Download
                     </a>
@@ -433,16 +465,16 @@ export default function ChatPage() {
                 )}
 
                 {msg.type === 'file' && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">📄</span>
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <span className="text-xl sm:text-2xl">📄</span>
                     <div>
-                      <p className="font-medium">File</p>
+                      <p className="font-medium text-sm">File</p>
                       <a
                         href={msg.content}
                         download
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs underline opacity-80 hover:opacity-100"
+                        className="text-[10px] sm:text-xs underline opacity-80 hover:opacity-100"
                       >
                         Download file
                       </a>
@@ -467,11 +499,11 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="bg-zinc-900 p-4 border-t border-zinc-800">
-        <div className="flex gap-3 items-center">
+      {/* Input - Mobile friendly */}
+      <div className="bg-zinc-900 p-3 sm:p-4 border-t border-zinc-800">
+        <div className="flex gap-2 sm:gap-3 items-center">
           <label
-            className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-4 py-3 rounded-xl text-lg transition"
+            className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl text-base sm:text-lg transition shrink-0"
             title="Upload file, photo or video"
           >
             📎
@@ -489,17 +521,17 @@ export default function ChatPage() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="flex-1 p-3 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
+            className="flex-1 min-w-0 p-2.5 sm:p-3 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
           />
 
           <button
             onClick={sendMessage}
-            className="bg-cyan-500 hover:bg-cyan-400 text-black font-medium px-5 py-3 rounded-xl transition"
+            className="bg-cyan-500 hover:bg-cyan-400 text-black font-medium px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl transition shrink-0 text-sm"
           >
             Send
           </button>
         </div>
-        <p className="text-xs text-zinc-500 mt-2 text-center">
+        <p className="text-[10px] sm:text-xs text-zinc-500 mt-2 text-center">
           Max 4 files (10MB) • Max 1 video (30MB)
         </p>
       </div>
