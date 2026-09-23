@@ -9,6 +9,7 @@ export default function HomePage() {
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [deleting, setDeleting] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -25,6 +26,12 @@ export default function HomePage() {
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
+
+      if (profileData?.status === 'suspended' || profileData?.status === 'banned') {
+        await supabase.auth.signOut()
+        router.push('/auth')
+        return
+      }
 
       if (profileData?.username && profileData?.username_claimed_at) {
         const hoursPassed =
@@ -48,6 +55,40 @@ export default function HomePage() {
     router.push('/')
   }
 
+  const deleteAccount = async () => {
+    const confirmDelete = confirm(
+      'Are you sure you want to permanently delete your account? This cannot be undone.'
+    )
+    if (!confirmDelete) return
+
+    setDeleting(true)
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      setDeleting(false)
+      return
+    }
+
+    const res = await fetch('/api/delete-account', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    })
+
+    const data = await res.json()
+
+    if (data.error) {
+      alert(data.error)
+      setDeleting(false)
+      return
+    }
+
+    await supabase.auth.signOut()
+    alert('Account deleted')
+    router.push('/')
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
@@ -58,8 +99,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
-      
-      {/* Logo */}
       <div className="mb-5">
         <Image
           src="/logo.png"
@@ -115,6 +154,14 @@ export default function HomePage() {
             className="w-full bg-red-600/90 hover:bg-red-500 text-white font-medium py-3.5 rounded-xl transition"
           >
             Logout
+          </button>
+
+          <button
+            onClick={deleteAccount}
+            disabled={deleting}
+            className="w-full bg-red-900 hover:bg-red-800 text-white font-medium py-3.5 rounded-xl transition border border-red-800"
+          >
+            {deleting ? 'Deleting...' : 'Delete Account'}
           </button>
         </div>
       </div>

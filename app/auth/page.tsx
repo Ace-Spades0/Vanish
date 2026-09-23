@@ -3,6 +3,25 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { Turnstile } from '@marsidev/react-turnstile'
+
+const TEMP_EMAIL_DOMAINS = [
+  'tempmail.com',
+  'mailinator.com',
+  'guerrillamail.com',
+  '10minutemail.com',
+  'yopmail.com',
+  'trashmail.com',
+  'getnada.com',
+  'temp-mail.org',
+  'moakt.com',
+  'emailondeck.com',
+]
+
+function isTempEmail(email: string) {
+  const domain = email.trim().toLowerCase().split('@')[1]
+  return TEMP_EMAIL_DOMAINS.includes(domain)
+}
 
 export default function AuthPage() {
   const [email, setEmail] = useState('')
@@ -10,6 +29,7 @@ export default function AuthPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [mode, setMode] = useState<'login' | 'forgot'>('login')
+  const [captchaToken, setCaptchaToken] = useState('')
   const router = useRouter()
 
   const handleSignUp = async () => {
@@ -18,6 +38,18 @@ export default function AuthPage() {
 
     if (password.length < 6) {
       setMessage('Password must be at least 6 characters')
+      setLoading(false)
+      return
+    }
+
+    if (isTempEmail(email)) {
+      setMessage('Temporary emails are not allowed. Please use a real email.')
+      setLoading(false)
+      return
+    }
+
+    if (!captchaToken) {
+      setMessage('Please complete the CAPTCHA')
       setLoading(false)
       return
     }
@@ -39,6 +71,12 @@ export default function AuthPage() {
   const handleLogin = async () => {
     setLoading(true)
     setMessage('')
+
+    if (!captchaToken) {
+      setMessage('Please complete the CAPTCHA')
+      setLoading(false)
+      return
+    }
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
@@ -127,7 +165,7 @@ export default function AuthPage() {
               className="w-full p-3 mb-2 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
             />
 
-            <div className="text-right mb-6">
+            <div className="text-right mb-4">
               <button
                 onClick={() => {
                   setMode('forgot')
@@ -137,6 +175,13 @@ export default function AuthPage() {
               >
                 Forgot password?
               </button>
+            </div>
+
+            <div className="mb-4 flex justify-center">
+              <Turnstile
+                siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+                onSuccess={(token) => setCaptchaToken(token)}
+              />
             </div>
 
             <button
