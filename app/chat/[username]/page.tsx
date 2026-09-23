@@ -19,35 +19,6 @@ export default function ChatPage() {
   const [videoCount, setVideoCount] = useState(0)
   const [blocked, setBlocked] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const channelRef = useRef
-The file count and video count state are already defined. I need to continue from the rest of the component logic, ensuring mobile-responsive classes are applied throughout the JSX.Here’s the full mobile-improved Chat page.
-
-Replace the **entire content** of  
-`app/chat/[username]/page.tsx`  
-with this:
-
-```tsx
-'use client'
-
-import { useEffect, useState, useRef } from 'react'
-import { useRouter, useParams } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
-
-export default function ChatPage() {
-  const params = useParams()
-  const targetUsername = params.username as string
-  const router = useRouter()
-
-  const [user, setUser] = useState<any>(null)
-  const [targetUser, setTargetUser] = useState<any>(null)
-  const [messages, setMessages] = useState<any[]>([])
-  const [newMessage, setNewMessage] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [conversationId, setConversationId] = useState('')
-  const [fileCount, setFileCount] = useState(0)
-  const [videoCount, setVideoCount] = useState(0)
-  const [blocked, setBlocked] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
 
   useEffect(() => {
@@ -356,7 +327,6 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
-      {/* Header - Mobile friendly */}
       <div className="bg-zinc-900/95 backdrop-blur p-3 sm:p-4 border-b border-zinc-800">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -401,7 +371,6 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-16 sm:pt-20">
@@ -499,7 +468,6 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input - Mobile friendly */}
       <div className="bg-zinc-900 p-3 sm:p-4 border-t border-zinc-800">
         <div className="flex gap-2 sm:gap-3 items-center">
           <label
