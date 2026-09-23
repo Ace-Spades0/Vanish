@@ -41,9 +41,15 @@ export default function ChatPage() {
 
       const { data: myProfile } = await supabase
         .from('profiles')
-        .select('username, username_claimed_at')
+        .select('username, username_claimed_at, status')
         .eq('id', user.id)
         .maybeSingle()
+
+      if (myProfile?.status === 'suspended' || myProfile?.status === 'banned') {
+        await supabase.auth.signOut()
+        router.push('/auth')
+        return
+      }
 
       const hasValidUsername =
         myProfile?.username &&
@@ -176,10 +182,11 @@ export default function ChatPage() {
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
 
-    const expiresAt =
-      totalQuestions >= 6
-        ? new Date(Date.now() + 30 * 60 * 1000).toISOString()
-        : new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+    const triggersAntiInterrogation = totalQuestions >= 6
+
+    const expiresAt = triggersAntiInterrogation
+      ? new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      : new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
 
     await supabase.from('messages').insert({
       conversation_id: conversationId,
@@ -188,6 +195,36 @@ export default function ChatPage() {
       type: 'text',
       expires_at: expiresAt,
     })
+
+    // If anti-interrogation is triggered, increase count and maybe suspend
+    if (triggersAntiInterrogation) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('anti_interrogation_count')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      const newCount = (profile?.anti_interrogation_count || 0) + 1
+
+      const updateData: any = {
+        anti_interrogation_count: newCount,
+      }
+
+      if (newCount > 10) {
+        updateData.status = 'suspended'
+      }
+
+      await supabase
+        .from('profiles')
+        .update(updateData)
+        .eq('id', user.id)
+
+      if (newCount > 10) {
+        await supabase.auth.signOut()
+        alert('Your account has been suspended due to repeated anti-interrogation triggers.')
+        router.push('/auth')
+      }
+    }
   }
 
   const uploadFile = async (e: any) => {
@@ -297,6 +334,28 @@ export default function ChatPage() {
       conversation_id: conversationId,
       reason,
     })
+
+    // Increase report count and maybe suspend reported user
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('report_count')
+      .eq('id', targetUser.id)
+      .maybeSingle()
+
+    const newCount = (profile?.report_count || 0) + 1
+
+    const updateData: any = {
+      report_count: newCount,
+    }
+
+    if (newCount >= 5) {
+      updateData.status = 'suspended'
+    }
+
+    await supabase
+      .from('profiles')
+      .update(updateData)
+      .eq('id', targetUser.id)
 
     alert('User reported. Thank you.')
   }
