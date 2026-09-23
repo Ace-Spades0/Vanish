@@ -40,18 +40,43 @@ export default function AuthPage() {
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     })
 
     if (error) {
       setMessage(error.message)
-    } else {
-      setMessage('Login successful!')
-      router.push('/home')
+      setLoading(false)
+      return
     }
 
+    const userId = data.user?.id
+
+    if (userId) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('status')
+        .eq('id', userId)
+        .maybeSingle()
+
+      if (profile?.status === 'suspended') {
+        await supabase.auth.signOut()
+        setMessage('Your account has been suspended.')
+        setLoading(false)
+        return
+      }
+
+      if (profile?.status === 'banned') {
+        await supabase.auth.signOut()
+        setMessage('Your account has been banned.')
+        setLoading(false)
+        return
+      }
+    }
+
+    setMessage('Login successful!')
+    router.push('/home')
     setLoading(false)
   }
 
@@ -168,7 +193,6 @@ export default function AuthPage() {
           <p className="mt-6 text-center text-sm text-cyan-400">{message}</p>
         )}
 
-        {/* Terms & Privacy links */}
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
           <button
             onClick={() => router.push('/terms')}
