@@ -18,10 +18,7 @@ export default function ChatPage() {
   const [fileCount, setFileCount] = useState(0)
   const [videoCount, setVideoCount] = useState(0)
   const [blocked, setBlocked] = useState(false)
-  const [modal, setModal] = useState<{
-    type: 'clear' | 'block' | 'report' | null
-    text?: string
-  }>({ type: null })
+  const [modal, setModal] = useState<'clear' | 'block' | 'report' | null>(null)
   const [reportReason, setReportReason] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
@@ -127,7 +124,9 @@ export default function ChatPage() {
       if (!isMounted) return
       setLoading(false)
 
-      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+      }
 
       const channel = supabase.channel(`chat-${convId}`)
       channel.on(
@@ -157,20 +156,25 @@ export default function ChatPage() {
     }
 
     init()
+
     return () => {
       isMounted = false
-      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+      }
     }
   }, [targetUsername])
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !user || !conversationId) return
+
     const content = newMessage.trim()
     setNewMessage('')
 
     const myQuestions = messages.filter(
       (m) => m.sender_id === user.id && m.content?.trim().endsWith('?')
     ).length
+
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
     const triggersAntiInterrogation = totalQuestions >= 6
@@ -202,7 +206,6 @@ export default function ChatPage() {
 
       if (newCount > 10) {
         await supabase.auth.signOut()
-        setModal({ type: null })
         alert('Your account has been suspended due to repeated anti-interrogation triggers.')
         router.push('/auth')
       }
@@ -217,16 +220,32 @@ export default function ChatPage() {
     const isImage = file.type.startsWith('image/')
 
     if (isVideo) {
-      if (videoCount >= 1) return alert('Only 1 video allowed in this chat')
-      if (file.size > 30 * 1024 * 1024) return alert('Video must be smaller than 30 MB')
+      if (videoCount >= 1) {
+        alert('Only 1 video allowed in this chat')
+        return
+      }
+      if (file.size > 30 * 1024 * 1024) {
+        alert('Video must be smaller than 30 MB')
+        return
+      }
     } else {
-      if (fileCount >= 4) return alert('Maximum 4 files allowed in this chat')
-      if (file.size > 10 * 1024 * 1024) return alert('File must be smaller than 10 MB')
+      if (fileCount >= 4) {
+        alert('Maximum 4 files allowed in this chat')
+        return
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('File must be smaller than 10 MB')
+        return
+      }
     }
 
     const fileName = `${conversationId}/${Date.now()}-${file.name}`
     const { error } = await supabase.storage.from('chat-photos').upload(fileName, file)
-    if (error) return alert('Failed to upload file')
+
+    if (error) {
+      alert('Failed to upload file')
+      return
+    }
 
     const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
     const type = isVideo ? 'video' : isImage ? 'image' : 'file'
@@ -250,7 +269,11 @@ export default function ChatPage() {
   const confirmClearChat = async () => {
     if (!user || !conversationId) return
 
-    await supabase.from('messages').update({ deleted: true }).eq('conversation_id', conversationId)
+    await supabase
+      .from('messages')
+      .update({ deleted: true })
+      .eq('conversation_id', conversationId)
+
     await supabase.from('audit_logs').insert({
       conversation_id: conversationId,
       payload: {
@@ -264,16 +287,18 @@ export default function ChatPage() {
     setMessages([])
     setFileCount(0)
     setVideoCount(0)
-    setModal({ type: null })
+    setModal(null)
   }
 
   const confirmBlockUser = async () => {
     if (!user || !targetUser) return
+
     await supabase.from('blocks').insert({
       blocker_id: user.id,
       blocked_id: targetUser.id,
     })
-    setModal({ type: null })
+
+    setModal(null)
     setBlocked(true)
   }
 
@@ -300,7 +325,7 @@ export default function ChatPage() {
     await supabase.from('profiles').update(updateData).eq('id', targetUser.id)
 
     setReportReason('')
-    setModal({ type: null })
+    setModal(null)
   }
 
   if (loading) {
@@ -347,19 +372,19 @@ export default function ChatPage() {
               {videoCount}/1
             </span>
             <button
-              onClick={() => setModal({ type: 'clear' })}
+              onClick={() => setModal('clear')}
               className="text-[10px] bg-orange-600 hover:bg-orange-500 px-2 py-1 rounded-lg"
             >
               Clear
             </button>
             <button
-              onClick={() => setModal({ type: 'report' })}
+              onClick={() => setModal('report')}
               className="text-[10px] bg-yellow-600 hover:bg-yellow-500 px-2 py-1 rounded-lg"
             >
               Report
             </button>
             <button
-              onClick={() => setModal({ type: 'block' })}
+              onClick={() => setModal('block')}
               className="text-[10px] bg-red-600 hover:bg-red-500 px-2 py-1 rounded-lg"
             >
               Block
@@ -374,8 +399,8 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Messages - smaller wall */}
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 max-h-[calc(100dvh-140px)]">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-10">
             <div className="text-3xl mb-2 opacity-40">💬</div>
@@ -389,7 +414,7 @@ export default function ChatPage() {
               className={`flex ${msg.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`relative max-w-[80%] px-3 py-2 rounded-2xl text-sm ${
+                className={`relative max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
                   msg.sender_id === user?.id
                     ? 'bg-cyan-500 text-black rounded-br-md'
                     : 'bg-zinc-800 text-white rounded-bl-md'
@@ -397,7 +422,11 @@ export default function ChatPage() {
               >
                 {msg.type === 'image' && (
                   <div className="relative">
-                    <img src={msg.content} alt="photo" className="rounded-xl max-h-40 object-cover" />
+                    <img
+                      src={msg.content}
+                      alt="photo"
+                      className="rounded-xl max-h-40 object-cover"
+                    />
                     <a
                       href={msg.content}
                       download
@@ -409,6 +438,7 @@ export default function ChatPage() {
                     </a>
                   </div>
                 )}
+
                 {msg.type === 'video' && (
                   <div className="relative">
                     <video src={msg.content} controls className="rounded-xl max-h-40" />
@@ -423,15 +453,24 @@ export default function ChatPage() {
                     </a>
                   </div>
                 )}
+
                 {msg.type === 'file' && (
                   <div className="flex items-center gap-2">
                     <span>📄</span>
-                    <a href={msg.content} download target="_blank" rel="noopener noreferrer" className="underline text-xs">
+                    <a
+                      href={msg.content}
+                      download
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline text-xs"
+                    >
                       Download file
                     </a>
                   </div>
                 )}
+
                 {msg.type === 'text' && msg.content}
+
                 {msg.sender_id === user?.id && (
                   <button
                     onClick={() => deleteMessage(msg.id)}
@@ -449,7 +488,7 @@ export default function ChatPage() {
 
       {/* Input */}
       <div className="bg-zinc-900 px-3 py-2 border-t border-zinc-800 shrink-0">
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-end">
           <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-xl">
             📎
             <input
@@ -459,14 +498,15 @@ export default function ChatPage() {
               className="hidden"
             />
           </label>
+
           <textarea
-  placeholder="Type a message..."
-  value={newMessage}
-  onChange={(e) => setNewMessage(e.target.value)}
-  rows={2}
-  className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm resize-none"
-/>
+            placeholder="Type a message..."
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            rows={2}
+            className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm resize-none"
           />
+
           <button
             onClick={sendMessage}
             className="bg-cyan-500 hover:bg-cyan-400 text-black font-medium px-4 py-2.5 rounded-xl text-sm"
@@ -480,32 +520,56 @@ export default function ChatPage() {
       </div>
 
       {/* Custom Modal */}
-      {modal.type && (
+      {modal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
-            {modal.type === 'clear' && (
+            {modal === 'clear' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
-                <p className="text-zinc-400 text-sm mb-5">This will clear all messages in this chat.</p>
+                <p className="text-zinc-400 text-sm mb-5">
+                  This will clear all messages in this chat.
+                </p>
                 <div className="flex gap-2">
-                  <button onClick={() => setModal({ type: null })} className="flex-1 bg-zinc-700 py-2 rounded-xl">Cancel</button>
-                  <button onClick={confirmClearChat} className="flex-1 bg-orange-600 py-2 rounded-xl">Clear</button>
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmClearChat}
+                    className="flex-1 bg-orange-600 py-2 rounded-xl"
+                  >
+                    Clear
+                  </button>
                 </div>
               </>
             )}
 
-            {modal.type === 'block' && (
+            {modal === 'block' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Block {targetUsername}?</h3>
-                <p className="text-zinc-400 text-sm mb-5">You will not be able to chat with this user.</p>
+                <p className="text-zinc-400 text-sm mb-5">
+                  You will not be able to chat with this user.
+                </p>
                 <div className="flex gap-2">
-                  <button onClick={() => setModal({ type: null })} className="flex-1 bg-zinc-700 py-2 rounded-xl">Cancel</button>
-                  <button onClick={confirmBlockUser} className="flex-1 bg-red-600 py-2 rounded-xl">Block</button>
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmBlockUser}
+                    className="flex-1 bg-red-600 py-2 rounded-xl"
+                  >
+                    Block
+                  </button>
                 </div>
               </>
             )}
 
-            {modal.type === 'report' && (
+            {modal === 'report' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Report {targetUsername}</h3>
                 <input
@@ -516,8 +580,18 @@ export default function ChatPage() {
                   className="w-full p-3 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
                 />
                 <div className="flex gap-2">
-                  <button onClick={() => setModal({ type: null })} className="flex-1 bg-zinc-700 py-2 rounded-xl">Cancel</button>
-                  <button onClick={confirmReportUser} className="flex-1 bg-yellow-600 py-2 rounded-xl">Report</button>
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmReportUser}
+                    className="flex-1 bg-yellow-600 py-2 rounded-xl"
+                  >
+                    Report
+                  </button>
                 </div>
               </>
             )}
