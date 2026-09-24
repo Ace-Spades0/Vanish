@@ -459,13 +459,13 @@ export default function ChatPage() {
               className="hidden"
             />
           </label>
-          <input
-            type="text"
-            placeholder="Type a message..."
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
+          <textarea
+  placeholder="Type a message..."
+  value={newMessage}
+  onChange={(e) => setNewMessage(e.target.value)}
+  rows={2}
+  className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm resize-none"
+/>
           />
           <button
             onClick={sendMessage}

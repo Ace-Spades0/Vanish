@@ -10,16 +10,18 @@ export default function SearchPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(true)
+  const [currentUser, setCurrentUser] = useState<any>(null)
   const router = useRouter()
 
   useEffect(() => {
     const checkUser = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-
       if (!user) {
         router.push('/auth')
         return
       }
+
+      setCurrentUser(user)
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -58,6 +60,12 @@ export default function SearchPage() {
       return
     }
 
+    if (!currentUser) {
+      setMessage('Please login again')
+      setLoading(false)
+      return
+    }
+
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
@@ -82,6 +90,20 @@ export default function SearchPage() {
 
     if (hoursPassed >= 24) {
       setMessage('User not found')
+      setLoading(false)
+      return
+    }
+
+    // Block check both directions
+    const { data: blocks } = await supabase
+      .from('blocks')
+      .select('id')
+      .or(
+        `and(blocker_id.eq.${currentUser.id},blocked_id.eq.${data.id}),and(blocker_id.eq.${data.id},blocked_id.eq.${currentUser.id})`
+      )
+
+    if (blocks && blocks.length > 0) {
+      setMessage('User not available')
       setLoading(false)
       return
     }

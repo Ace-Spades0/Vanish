@@ -15,17 +15,18 @@ export default function HomePage() {
   const router = useRouter()
 
   const loadBlockedUsers = async (userId: string) => {
-    const { data: blocks } = await supabase
+    const { data: blocks, error } = await supabase
       .from('blocks')
       .select('blocked_id')
       .eq('blocker_id', userId)
 
-    if (!blocks || blocks.length === 0) {
+    if (error || !blocks || blocks.length === 0) {
       setBlockedUsers([])
       return
     }
 
     const ids = blocks.map((b) => b.blocked_id)
+
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, username')
@@ -78,11 +79,17 @@ export default function HomePage() {
 
   const unblockUser = async (blockedId: string) => {
     if (!user) return
-    await supabase
+
+    const { error } = await supabase
       .from('blocks')
       .delete()
       .eq('blocker_id', user.id)
       .eq('blocked_id', blockedId)
+
+    if (error) {
+      alert(error.message)
+      return
+    }
 
     setBlockedUsers((prev) => prev.filter((u) => u.id !== blockedId))
   }
@@ -149,14 +156,14 @@ export default function HomePage() {
           {!profile?.username ? (
             <button
               onClick={() => router.push('/username')}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3.5 rounded-xl transition"
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3.5 rounded-xl"
             >
               Pick a username
             </button>
           ) : (
             <button
               onClick={() => router.push('/search')}
-              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-xl transition border border-zinc-700"
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-xl border border-zinc-700"
             >
               Search Users
             </button>
@@ -164,25 +171,30 @@ export default function HomePage() {
 
           <button
             onClick={handleLogout}
-            className="w-full bg-red-600/90 hover:bg-red-500 text-white font-medium py-3.5 rounded-xl transition"
+            className="w-full bg-red-600/90 hover:bg-red-500 text-white font-medium py-3.5 rounded-xl"
           >
             Logout
           </button>
 
           <button
             onClick={() => setShowDeleteModal(true)}
-            className="w-full bg-red-900 hover:bg-red-800 text-white font-medium py-3.5 rounded-xl transition border border-red-800"
+            className="w-full bg-red-900 hover:bg-red-800 text-white font-medium py-3.5 rounded-xl border border-red-800"
           >
             Delete Account
           </button>
         </div>
 
-        {blockedUsers.length > 0 && (
-          <div className="mt-8 text-left">
-            <p className="text-zinc-500 text-xs uppercase tracking-wider mb-3">Blocked users</p>
+        <div className="mt-8 text-left">
+          <p className="text-zinc-500 text-xs uppercase tracking-wider mb-3">Blocked users</p>
+          {blockedUsers.length === 0 ? (
+            <p className="text-zinc-600 text-sm">No blocked users</p>
+          ) : (
             <div className="space-y-2">
               {blockedUsers.map((u) => (
-                <div key={u.id} className="flex items-center justify-between bg-zinc-800 px-3 py-2 rounded-xl">
+                <div
+                  key={u.id}
+                  className="flex items-center justify-between bg-zinc-800 px-3 py-2 rounded-xl"
+                >
                   <span className="text-sm text-zinc-300">{u.username || 'Unknown'}</span>
                   <button
                     onClick={() => unblockUser(u.id)}
@@ -193,8 +205,8 @@ export default function HomePage() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {showDeleteModal && (
