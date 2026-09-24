@@ -30,6 +30,7 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false)
   const [mode, setMode] = useState<'login' | 'forgot'>('login')
   const [captchaToken, setCaptchaToken] = useState('')
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const router = useRouter()
 
   const handleSignUp = async () => {
@@ -44,6 +45,12 @@ export default function AuthPage() {
 
     if (isTempEmail(email)) {
       setMessage('Temporary emails are not allowed. Please use a real email.')
+      setLoading(false)
+      return
+    }
+
+    if (!acceptedTerms) {
+      setMessage('Please accept Terms of Service and Privacy & Security')
       setLoading(false)
       return
     }
@@ -183,6 +190,33 @@ export default function AuthPage() {
                 onSuccess={(token) => setCaptchaToken(token)}
               />
             </div>
+
+            <label className="flex items-start gap-2 mb-4 text-xs text-zinc-400">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                I accept the{' '}
+                <button
+                  type="button"
+                  onClick={() => router.push('/terms')}
+                  className="text-cyan-400 hover:underline"
+                >
+                  Terms of Service
+                </button>{' '}
+                and{' '}
+                <button
+                  type="button"
+                  onClick={() => router.push('/privacy')}
+                  className="text-cyan-400 hover:underline"
+                >
+                  Privacy & Security
+                </button>
+              </span>
+            </label>
 
             <button
               onClick={handleSignUp}

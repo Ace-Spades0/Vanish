@@ -129,14 +129,12 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-black text-white relative overflow-hidden">
-      {/* Background glow */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-[480px] bg-cyan-500/10 blur-[120px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-[320px] h-[320px] bg-blue-600/10 blur-[100px] rounded-full" />
       </div>
 
       <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-10">
-        {/* Logo + brand */}
         <div className="mb-6">
           <Image
             src="/logo.png"
@@ -148,19 +146,13 @@ export default function HomePage() {
           />
         </div>
 
-        <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-2">
-          VANISH
-        </h1>
-        <p className="text-zinc-400 mb-8 text-center">
-          Talk freely. Stay private.
-        </p>
+        <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-2">VANISH</h1>
+        <p className="text-zinc-400 mb-8 text-center">Talk freely. Stay private.</p>
 
-        {/* Main card */}
         <div className="w-full max-w-md bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 shadow-2xl">
-          {/* Identity */}
           <div className="text-center mb-6">
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
-              Your temporary identity
+              Username
             </p>
             <p className="text-3xl font-semibold text-cyan-400">
               {profile?.username ? profile.username : 'No username'}
@@ -168,22 +160,11 @@ export default function HomePage() {
             <p className="text-xs text-zinc-500 mt-2 break-all">
               {user?.email}
             </p>
-          </div>
-
-          {/* Status chips */}
-          <div className="flex flex-wrap justify-center gap-2 mb-6">
-            <span className="text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
-              3h messages
-            </span>
-            <span className="text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
-              Daily username
-            </span>
-            <span className="text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
+            <p className="mt-3 inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
               Private by design
-            </span>
+            </p>
           </div>
 
-          {/* Actions */}
           <div className="space-y-3">
             {!profile?.username ? (
               <button
@@ -228,7 +209,6 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Footer links */}
         <div className="mt-8 flex items-center gap-4 text-xs text-zinc-500">
           <button onClick={() => router.push('/terms')} className="hover:text-cyan-400 transition">
             Terms
@@ -240,7 +220,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Blocked users modal */}
       {showBlockedModal && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
@@ -255,9 +234,7 @@ export default function HomePage() {
             </div>
 
             {blockedUsers.length === 0 ? (
-              <p className="text-zinc-500 text-sm py-6 text-center">
-                No blocked users
-              </p>
+              <p className="text-zinc-500 text-sm py-6 text-center">No blocked users</p>
             ) : (
               <div className="space-y-2 max-h-72 overflow-y-auto">
                 {blockedUsers.map((u) => (
@@ -265,9 +242,7 @@ export default function HomePage() {
                     key={u.id}
                     className="flex items-center justify-between bg-zinc-800/80 px-3 py-3 rounded-2xl border border-zinc-700"
                   >
-                    <span className="text-sm text-zinc-200">
-                      {u.username || 'Unknown'}
-                    </span>
+                    <span className="text-sm text-zinc-200">{u.username || 'Unknown'}</span>
                     <button
                       onClick={() => unblockUser(u.id)}
                       className="text-xs bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 rounded-lg transition"
@@ -282,7 +257,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Delete account modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
