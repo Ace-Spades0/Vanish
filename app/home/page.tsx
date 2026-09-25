@@ -151,18 +151,31 @@ export default function HomePage() {
 
         <div className="w-full max-w-md bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 shadow-2xl">
           <div className="text-center mb-6">
+            <div className="text-4xl mb-2">
+              {profile?.avatar_icon || '🎭'}
+            </div>
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
               Username
             </p>
             <p className="text-3xl font-semibold text-cyan-400">
               {profile?.username ? profile.username : 'No username'}
             </p>
+            {profile?.bio ? (
+              <p className="text-sm text-zinc-400 mt-2">{profile.bio}</p>
+            ) : null}
             <p className="text-xs text-zinc-500 mt-2 break-all">
               {user?.email}
             </p>
-            <p className="mt-3 inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
-              Private by design
-            </p>
+            <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+              <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
+                Private by design
+              </p>
+              {profile?.is_offline ? (
+                <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-yellow-300 border border-zinc-700">
+                  Offline
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -181,6 +194,13 @@ export default function HomePage() {
                 Start a vanishing chat
               </button>
             )}
+
+            <button
+              onClick={() => router.push('/profile')}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700"
+            >
+              Profile
+            </button>
 
             <button
               onClick={() => setShowBlockedModal(true)}

@@ -84,6 +84,13 @@ export default function SearchPage() {
       return
     }
 
+    // Offline users cannot be found
+    if (data.is_offline) {
+      setMessage('User not found')
+      setLoading(false)
+      return
+    }
+
     const hoursPassed =
       (Date.now() - new Date(data.username_claimed_at).getTime()) /
       (1000 * 60 * 60)
@@ -151,10 +158,16 @@ export default function SearchPage() {
 
         {result && (
           <div className="mt-6 p-5 bg-zinc-800 rounded-2xl text-center">
+            <div className="text-3xl mb-2">{result.avatar_icon || '🎭'}</div>
             <p className="text-zinc-400 text-sm mb-1">Found user</p>
-            <p className="text-cyan-400 text-xl font-medium mb-4">
+            <p className="text-cyan-400 text-xl font-medium mb-1">
               {result.username}
             </p>
+            {result.bio ? (
+              <p className="text-zinc-400 text-sm mb-4">{result.bio}</p>
+            ) : (
+              <div className="mb-4" />
+            )}
             <button
               onClick={() => router.push(`/chat/${result.username}`)}
               className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl transition"
