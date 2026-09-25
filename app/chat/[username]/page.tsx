@@ -21,6 +21,8 @@ export default function ChatPage() {
   const [blocked, setBlocked] = useState(false)
   const [modal, setModal] = useState<'clear' | 'block' | 'report' | null>(null)
   const [reportReason, setReportReason] = useState('')
+  const [warningLevel, setWarningLevel] = useState(0)
+  const [warningText, setWarningText] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
 
@@ -178,9 +180,27 @@ export default function ChatPage() {
 
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
-    const triggersAntiInterrogation = totalQuestions >= 6
+    const interrogationDetected = isQuestion && totalQuestions >= 6
 
-    const expiresAt = triggersAntiInterrogation
+    let useShortExpiry = warningLevel >= 2
+
+    if (interrogationDetected) {
+      if (warningLevel < 2) {
+        const nextLevel = warningLevel + 1
+        setWarningLevel(nextLevel)
+        if (nextLevel === 1) {
+          setWarningText('You’re asking a lot of questions. Please slow down.')
+        } else {
+          setWarningText('Final warning: continued questioning may shorten this chat.')
+        }
+        useShortExpiry = false
+      } else {
+        useShortExpiry = true
+        setWarningText('Anti-interrogation limit applied. New messages in this chat expire in 30 minutes.')
+      }
+    }
+
+    const expiresAt = useShortExpiry
       ? new Date(Date.now() + 30 * 60 * 1000).toISOString()
       : new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
 
@@ -192,7 +212,7 @@ export default function ChatPage() {
       expires_at: expiresAt,
     })
 
-    if (triggersAntiInterrogation) {
+    if (useShortExpiry) {
       const { data: profile } = await supabase
         .from('profiles')
         .select('anti_interrogation_count')
@@ -399,6 +419,12 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {warningText && (
+        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-xs text-yellow-200 text-center">
+          {warningText}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">

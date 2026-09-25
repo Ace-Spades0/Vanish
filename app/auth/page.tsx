@@ -31,11 +31,18 @@ export default function AuthPage() {
   const [mode, setMode] = useState<'login' | 'forgot'>('login')
   const [captchaToken, setCaptchaToken] = useState('')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
 
   const handleSignUp = async () => {
     setLoading(true)
     setMessage('')
+
+    if (!acceptedTerms) {
+      setMessage('Please accept Terms of Service and Privacy & Security')
+      setLoading(false)
+      return
+    }
 
     if (password.length < 6) {
       setMessage('Password must be at least 6 characters')
@@ -45,12 +52,6 @@ export default function AuthPage() {
 
     if (isTempEmail(email)) {
       setMessage('Temporary emails are not allowed. Please use a real email.')
-      setLoading(false)
-      return
-    }
-
-    if (!acceptedTerms) {
-      setMessage('Please accept Terms of Service and Privacy & Security')
       setLoading(false)
       return
     }
@@ -66,11 +67,8 @@ export default function AuthPage() {
       password,
     })
 
-    if (error) {
-      setMessage(error.message)
-    } else {
-      setMessage('Account created! Please check your email to confirm.')
-    }
+    if (error) setMessage(error.message)
+    else setMessage('Account created! Please check your email to confirm.')
 
     setLoading(false)
   }
@@ -78,6 +76,12 @@ export default function AuthPage() {
   const handleLogin = async () => {
     setLoading(true)
     setMessage('')
+
+    if (!acceptedTerms) {
+      setMessage('Please accept Terms of Service and Privacy & Security')
+      setLoading(false)
+      return
+    }
 
     if (!captchaToken) {
       setMessage('Please complete the CAPTCHA')
@@ -97,7 +101,6 @@ export default function AuthPage() {
     }
 
     const userId = data.user?.id
-
     if (userId) {
       const { data: profile } = await supabase
         .from('profiles')
@@ -139,11 +142,8 @@ export default function AuthPage() {
       redirectTo: `${window.location.origin}/auth`,
     })
 
-    if (error) {
-      setMessage(error.message)
-    } else {
-      setMessage('Password reset link sent! Check your email.')
-    }
+    if (error) setMessage(error.message)
+    else setMessage('Password reset link sent! Check your email.')
 
     setLoading(false)
   }
@@ -164,13 +164,22 @@ export default function AuthPage() {
               className="w-full p-3 mb-4 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
             />
 
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-3 mb-2 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
-            />
+            <div className="relative mb-2">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full p-3 pr-16 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 hover:text-cyan-300"
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
 
             <div className="text-right mb-4">
               <button
@@ -220,16 +229,16 @@ export default function AuthPage() {
 
             <button
               onClick={handleSignUp}
-              disabled={loading}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg mb-3 transition"
+              disabled={loading || !acceptedTerms}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-black font-medium py-3 rounded-lg mb-3 transition"
             >
               {loading ? 'Please wait...' : 'Sign Up'}
             </button>
 
             <button
               onClick={handleLogin}
-              disabled={loading}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-lg transition"
+              disabled={loading || !acceptedTerms}
+              className="w-full bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition"
             >
               {loading ? 'Please wait...' : 'Login'}
             </button>
@@ -273,17 +282,11 @@ export default function AuthPage() {
         )}
 
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
-          <button
-            onClick={() => router.push('/terms')}
-            className="hover:text-cyan-400 transition"
-          >
+          <button onClick={() => router.push('/terms')} className="hover:text-cyan-400 transition">
             Terms
           </button>
           <span>•</span>
-          <button
-            onClick={() => router.push('/privacy')}
-            className="hover:text-cyan-400 transition"
-          >
+          <button onClick={() => router.push('/privacy')} className="hover:text-cyan-400 transition">
             Privacy
           </button>
         </div>

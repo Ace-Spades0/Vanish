@@ -84,7 +84,7 @@ export default function LandingPage() {
             <div className="text-3xl mb-3">🛡️</div>
             <h3 className="font-semibold mb-2">Anti-Interrogation</h3>
             <p className="text-zinc-400 text-sm">
-              Too many questions? Chat expires early.
+              Protects conversations from pressure and spam. Fair warnings before any limits apply.
             </p>
           </div>
 
@@ -97,7 +97,6 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Terms & Privacy links */}
         <div className="mt-16 flex items-center gap-4 text-sm text-zinc-500">
           <button
             onClick={() => router.push('/terms')}

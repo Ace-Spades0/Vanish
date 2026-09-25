@@ -71,13 +71,50 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-white mb-3">6. Messages and Content</h2>
             <p>
               Messages, photos, files, and videos may automatically expire and be deleted.
-              VANISH is not responsible for any content that users choose to send. You are
-              solely responsible for the content you share.
+              By default, messages are designed to disappear after 3 hours. VANISH is not
+              responsible for any content that users choose to send. You are solely
+              responsible for the content you share.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">7. Reports, Blocks & Enforcement</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">7. Anti-Interrogation Protection</h2>
+            <p className="mb-3">
+              VANISH includes anti-interrogation protection to reduce pressure, spam-style
+              questioning, and unsafe conversation patterns. This is a protection feature,
+              not a punishment for normal conversation.
+            </p>
+            <ul className="list-disc pl-6 space-y-2 mb-3">
+              <li>
+                Repeated question-style messages in a conversation may be treated as
+                interrogation behavior.
+              </li>
+              <li>
+                When interrogation behavior is detected, the system issues clear warnings to
+                the sender first.
+              </li>
+              <li>
+                <strong className="text-white">Warning 1:</strong> You are notified to slow
+                down.
+              </li>
+              <li>
+                <strong className="text-white">Warning 2:</strong> Final warning before limits
+                apply.
+              </li>
+              <li>
+                After two warnings, continued interrogation behavior may shorten that
+                conversation so new messages expire in{' '}
+                <strong className="text-white">30 minutes</strong> instead of 3 hours.
+              </li>
+              <li>
+                Normal conversation is not restricted. This rule is meant to protect users
+                from pressure and spam-like questioning.
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-white mb-3">8. Reports, Blocks & Enforcement</h2>
             <p>
               Users may report or block others. VANISH may review reports and take action,
               including removing content, suspending accounts, or terminating accounts, when
@@ -86,14 +123,17 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">8. Automatic Account Suspension or Termination</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">9. Automatic Account Suspension or Termination</h2>
             <p className="mb-3">
               To protect users, VANISH may automatically suspend or terminate an account when
               certain abuse thresholds are reached, including:
             </p>
             <ul className="list-disc pl-6 space-y-2 mb-3">
               <li>Multiple reports from other users against the same account</li>
-              <li>Anti-interrogation protection being triggered more than 10 times by the same account</li>
+              <li>
+                Anti-interrogation protection being triggered more than 10 times by the same
+                account
+              </li>
             </ul>
             <p className="mb-3">When this happens, VANISH may:</p>
             <ul className="list-disc pl-6 space-y-2 mb-3">
@@ -108,7 +148,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">9. Account Suspension</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">10. Account Suspension</h2>
             <p>
               We reserve the right to suspend or terminate accounts that violate these Terms,
               with or without prior notice.
@@ -116,7 +156,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">10. Disclaimer</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">11. Disclaimer</h2>
             <p>
               VANISH is provided “as is”. We do not guarantee uninterrupted service, complete
               privacy, or that messages will always disappear exactly as expected. Use the
@@ -125,7 +165,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">11. Limitation of Liability</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">12. Limitation of Liability</h2>
             <p>
               To the maximum extent permitted by law, VANISH and its operators shall not be
               liable for any damages arising from your use of the service.
@@ -133,7 +173,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">12. Changes to These Terms</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">13. Changes to These Terms</h2>
             <p>
               We may update these Terms from time to time. Continued use of VANISH after
               changes means you accept the updated Terms.
@@ -141,7 +181,7 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-white mb-3">13. Contact</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">14. Contact</h2>
             <p>
               For questions about these Terms, contact us through the platform support channels.
             </p>
