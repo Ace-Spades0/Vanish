@@ -14,8 +14,10 @@ export default function ProfilePage() {
   const [isOffline, setIsOffline] = useState(false)
   const [avatarIcon, setAvatarIcon] = useState('')
   const [message, setMessage] = useState('')
+  const [passwordMessage, setPasswordMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [sendingPassword, setSendingPassword] = useState(false)
 
   useEffect(() => {
     const load = async () => {
@@ -56,7 +58,6 @@ export default function ProfilePage() {
     if (!user) return
 
     const cleanBio = bio.trim().slice(0, 20)
-
     setSaving(true)
     setMessage('')
 
@@ -77,6 +78,25 @@ export default function ProfilePage() {
     }
 
     setSaving(false)
+  }
+
+  const sendPasswordChangeEmail = async () => {
+    if (!user?.email) return
+
+    setSendingPassword(true)
+    setPasswordMessage('')
+
+    const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
+      redirectTo: `${window.location.origin}/auth`,
+    })
+
+    if (error) {
+      setPasswordMessage(error.message)
+    } else {
+      setPasswordMessage('Password change email sent. Check your inbox to confirm and set a new password.')
+    }
+
+    setSendingPassword(false)
   }
 
   if (loading) {
@@ -103,7 +123,6 @@ export default function ProfilePage() {
         </p>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
-          {/* Username (read only) */}
           <div>
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
               Username
@@ -113,7 +132,6 @@ export default function ProfilePage() {
             </p>
           </div>
 
-          {/* Anonymous icon */}
           <div>
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
               Anonymous icon
@@ -143,7 +161,6 @@ export default function ProfilePage() {
             </button>
           </div>
 
-          {/* Bio */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
@@ -161,7 +178,6 @@ export default function ProfilePage() {
             />
           </div>
 
-          {/* Offline mode */}
           <div className="flex items-center justify-between bg-zinc-800/70 border border-zinc-700 rounded-2xl px-4 py-3">
             <div>
               <p className="font-medium">Go offline</p>
@@ -194,6 +210,24 @@ export default function ProfilePage() {
 
           {message && (
             <p className="text-center text-sm text-cyan-400">{message}</p>
+          )}
+        </div>
+
+        {/* Change password */}
+        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6">
+          <h2 className="text-lg font-semibold mb-2">Change password</h2>
+          <p className="text-sm text-zinc-400 mb-4">
+            For security, we send a confirmation email. Open the email link to set a new password.
+          </p>
+          <button
+            onClick={sendPasswordChangeEmail}
+            disabled={sendingPassword}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
+          >
+            {sendingPassword ? 'Sending...' : 'Send password change email'}
+          </button>
+          {passwordMessage && (
+            <p className="mt-4 text-center text-sm text-cyan-400">{passwordMessage}</p>
           )}
         </div>
       </div>
