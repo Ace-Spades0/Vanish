@@ -49,7 +49,7 @@ export const translations = {
     and: 'and',
     sendResetLink: 'Send Reset Link',
     backToLogin: 'Back to Login',
-    resetHelp: 'Enter your email and we’ll send you a link to reset your password.',
+    resetHelp: 'Enter your email and we will send you a link to reset your password.',
     setNewPassword: 'Set a new password for your account.',
     newPassword: 'New password',
     confirmNewPassword: 'Confirm new password',
@@ -61,7 +61,7 @@ export const translations = {
     search: 'Search',
     foundUser: 'Found user',
     startChatBtn: 'Start Chat',
-    backHome: '← Back to Home',
+    backHome: 'Back to Home',
     profileTitle: 'Profile',
     profileHelp: 'Edit bio, offline mode, and anonymous icon. Username cannot be changed here.',
     anonymousIcon: 'Anonymous icon',
@@ -136,7 +136,7 @@ export const translations = {
     search: 'Tafuta',
     foundUser: 'Mtumiaji amepatikana',
     startChatBtn: 'Anza Gumzo',
-    backHome: '← Rudi Nyumbani',
+    backHome: 'Rudi Nyumbani',
     profileTitle: 'Wasifu',
     profileHelp: 'Hariri bio, hali ya nje ya mtandao, na ikoni. Jina halibadilishwi hapa.',
     anonymousIcon: 'Ikoni ya siri',
@@ -146,4 +146,20 @@ export const translations = {
     goOffline: 'Nenda nje ya mtandao',
     goOfflineHelp: 'Ukikaa nje ya mtandao, wengine hawawezi kukupata kwenye utafutaji.',
     saveProfile: 'Hifadhi wasifu',
-    changePassword: 'Badilisha 
+    changePassword: 'Badilisha nenosiri',
+    changePasswordHelp:
+      'Kwa usalama, tunatuma barua pepe ya uthibitisho. Fungua kiungo kuweka nenosiri jipya.',
+    sendPasswordEmail: 'Tuma barua pepe ya kubadilisha nenosiri',
+  },
+} as const
+
+export function getLang(): Lang {
+  if (typeof window === 'undefined') return 'en'
+  const saved = localStorage.getItem('vanish_lang')
+  return saved === 'sw' ? 'sw' : 'en'
+}
+
+export function setLang(lang: Lang) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem('vanish_lang', lang)
+}
