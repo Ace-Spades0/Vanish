@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
 const ANON_ICONS = ['🎭', '👻', '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🌙', '⭐', '🔥']
 
@@ -18,8 +19,12 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [sendingPassword, setSendingPassword] = useState(false)
+  const [lang, setLangState] = useState<Lang>('en')
+  const t = translations[lang]
 
   useEffect(() => {
+    setLangState(getLang())
+
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
@@ -54,9 +59,13 @@ export default function ProfilePage() {
     load()
   }, [])
 
+  const changeLang = (next: Lang) => {
+    setLang(next)
+    setLangState(next)
+  }
+
   const saveProfile = async () => {
     if (!user) return
-
     const cleanBio = bio.trim().slice(0, 20)
     setSaving(true)
     setMessage('')
@@ -70,19 +79,16 @@ export default function ProfilePage() {
       })
       .eq('id', user.id)
 
-    if (error) {
-      setMessage(error.message)
-    } else {
+    if (error) setMessage(error.message)
+    else {
       setBio(cleanBio)
       setMessage('Profile saved')
     }
-
     setSaving(false)
   }
 
   const sendPasswordChangeEmail = async () => {
     if (!user?.email) return
-
     setSendingPassword(true)
     setPasswordMessage('')
 
@@ -90,52 +96,56 @@ export default function ProfilePage() {
       redirectTo: `${window.location.origin}/auth`,
     })
 
-    if (error) {
-      setPasswordMessage(error.message)
-    } else {
-      setPasswordMessage('Password change email sent. Check your inbox to confirm and set a new password.')
-    }
-
+    if (error) setPasswordMessage(error.message)
+    else setPasswordMessage('Password change email sent. Check your inbox.')
     setSendingPassword(false)
   }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading profile...</p>
+        <p className="text-zinc-400">{t.loading}</p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-white px-4 py-10">
-      <div className="max-w-md mx-auto">
+    <div className="min-h-screen bg-black text-white px-4 py-10 relative">
+      <div className="absolute top-4 right-4 flex gap-2">
         <button
-          onClick={() => router.push('/home')}
-          className="text-sm text-zinc-400 hover:text-white mb-8"
+          onClick={() => changeLang('en')}
+          className={`text-xs px-3 py-1.5 rounded-full border ${
+            lang === 'en' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+          }`}
         >
-          ← Back to Home
+          EN
+        </button>
+        <button
+          onClick={() => changeLang('sw')}
+          className={`text-xs px-3 py-1.5 rounded-full border ${
+            lang === 'sw' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+          }`}
+        >
+          SW
+        </button>
+      </div>
+
+      <div className="max-w-md mx-auto">
+        <button onClick={() => router.push('/home')} className="text-sm text-zinc-400 hover:text-white mb-8">
+          {t.backHome}
         </button>
 
-        <h1 className="text-3xl font-bold mb-2">Profile</h1>
-        <p className="text-zinc-500 text-sm mb-8">
-          Edit bio, offline mode, and anonymous icon. Username cannot be changed here.
-        </p>
+        <h1 className="text-3xl font-bold mb-2">{t.profileTitle}</h1>
+        <p className="text-zinc-500 text-sm mb-8">{t.profileHelp}</p>
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6 shadow-2xl">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
-              Username
-            </p>
-            <p className="text-2xl font-semibold text-cyan-400">
-              {username || 'No username'}
-            </p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">{t.username}</p>
+            <p className="text-2xl font-semibold text-cyan-400">{username || t.noUsername}</p>
           </div>
 
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
-              Anonymous icon
-            </p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">{t.anonymousIcon}</p>
             <div className="grid grid-cols-6 gap-2">
               {ANON_ICONS.map((icon) => (
                 <button
@@ -152,20 +162,14 @@ export default function ProfilePage() {
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => setAvatarIcon('')}
-              className="mt-3 text-xs text-zinc-400 hover:text-white"
-            >
-              Clear icon
+            <button type="button" onClick={() => setAvatarIcon('')} className="mt-3 text-xs text-zinc-400 hover:text-white">
+              {t.clearIcon}
             </button>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-                Bio
-              </p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">{t.bio}</p>
               <p className="text-xs text-zinc-500">{bio.length}/20</p>
             </div>
             <input
@@ -173,30 +177,22 @@ export default function ProfilePage() {
               value={bio}
               maxLength={20}
               onChange={(e) => setBio(e.target.value)}
-              placeholder="Max 20 characters"
+              placeholder={t.maxBio}
               className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
             />
           </div>
 
           <div className="flex items-center justify-between bg-zinc-800/70 border border-zinc-700 rounded-2xl px-4 py-3">
             <div>
-              <p className="font-medium">Go offline</p>
-              <p className="text-xs text-zinc-400 mt-1">
-                When offline, others cannot find you in Search.
-              </p>
+              <p className="font-medium">{t.goOffline}</p>
+              <p className="text-xs text-zinc-400 mt-1">{t.goOfflineHelp}</p>
             </div>
             <button
               type="button"
               onClick={() => setIsOffline(!isOffline)}
-              className={`w-14 h-8 rounded-full p-1 transition ${
-                isOffline ? 'bg-cyan-500' : 'bg-zinc-600'
-              }`}
+              className={`w-14 h-8 rounded-full p-1 transition ${isOffline ? 'bg-cyan-500' : 'bg-zinc-600'}`}
             >
-              <div
-                className={`w-6 h-6 bg-white rounded-full transition ${
-                  isOffline ? 'translate-x-6' : 'translate-x-0'
-                }`}
-              />
+              <div className={`w-6 h-6 bg-white rounded-full transition ${isOffline ? 'translate-x-6' : 'translate-x-0'}`} />
             </button>
           </div>
 
@@ -205,30 +201,23 @@ export default function ProfilePage() {
             disabled={saving}
             className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3.5 rounded-2xl transition"
           >
-            {saving ? 'Saving...' : 'Save profile'}
+            {saving ? t.pleaseWait : t.saveProfile}
           </button>
 
-          {message && (
-            <p className="text-center text-sm text-cyan-400">{message}</p>
-          )}
+          {message && <p className="text-center text-sm text-cyan-400">{message}</p>}
         </div>
 
-        {/* Change password */}
-        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6">
-          <h2 className="text-lg font-semibold mb-2">Change password</h2>
-          <p className="text-sm text-zinc-400 mb-4">
-            For security, we send a confirmation email. Open the email link to set a new password.
-          </p>
+        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
+          <h2 className="text-lg font-semibold mb-2">{t.changePassword}</h2>
+          <p className="text-sm text-zinc-400 mb-4">{t.changePasswordHelp}</p>
           <button
             onClick={sendPasswordChangeEmail}
             disabled={sendingPassword}
             className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
           >
-            {sendingPassword ? 'Sending...' : 'Send password change email'}
+            {sendingPassword ? t.pleaseWait : t.sendPasswordEmail}
           </button>
-          {passwordMessage && (
-            <p className="mt-4 text-center text-sm text-cyan-400">{passwordMessage}</p>
-          )}
+          {passwordMessage && <p className="mt-4 text-center text-sm text-cyan-400">{passwordMessage}</p>}
         </div>
       </div>
     </div>

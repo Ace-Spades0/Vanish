@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Turnstile } from '@marsidev/react-turnstile'
+import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
 const TEMP_EMAIL_DOMAINS = [
   'tempmail.com',
@@ -34,10 +35,13 @@ export default function AuthPage() {
   const [captchaToken, setCaptchaToken] = useState('')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [lang, setLangState] = useState<Lang>('en')
   const router = useRouter()
+  const t = translations[lang]
 
   useEffect(() => {
-    // If user opened the email recovery link
+    setLangState(getLang())
+
     const hash = typeof window !== 'undefined' ? window.location.hash : ''
     if (hash.includes('type=recovery')) {
       setMode('reset')
@@ -50,10 +54,13 @@ export default function AuthPage() {
       }
     })
 
-    return () => {
-      subscription.unsubscribe()
-    }
+    return () => subscription.unsubscribe()
   }, [])
+
+  const changeLang = (next: Lang) => {
+    setLang(next)
+    setLangState(next)
+  }
 
   const handleSignUp = async () => {
     setLoading(true)
@@ -64,19 +71,16 @@ export default function AuthPage() {
       setLoading(false)
       return
     }
-
     if (password.length < 6) {
       setMessage('Password must be at least 6 characters')
       setLoading(false)
       return
     }
-
     if (isTempEmail(email)) {
       setMessage('Temporary emails are not allowed. Please use a real email.')
       setLoading(false)
       return
     }
-
     if (!captchaToken) {
       setMessage('Please complete the CAPTCHA')
       setLoading(false)
@@ -90,7 +94,6 @@ export default function AuthPage() {
 
     if (error) setMessage(error.message)
     else setMessage('Account created! Please check your email to confirm.')
-
     setLoading(false)
   }
 
@@ -103,7 +106,6 @@ export default function AuthPage() {
       setLoading(false)
       return
     }
-
     if (!captchaToken) {
       setMessage('Please complete the CAPTCHA')
       setLoading(false)
@@ -135,7 +137,6 @@ export default function AuthPage() {
         setLoading(false)
         return
       }
-
       if (profile?.status === 'banned') {
         await supabase.auth.signOut()
         setMessage('Your account has been banned.')
@@ -144,7 +145,6 @@ export default function AuthPage() {
       }
     }
 
-    setMessage('Login successful!')
     router.push('/home')
     setLoading(false)
   }
@@ -152,7 +152,6 @@ export default function AuthPage() {
   const handleForgotPassword = async () => {
     setLoading(true)
     setMessage('')
-
     if (!email.trim()) {
       setMessage('Please enter your email')
       setLoading(false)
@@ -165,7 +164,6 @@ export default function AuthPage() {
 
     if (error) setMessage(error.message)
     else setMessage('Password reset link sent! Check your email.')
-
     setLoading(false)
   }
 
@@ -178,17 +176,13 @@ export default function AuthPage() {
       setLoading(false)
       return
     }
-
     if (newPassword !== confirmPassword) {
       setMessage('Passwords do not match')
       setLoading(false)
       return
     }
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
-    })
-
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
     if (error) {
       setMessage(error.message)
       setLoading(false)
@@ -199,92 +193,102 @@ export default function AuthPage() {
     setMode('login')
     setNewPassword('')
     setConfirmPassword('')
-    setPassword('')
     setLoading(false)
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-zinc-900 p-8 rounded-2xl shadow-lg">
-        <h1 className="text-3xl font-bold mb-2 text-center">VANISH</h1>
-        <p className="text-zinc-400 text-center mb-8">Talk freely. Stay private.</p>
+    <div className="min-h-screen bg-black text-white flex items-center justify-center px-4 relative">
+      <div className="absolute top-4 right-4 flex gap-2">
+        <button
+          onClick={() => changeLang('en')}
+          className={`text-xs px-3 py-1.5 rounded-full border ${
+            lang === 'en' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+          }`}
+        >
+          EN
+        </button>
+        <button
+          onClick={() => changeLang('sw')}
+          className={`text-xs px-3 py-1.5 rounded-full border ${
+            lang === 'sw' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+          }`}
+        >
+          SW
+        </button>
+      </div>
+
+      <div className="w-full max-w-md bg-zinc-900/90 backdrop-blur border border-zinc-800 p-8 rounded-3xl shadow-2xl">
+        <h1 className="text-3xl font-bold mb-2 text-center">{t.appName}</h1>
+        <p className="text-zinc-400 text-center mb-8">{t.tagline}</p>
 
         {mode === 'reset' ? (
           <>
-            <p className="text-zinc-400 text-sm text-center mb-6">
-              Set a new password for your account.
-            </p>
-
+            <p className="text-zinc-400 text-sm text-center mb-6">{t.setNewPassword}</p>
             <div className="relative mb-4">
               <input
                 type={showPassword ? 'text' : 'password'}
-                placeholder="New password"
+                placeholder={t.newPassword}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full p-3 pr-16 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+                className="w-full p-3 pr-16 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 hover:text-cyan-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400"
               >
-                {showPassword ? 'Hide' : 'Show'}
+                {showPassword ? t.hide : t.show}
               </button>
             </div>
-
             <input
               type={showPassword ? 'text' : 'password'}
-              placeholder="Confirm new password"
+              placeholder={t.confirmNewPassword}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full p-3 mb-6 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+              className="w-full p-3 mb-6 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
             />
-
             <button
               onClick={handleUpdatePassword}
               disabled={loading}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg mb-3 transition"
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl mb-3 transition"
             >
-              {loading ? 'Please wait...' : 'Update password'}
+              {loading ? t.pleaseWait : t.updatePassword}
             </button>
-
             <button
               onClick={() => {
                 setMode('login')
                 setMessage('')
               }}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-lg transition"
+              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-xl transition"
             >
-              Back to Login
+              {t.backToLogin}
             </button>
           </>
         ) : mode === 'login' ? (
           <>
             <input
               type="email"
-              placeholder="Email"
+              placeholder={t.email}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3 mb-4 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+              className="w-full p-3 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
             />
-
             <div className="relative mb-2">
               <input
                 type={showPassword ? 'text' : 'password'}
-                placeholder="Password"
+                placeholder={t.password}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 pr-16 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+                className="w-full p-3 pr-16 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 hover:text-cyan-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400"
               >
-                {showPassword ? 'Hide' : 'Show'}
+                {showPassword ? t.hide : t.show}
               </button>
             </div>
-
             <div className="text-right mb-4">
               <button
                 onClick={() => {
@@ -293,17 +297,15 @@ export default function AuthPage() {
                 }}
                 className="text-sm text-cyan-400 hover:text-cyan-300"
               >
-                Forgot password?
+                {t.forgotPassword}
               </button>
             </div>
-
             <div className="mb-4 flex justify-center">
               <Turnstile
                 siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
                 onSuccess={(token) => setCaptchaToken(token)}
               />
             </div>
-
             <label className="flex items-start gap-2 mb-4 text-xs text-zinc-400">
               <input
                 type="checkbox"
@@ -312,86 +314,69 @@ export default function AuthPage() {
                 className="mt-0.5"
               />
               <span>
-                I accept the{' '}
-                <button
-                  type="button"
-                  onClick={() => router.push('/terms')}
-                  className="text-cyan-400 hover:underline"
-                >
-                  Terms of Service
+                {t.acceptTerms}{' '}
+                <button type="button" onClick={() => router.push('/terms')} className="text-cyan-400 hover:underline">
+                  {t.terms}
                 </button>{' '}
-                and{' '}
-                <button
-                  type="button"
-                  onClick={() => router.push('/privacy')}
-                  className="text-cyan-400 hover:underline"
-                >
-                  Privacy & Security
+                {t.and}{' '}
+                <button type="button" onClick={() => router.push('/privacy')} className="text-cyan-400 hover:underline">
+                  {t.privacy}
                 </button>
               </span>
             </label>
-
             <button
               onClick={handleSignUp}
               disabled={loading || !acceptedTerms}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-black font-medium py-3 rounded-lg mb-3 transition"
+              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-black font-medium py-3 rounded-xl mb-3 transition"
             >
-              {loading ? 'Please wait...' : 'Sign Up'}
+              {loading ? t.pleaseWait : t.signUp}
             </button>
-
             <button
               onClick={handleLogin}
               disabled={loading || !acceptedTerms}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition"
+              className="w-full bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white font-medium py-3 rounded-xl transition"
             >
-              {loading ? 'Please wait...' : 'Login'}
+              {loading ? t.pleaseWait : t.login}
             </button>
           </>
         ) : (
           <>
-            <p className="text-zinc-400 text-sm text-center mb-6">
-              Enter your email and we’ll send you a link to reset your password.
-            </p>
-
+            <p className="text-zinc-400 text-sm text-center mb-6">{t.resetHelp}</p>
             <input
               type="email"
-              placeholder="Email"
+              placeholder={t.email}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3 mb-6 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+              className="w-full p-3 mb-6 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
             />
-
             <button
               onClick={handleForgotPassword}
               disabled={loading}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg mb-3 transition"
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl mb-3 transition"
             >
-              {loading ? 'Please wait...' : 'Send Reset Link'}
+              {loading ? t.pleaseWait : t.sendResetLink}
             </button>
-
             <button
               onClick={() => {
                 setMode('login')
                 setMessage('')
               }}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-lg transition"
+              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-xl transition"
             >
-              Back to Login
+              {t.backToLogin}
             </button>
           </>
         )}
 
-        {message && (
-          <p className="mt-6 text-center text-sm text-cyan-400">{message}</p>
-        )}
+        {message && <p className="mt-6 text-center text-sm text-cyan-400">{message}</p>}
 
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
           <button onClick={() => router.push('/terms')} className="hover:text-cyan-400 transition">
-            Terms
+            {t.termsShort}
           </button>
           <span>•</span>
           <button onClick={() => router.push('/privacy')} className="hover:text-cyan-400 transition">
-            Privacy
+            {t.privacyShort}
           </button>
         </div>
       </div>
