@@ -63,12 +63,19 @@ export default function HomePage() {
         return
       }
 
-      if (profileData?.username && profileData?.username_claimed_at) {
-        const hoursPassed =
-          (Date.now() - new Date(profileData.username_claimed_at).getTime()) /
-          (1000 * 60 * 60)
-        if (hoursPassed < 24) setProfile(profileData)
-        else setProfile(null)
+      // Permanent usernames (admin LESTAT) never expire
+      if (profileData?.username) {
+        if (profileData.is_permanent_username) {
+          setProfile(profileData)
+        } else if (profileData.username_claimed_at) {
+          const hoursPassed =
+            (Date.now() - new Date(profileData.username_claimed_at).getTime()) /
+            (1000 * 60 * 60)
+          if (hoursPassed < 24) setProfile(profileData)
+          else setProfile(null)
+        } else {
+          setProfile(null)
+        }
       } else {
         setProfile(null)
       }
@@ -201,6 +208,11 @@ export default function HomePage() {
               <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
                 {t.privateByDesign}
               </p>
+              {profile?.is_permanent_username ? (
+                <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-purple-900/50 text-purple-300 border border-purple-700">
+                  Permanent
+                </p>
+              ) : null}
               {profile?.is_offline ? (
                 <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-yellow-300 border border-zinc-700">
                   {t.offline}

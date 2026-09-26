@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
+const ADMIN_PERMANENT_USERNAME = 'lestat'
+
 export async function POST(req: Request) {
   try {
     const { username } = await req.json()
 
     if (!username || typeof username !== 'string') {
-      return NextResponse.json(
-        { error: 'Username is required' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Username is required' }, { status: 400 })
     }
 
     const cleanUsername = username.trim().toLowerCase()
@@ -36,12 +36,8 @@ export async function POST(req: Request) {
     }
 
     const authHeader = req.headers.get('Authorization')
-
     if (!authHeader) {
-      return NextResponse.json(
-        { error: 'You must be logged in' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'You must be logged in' }, { status: 401 })
     }
 
     const supabaseAuth = createClient(
@@ -62,9 +58,16 @@ export async function POST(req: Request) {
     } = await supabaseAuth.auth.getUser()
 
     if (userError || !user) {
+      return NextResponse.json({ error: 'You must be logged in' }, { status: 401 })
+    }
+
+    const isAdmin = user.id === ADMIN_ID
+
+    // Only admin can use LESTAT
+    if (cleanUsername === ADMIN_PERMANENT_USERNAME && !isAdmin) {
       return NextResponse.json(
-        { error: 'You must be logged in' },
-        { status: 401 }
+        { error: 'This username is reserved' },
+        { status: 403 }
       )
     }
 
@@ -74,11 +77,11 @@ export async function POST(req: Request) {
       .eq('username', cleanUsername)
       .maybeSingle()
 
-    if (existing) {
+    // Allow admin to keep/reclaim their own permanent username
+    if (existing && existing.id !== user.id) {
       return NextResponse.json(
         {
-          error:
-            'This username has already been used and cannot be used again',
+          error: 'This username has already been used and cannot be used again',
         },
         { status: 409 }
       )
@@ -86,11 +89,12 @@ export async function POST(req: Request) {
 
     const { data: myProfile } = await supabaseAuth
       .from('profiles')
-      .select('username, username_claimed_at')
+      .select('username, username_claimed_at, is_permanent_username')
       .eq('id', user.id)
       .maybeSingle()
 
-    if (myProfile?.username && myProfile.username_claimed_at) {
+    // Normal users: block if they already have an active temporary username
+    if (!isAdmin && myProfile?.username && myProfile.username_claimed_at) {
       const hoursPassed =
         (Date.now() - new Date(myProfile.username_claimed_at).getTime()) /
         (1000 * 60 * 60)
@@ -103,17 +107,35 @@ export async function POST(req: Request) {
       }
     }
 
+    // Admin permanent username stays permanent
+    if (isAdmin && myProfile?.is_permanent_username && myProfile.username) {
+      // Admin already has permanent username — do not force change
+      if (cleanUsername !== myProfile.username.toLowerCase()) {
+        return NextResponse.json(
+          { error: 'Your permanent username cannot be changed' },
+          { status: 400 }
+        )
+      }
+    }
+
+    const isPermanent =
+      isAdmin && cleanUsername === ADMIN_PERMANENT_USERNAME
+
     const { error } = await supabaseAuth.from('profiles').upsert({
       id: user.id,
-      username: cleanUsername,
+      username: isPermanent ? 'LESTAT' : cleanUsername,
       username_claimed_at: new Date().toISOString(),
+      is_permanent_username: isPermanent,
     })
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({
+      success: true,
+      permanent: isPermanent,
+    })
   } catch (err: any) {
     return NextResponse.json(
       { error: err.message || 'Something went wrong' },

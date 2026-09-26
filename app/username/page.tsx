@@ -4,27 +4,37 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
+
 export default function UsernamePage() {
   const [username, setUsername] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
     const checkExisting = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-
       if (!user) {
         router.push('/auth')
         return
       }
 
+      setIsAdmin(user.id === ADMIN_ID)
+
       const { data: profile } = await supabase
         .from('profiles')
-        .select('username, username_claimed_at')
+        .select('username, username_claimed_at, is_permanent_username')
         .eq('id', user.id)
         .maybeSingle()
+
+      // Permanent username never expires
+      if (profile?.is_permanent_username && profile.username) {
+        router.push('/home')
+        return
+      }
 
       if (profile?.username && profile.username_claimed_at) {
         const hoursPassed =
@@ -35,6 +45,11 @@ export default function UsernamePage() {
           router.push('/home')
           return
         }
+      }
+
+      // Admin default suggestion
+      if (user.id === ADMIN_ID) {
+        setUsername('LESTAT')
       }
 
       setChecking(false)
@@ -48,7 +63,6 @@ export default function UsernamePage() {
     setLoading(true)
 
     const { data: { session } } = await supabase.auth.getSession()
-
     if (!session) {
       setMessage('You must be logged in')
       setLoading(false)
@@ -70,7 +84,11 @@ export default function UsernamePage() {
       setMessage(data.error)
       setLoading(false)
     } else {
-      setMessage('Username saved successfully!')
+      setMessage(
+        data.permanent
+          ? 'Permanent username LESTAT saved!'
+          : 'Username saved successfully!'
+      )
       setTimeout(() => {
         router.push('/home')
       }, 800)
@@ -87,10 +105,12 @@ export default function UsernamePage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
-      <div className="bg-zinc-900 p-8 rounded-2xl w-full max-w-md shadow-lg">
+      <div className="bg-zinc-900 p-8 rounded-2xl w-full max-w-md shadow-lg border border-zinc-800">
         <h1 className="text-3xl font-bold mb-2 text-center">Pick a username</h1>
         <p className="text-zinc-400 text-center mb-6 text-sm">
-          This name is only yours for 24 hours
+          {isAdmin
+            ? 'Admin username LESTAT is permanent'
+            : 'This name is only yours for 24 hours'}
         </p>
 
         <input
