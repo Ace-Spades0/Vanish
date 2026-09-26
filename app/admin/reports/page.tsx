@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 // PUT YOUR CURRENT ADMIN USER UUID HERE
-const ADMIN_ID = 'YOUR_ADMIN_USER_ID_HERE'
+const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
 export default function ReportsDashboard() {
   const router = useRouter()
