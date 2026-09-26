@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Turnstile } from '@marsidev/react-turnstile'
@@ -26,13 +26,34 @@ function isTempEmail(email: string) {
 export default function AuthPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const [mode, setMode] = useState<'login' | 'forgot'>('login')
+  const [mode, setMode] = useState<'login' | 'forgot' | 'reset'>('login')
   const [captchaToken, setCaptchaToken] = useState('')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    // If user opened the email recovery link
+    const hash = typeof window !== 'undefined' ? window.location.hash : ''
+    if (hash.includes('type=recovery')) {
+      setMode('reset')
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setMode('reset')
+        setMessage('Enter your new password below.')
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
 
   const handleSignUp = async () => {
     setLoading(true)
@@ -148,13 +169,96 @@ export default function AuthPage() {
     setLoading(false)
   }
 
+  const handleUpdatePassword = async () => {
+    setLoading(true)
+    setMessage('')
+
+    if (newPassword.length < 6) {
+      setMessage('Password must be at least 6 characters')
+      setLoading(false)
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setMessage('Passwords do not match')
+      setLoading(false)
+      return
+    }
+
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    })
+
+    if (error) {
+      setMessage(error.message)
+      setLoading(false)
+      return
+    }
+
+    setMessage('Password updated successfully. You can now log in.')
+    setMode('login')
+    setNewPassword('')
+    setConfirmPassword('')
+    setPassword('')
+    setLoading(false)
+  }
+
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-zinc-900 p-8 rounded-2xl shadow-lg">
         <h1 className="text-3xl font-bold mb-2 text-center">VANISH</h1>
         <p className="text-zinc-400 text-center mb-8">Talk freely. Stay private.</p>
 
-        {mode === 'login' ? (
+        {mode === 'reset' ? (
+          <>
+            <p className="text-zinc-400 text-sm text-center mb-6">
+              Set a new password for your account.
+            </p>
+
+            <div className="relative mb-4">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="New password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full p-3 pr-16 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 hover:text-cyan-300"
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
+
+            <input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Confirm new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full p-3 mb-6 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+            />
+
+            <button
+              onClick={handleUpdatePassword}
+              disabled={loading}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg mb-3 transition"
+            >
+              {loading ? 'Please wait...' : 'Update password'}
+            </button>
+
+            <button
+              onClick={() => {
+                setMode('login')
+                setMessage('')
+              }}
+              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-lg transition"
+            >
+              Back to Login
+            </button>
+          </>
+        ) : mode === 'login' ? (
           <>
             <input
               type="email"
