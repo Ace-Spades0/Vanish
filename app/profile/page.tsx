@@ -5,7 +5,20 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
-const ANON_ICONS = ['🎭', '👻', '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🌙', '⭐', '🔥']
+const ANON_ICONS = [
+  // masks / mystery
+  '🎭', '👻', '💀', '☠️', '👽', '🤖', '🥷', '🤡', '👺', '👹', '👿', '😈',
+  // animals
+  '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄', '🐲', '🦇', '🕷️', '🦂',
+  '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶',
+  // space / night
+  '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑',
+  // fire / weather / energy
+  '🔥', '⚡', '💥', '🌪️', '❄️', '🌊', '🫧', '🧿',
+  // objects / weird
+  '👁️', '🧠', '🦴', '🪞', '🎩', '🕶️', '🎱', '🃏', '♟️', '🔮',
+  '🧱', '🗝️', '🗿', '🎪', '🎯', '🎲', '🧩', '🪬',
+]
 
 export default function ProfilePage() {
   const router = useRouter()
