@@ -8,17 +8,31 @@ import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 const ANON_ICONS = [
   // masks / mystery
   '🎭', '👻', '💀', '☠️', '👽', '🤖', '🥷', '🤡', '👺', '👹', '👿', '😈',
+  '🎃', ' quantitatively', '🧟', '🧛', '🧜', '🧞', '🧚', '🧙',
   // animals
   '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄', '🐲', '🦇', '🕷️', '🦂',
-  '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶',
+  '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶', '🐨', '🐻',
+  '🐯', '🐮', '🐷', '🐸', '🐵', '🐔', '🦅', '🦆', '🦢', '🦜', '🦩', '🦚',
+  '🐢', '🦕', '🦖', '🐳', '🐋', '🐬', '🦭', '🦦', '🦥', '🦨', '🦡', '🦫',
   // space / night
-  '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑',
+  '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑', '🌕', '🛰️',
+  '💫', '🌠', '🌎', '🌍', '🌏',
   // fire / weather / energy
-  '🔥', '⚡', '💥', '🌪️', '❄️', '🌊', '🫧', '🧿',
-  // objects / weird
+  '🔥', '⚡', '💥', '🌪️', '❄️', '🌊', '🫧', '🧿', '☁️', '🌧️', '⛈️', '🌈',
+  '☀️', '🌤️', '🌫️', '🌪️',
+  // objects / weird / symbols
   '👁️', '🧠', '🦴', '🪞', '🎩', '🕶️', '🎱', '🃏', '♟️', '🔮',
-  '🧱', '🗝️', '🗿', '🎪', '🎯', '🎲', '🧩', '🪬',
+  '🧱', '🗝️', '🗿', '🎪', '🎯', '🎲', '🧩', '🪬', '💎', '👑',
+  '🗡️', '⚔️', '🛡️', '🏹', '💣', '🧨', '🪓', '🪄', '📿', '💍',
+  '⌚', '📱', '💻', '🖥️', '⌨️', '🖱️', '📷', '📹', '🎥', '📺',
+  '📻', '🎙️', ' bell', '🎧', '🎵', '🎶', '🎼', '🎹', '🥁', '🎸',
+  '😈', '💀', '🔥', '⚡', '🌀', '♠️', '♥️', '♦️', '♣️', '🃏',
+  '∞', '※', '☯', '☮', '☢', '☣', '✪', '✦', '✧', '✧',
+  '◆', '◇', '○', '●', '□', '■', '△', '▲', '▽', '▼',
+  '⊕', '⊗', '⊙', '⊚', '⋆', '⋆', '✫', '✬', '✭', '✮',
 ]
+
+const INITIAL_VISIBLE = 12
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -32,8 +46,15 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [sendingPassword, setSendingPassword] = useState(false)
+  const [showAllIcons, setShowAllIcons] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const t = translations[lang]
+
+  // unique list (remove duplicates)
+  const uniqueIcons = Array.from(new Set(ANON_ICONS))
+  const visibleIcons = showAllIcons
+    ? uniqueIcons
+    : uniqueIcons.slice(0, INITIAL_VISIBLE)
 
   useEffect(() => {
     setLangState(getLang())
@@ -128,7 +149,9 @@ export default function ProfilePage() {
         <button
           onClick={() => changeLang('en')}
           className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'en' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+            lang === 'en'
+              ? 'bg-cyan-500 text-black border-cyan-400'
+              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
           }`}
         >
           EN
@@ -136,7 +159,9 @@ export default function ProfilePage() {
         <button
           onClick={() => changeLang('sw')}
           className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'sw' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+            lang === 'sw'
+              ? 'bg-cyan-500 text-black border-cyan-400'
+              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
           }`}
         >
           SW
@@ -144,7 +169,10 @@ export default function ProfilePage() {
       </div>
 
       <div className="max-w-md mx-auto">
-        <button onClick={() => router.push('/home')} className="text-sm text-zinc-400 hover:text-white mb-8">
+        <button
+          onClick={() => router.push('/home')}
+          className="text-sm text-zinc-400 hover:text-white mb-8"
+        >
           {t.backHome}
         </button>
 
@@ -153,16 +181,27 @@ export default function ProfilePage() {
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6 shadow-2xl">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">{t.username}</p>
-            <p className="text-2xl font-semibold text-cyan-400">{username || t.noUsername}</p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
+              {t.username}
+            </p>
+            <p className="text-2xl font-semibold text-cyan-400">
+              {username || t.noUsername}
+            </p>
           </div>
 
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">{t.anonymousIcon}</p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
+              {t.anonymousIcon}
+            </p>
+
+            {avatarIcon ? (
+              <div className="mb-3 text-center text-3xl">{avatarIcon}</div>
+            ) : null}
+
             <div className="grid grid-cols-6 gap-2">
-              {ANON_ICONS.map((icon) => (
+              {visibleIcons.map((icon, index) => (
                 <button
-                  key={icon}
+                  key={`${icon}-${index}`}
                   type="button"
                   onClick={() => setAvatarIcon(icon)}
                   className={`h-11 rounded-xl text-xl flex items-center justify-center border transition ${
@@ -175,14 +214,35 @@ export default function ProfilePage() {
                 </button>
               ))}
             </div>
-            <button type="button" onClick={() => setAvatarIcon('')} className="mt-3 text-xs text-zinc-400 hover:text-white">
-              {t.clearIcon}
-            </button>
+
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setAvatarIcon('')}
+                className="text-xs text-zinc-400 hover:text-white"
+              >
+                {t.clearIcon}
+              </button>
+
+              {uniqueIcons.length > INITIAL_VISIBLE && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllIcons(!showAllIcons)}
+                  className="text-xs text-cyan-400 hover:text-cyan-300"
+                >
+                  {showAllIcons
+                    ? 'Show less'
+                    : `View more anonymous icons (${uniqueIcons.length - INITIAL_VISIBLE}+)`}
+                </button>
+              )}
+            </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">{t.bio}</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                {t.bio}
+              </p>
               <p className="text-xs text-zinc-500">{bio.length}/20</p>
             </div>
             <input
@@ -203,9 +263,15 @@ export default function ProfilePage() {
             <button
               type="button"
               onClick={() => setIsOffline(!isOffline)}
-              className={`w-14 h-8 rounded-full p-1 transition ${isOffline ? 'bg-cyan-500' : 'bg-zinc-600'}`}
+              className={`w-14 h-8 rounded-full p-1 transition ${
+                isOffline ? 'bg-cyan-500' : 'bg-zinc-600'
+              }`}
             >
-              <div className={`w-6 h-6 bg-white rounded-full transition ${isOffline ? 'translate-x-6' : 'translate-x-0'}`} />
+              <div
+                className={`w-6 h-6 bg-white rounded-full transition ${
+                  isOffline ? 'translate-x-6' : 'translate-x-0'
+                }`}
+              />
             </button>
           </div>
 
@@ -217,7 +283,9 @@ export default function ProfilePage() {
             {saving ? t.pleaseWait : t.saveProfile}
           </button>
 
-          {message && <p className="text-center text-sm text-cyan-400">{message}</p>}
+          {message && (
+            <p className="text-center text-sm text-cyan-400">{message}</p>
+          )}
         </div>
 
         <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
@@ -230,7 +298,11 @@ export default function ProfilePage() {
           >
             {sendingPassword ? t.pleaseWait : t.sendPasswordEmail}
           </button>
-          {passwordMessage && <p className="mt-4 text-center text-sm text-cyan-400">{passwordMessage}</p>}
+          {passwordMessage && (
+            <p className="mt-4 text-center text-sm text-cyan-400">
+              {passwordMessage}
+            </p>
+          )}
         </div>
       </div>
     </div>
