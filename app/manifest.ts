@@ -4,14 +4,12 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'VANISH',
     short_name: 'VANISH',
-    description: 'Talk freely. Stay private. Temporary usernames and vanishing messages.',
+    description: 'Talk freely. Stay private.',
     start_url: '/',
     scope: '/',
     display: 'standalone',
-    orientation: 'portrait',
     background_color: '#000000',
     theme_color: '#000000',
-    categories: ['social', 'communication'],
     icons: [
       {
         src: '/icon-192.png',
@@ -24,12 +22,6 @@ export default function manifest(): MetadataRoute.Manifest {
         sizes: '512x512',
         type: 'image/png',
         purpose: 'any',
-      },
-      {
-        src: '/icon-512.png',
-        sizes: '512x512',
-        type: 'image/png',
-        purpose: 'maskable',
       },
     ],
   }

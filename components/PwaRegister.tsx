@@ -7,14 +7,19 @@ export default function PwaRegister() {
     if (typeof window === 'undefined') return
     if (!('serviceWorker' in navigator)) return
 
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then(() => {
-        // registered
-      })
-      .catch(() => {
-        // ignore registration errors in dev
-      })
+    const register = async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('/sw.js', {
+          scope: '/',
+        })
+        await navigator.serviceWorker.ready
+        console.log('VANISH SW registered', reg.scope)
+      } catch (err) {
+        console.error('VANISH SW failed', err)
+      }
+    }
+
+    register()
   }, [])
 
   return null
