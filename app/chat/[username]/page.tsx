@@ -5,6 +5,20 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+function isUsernameActive(profile: {
+  username?: string | null
+  username_claimed_at?: string | null
+  is_permanent_username?: boolean | null
+}) {
+  if (!profile?.username) return false
+  if (profile.is_permanent_username) return true
+  if (!profile.username_claimed_at) return false
+  const hoursPassed =
+    (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+    (1000 * 60 * 60)
+  return hoursPassed < 24
+}
+
 export default function ChatPage() {
   const params = useParams()
   const targetUsername = params.username as string
@@ -44,7 +58,7 @@ export default function ChatPage() {
 
       const { data: myProfile } = await supabase
         .from('profiles')
-        .select('username, username_claimed_at, status')
+        .select('username, username_claimed_at, is_permanent_username, status')
         .eq('id', user.id)
         .maybeSingle()
 
@@ -54,12 +68,7 @@ export default function ChatPage() {
         return
       }
 
-      const hasValidUsername =
-        myProfile?.username &&
-        myProfile.username_claimed_at &&
-        (Date.now() - new Date(myProfile.username_claimed_at).getTime()) / (1000 * 60 * 60) < 24
-
-      if (!hasValidUsername) {
+      if (!isUsernameActive(myProfile || {})) {
         router.push('/username')
         return
       }
@@ -67,19 +76,10 @@ export default function ChatPage() {
       const { data: targetProfile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('username', targetUsername)
+        .ilike('username', targetUsername)
         .maybeSingle()
 
-      if (!targetProfile) {
-        setBlocked(true)
-        setLoading(false)
-        return
-      }
-
-      const hoursPassed =
-        (Date.now() - new Date(targetProfile.username_claimed_at).getTime()) / (1000 * 60 * 60)
-
-      if (hoursPassed >= 24) {
+      if (!targetProfile || !isUsernameActive(targetProfile)) {
         setBlocked(true)
         setLoading(false)
         return
@@ -100,8 +100,8 @@ export default function ChatPage() {
         return
       }
 
-      const myUsername = myProfile.username
-      const convId = [myUsername, targetUsername].sort().join('_')
+      const myUsername = myProfile!.username
+      const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
       await supabase
@@ -120,7 +120,10 @@ export default function ChatPage() {
 
       if (existingMessages && isMounted) {
         setMessages(existingMessages)
-        setFileCount(existingMessages.filter((m) => m.type === 'file' || m.type === 'image').length)
+        setFileCount(
+          existingMessages.filter((m) => m.type === 'file' || m.type === 'image')
+            .length
+        )
         setVideoCount(existingMessages.filter((m) => m.type === 'video').length)
       }
 
@@ -159,7 +162,6 @@ export default function ChatPage() {
     }
 
     init()
-
     return () => {
       isMounted = false
       if (channelRef.current) {
@@ -170,14 +172,12 @@ export default function ChatPage() {
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !user || !conversationId) return
-
     const content = newMessage.trim()
     setNewMessage('')
 
     const myQuestions = messages.filter(
       (m) => m.sender_id === user.id && m.content?.trim().endsWith('?')
     ).length
-
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
     const interrogationDetected = isQuestion && totalQuestions >= 6
@@ -189,14 +189,18 @@ export default function ChatPage() {
         const nextLevel = warningLevel + 1
         setWarningLevel(nextLevel)
         if (nextLevel === 1) {
-          setWarningText('You’re asking a lot of questions. Please slow down.')
+          setWarningText('You are asking a lot of questions. Please slow down.')
         } else {
-          setWarningText('Final warning: continued questioning may shorten this chat.')
+          setWarningText(
+            'Final warning: continued questioning may shorten this chat.'
+          )
         }
         useShortExpiry = false
       } else {
         useShortExpiry = true
-        setWarningText('Anti-interrogation limit applied. New messages in this chat expire in 30 minutes.')
+        setWarningText(
+          'Anti-interrogation limit applied. New messages in this chat expire in 30 minutes.'
+        )
       }
     }
 
@@ -227,7 +231,9 @@ export default function ChatPage() {
 
       if (newCount > 10) {
         await supabase.auth.signOut()
-        alert('Your account has been suspended due to repeated anti-interrogation triggers.')
+        alert(
+          'Your account has been suspended due to repeated anti-interrogation triggers.'
+        )
         router.push('/auth')
       }
     }
@@ -261,7 +267,9 @@ export default function ChatPage() {
     }
 
     const fileName = `${conversationId}/${Date.now()}-${file.name}`
-    const { error } = await supabase.storage.from('chat-photos').upload(fileName, file)
+    const { error } = await supabase.storage
+      .from('chat-photos')
+      .upload(fileName, file)
 
     if (error) {
       alert('Failed to upload file')
@@ -314,24 +322,43 @@ export default function ChatPage() {
   const confirmBlockUser = async () => {
     if (!user || !targetUser) return
 
-    await supabase.from('blocks').insert({
+    const { error } = await supabase.from('blocks').insert({
       blocker_id: user.id,
       blocked_id: targetUser.id,
     })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
 
     setModal(null)
     setBlocked(true)
   }
 
   const confirmReportUser = async () => {
-    if (!user || !targetUser || !reportReason.trim()) return
+    if (!user || !targetUser) {
+      alert('Cannot report right now')
+      return
+    }
 
-    await supabase.from('reports').insert({
+    if (!reportReason.trim()) {
+      alert('Please enter a reason')
+      return
+    }
+
+    // Do NOT send conversation_id as UUID — our chat id is text like "user1_user2"
+    const { error } = await supabase.from('reports').insert({
       reporter_id: user.id,
       reported_id: targetUser.id,
-      conversation_id: conversationId,
-      reason: reportReason.trim(),
+      reason: `${reportReason.trim()} | chat:${conversationId || 'unknown'}`,
+      reviewed: false,
     })
+
+    if (error) {
+      alert('Report failed: ' + error.message)
+      return
+    }
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -345,6 +372,7 @@ export default function ChatPage() {
 
     await supabase.from('profiles').update(updateData).eq('id', targetUser.id)
 
+    alert('Report submitted')
     setReportReason('')
     setModal(null)
   }
@@ -375,7 +403,6 @@ export default function ChatPage() {
 
   return (
     <div className="h-[100dvh] bg-black text-white flex flex-col overflow-hidden">
-      {/* Header */}
       <div className="bg-zinc-900/95 backdrop-blur px-3 py-2 border-b border-zinc-800 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -384,7 +411,6 @@ export default function ChatPage() {
               {targetUsername}
             </h1>
           </div>
-
           <div className="flex items-center gap-1 flex-wrap justify-end">
             <span className="text-[10px] text-zinc-400 bg-zinc-800 px-2 py-1 rounded-full">
               {fileCount}/4
@@ -426,7 +452,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-10">
@@ -438,7 +463,9 @@ export default function ChatPage() {
           messages.map((msg) => (
             <div
               key={msg.id}
-              className={`flex ${msg.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}
+              className={`flex ${
+                msg.sender_id === user?.id ? 'justify-end' : 'justify-start'
+              }`}
             >
               <div
                 className={`relative max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
@@ -465,7 +492,6 @@ export default function ChatPage() {
                     </a>
                   </div>
                 )}
-
                 {msg.type === 'video' && (
                   <div className="relative">
                     <video src={msg.content} controls className="rounded-xl max-h-40" />
@@ -480,7 +506,6 @@ export default function ChatPage() {
                     </a>
                   </div>
                 )}
-
                 {msg.type === 'file' && (
                   <div className="flex items-center gap-2">
                     <span>📄</span>
@@ -495,9 +520,7 @@ export default function ChatPage() {
                     </a>
                   </div>
                 )}
-
                 {msg.type === 'text' && msg.content}
-
                 {msg.sender_id === user?.id && (
                   <button
                     onClick={() => deleteMessage(msg.id)}
@@ -513,7 +536,6 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
       <div className="bg-zinc-900 px-3 py-2 border-t border-zinc-800 shrink-0">
         <div className="flex gap-2 items-end">
           <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-xl">
@@ -525,7 +547,6 @@ export default function ChatPage() {
               className="hidden"
             />
           </label>
-
           <textarea
             placeholder="Type a message..."
             value={newMessage}
@@ -533,7 +554,6 @@ export default function ChatPage() {
             rows={2}
             className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm resize-none"
           />
-
           <button
             onClick={sendMessage}
             className="bg-cyan-500 hover:bg-cyan-400 text-black font-medium px-4 py-2.5 rounded-xl text-sm"
@@ -546,7 +566,6 @@ export default function ChatPage() {
         </p>
       </div>
 
-      {/* Custom Modal */}
       {modal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
@@ -575,7 +594,9 @@ export default function ChatPage() {
 
             {modal === 'block' && (
               <>
-                <h3 className="text-lg font-semibold mb-2">Block {targetUsername}?</h3>
+                <h3 className="text-lg font-semibold mb-2">
+                  Block {targetUsername}?
+                </h3>
                 <p className="text-zinc-400 text-sm mb-5">
                   You will not be able to chat with this user.
                 </p>
@@ -598,7 +619,9 @@ export default function ChatPage() {
 
             {modal === 'report' && (
               <>
-                <h3 className="text-lg font-semibold mb-2">Report {targetUsername}</h3>
+                <h3 className="text-lg font-semibold mb-2">
+                  Report {targetUsername}
+                </h3>
                 <input
                   type="text"
                   placeholder="Reason..."
