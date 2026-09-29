@@ -5,6 +5,22 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
+function isUsernameActive(profile: {
+  username?: string | null
+  username_claimed_at?: string | null
+  is_permanent_username?: boolean | null
+}) {
+  if (!profile?.username) return false
+  if (profile.is_permanent_username) return true
+  if (!profile.username_claimed_at) return false
+
+  const hoursPassed =
+    (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+    (1000 * 60 * 60)
+
+  return hoursPassed < 24
+}
+
 export default function SearchPage() {
   const [searchText, setSearchText] = useState('')
   const [result, setResult] = useState<any>(null)
@@ -29,19 +45,12 @@ export default function SearchPage() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('username, username_claimed_at')
+        .select('username, username_claimed_at, is_permanent_username')
         .eq('id', user.id)
         .maybeSingle()
 
-      if (!profile?.username || !profile.username_claimed_at) {
-        router.push('/username')
-        return
-      }
-
-      const hoursPassed =
-        (Date.now() - new Date(profile.username_claimed_at).getTime()) / (1000 * 60 * 60)
-
-      if (hoursPassed >= 24) {
+      // Permanent usernames never force "Pick a username"
+      if (!isUsernameActive(profile || {})) {
         router.push('/username')
         return
       }
@@ -73,10 +82,13 @@ export default function SearchPage() {
       return
     }
 
+    const q = searchText.trim()
+
+    // Case-insensitive match (LESTAT / lestat)
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('username', searchText.trim())
+      .ilike('username', q)
       .maybeSingle()
 
     if (error) {
@@ -84,16 +96,15 @@ export default function SearchPage() {
       setLoading(false)
       return
     }
+
     if (!data || data.is_offline) {
       setMessage('User not found')
       setLoading(false)
       return
     }
 
-    const hoursPassed =
-      (Date.now() - new Date(data.username_claimed_at).getTime()) / (1000 * 60 * 60)
-
-    if (hoursPassed >= 24) {
+    // Target must have active username (permanent OR within 24h)
+    if (!isUsernameActive(data)) {
       setMessage('User not found')
       setLoading(false)
       return
@@ -130,7 +141,9 @@ export default function SearchPage() {
         <button
           onClick={() => changeLang('en')}
           className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'en' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+            lang === 'en'
+              ? 'bg-cyan-500 text-black border-cyan-400'
+              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
           }`}
         >
           EN
@@ -138,7 +151,9 @@ export default function SearchPage() {
         <button
           onClick={() => changeLang('sw')}
           className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'sw' ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+            lang === 'sw'
+              ? 'bg-cyan-500 text-black border-cyan-400'
+              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
           }`}
         >
           SW
@@ -166,14 +181,22 @@ export default function SearchPage() {
           {loading ? t.searching : t.search}
         </button>
 
-        {message && <p className="mt-5 text-center text-sm text-red-400">{message}</p>}
+        {message && (
+          <p className="mt-5 text-center text-sm text-red-400">{message}</p>
+        )}
 
         {result && (
           <div className="mt-6 p-5 bg-zinc-800 rounded-2xl text-center border border-zinc-700">
             <div className="text-3xl mb-2">{result.avatar_icon || '🎭'}</div>
             <p className="text-zinc-400 text-sm mb-1">{t.foundUser}</p>
-            <p className="text-cyan-400 text-xl font-medium mb-1">{result.username}</p>
-            {result.bio ? <p className="text-zinc-400 text-sm mb-4">{result.bio}</p> : <div className="mb-4" />}
+            <p className="text-cyan-400 text-xl font-medium mb-1">
+              {result.username}
+            </p>
+            {result.bio ? (
+              <p className="text-zinc-400 text-sm mb-4">{result.bio}</p>
+            ) : (
+              <div className="mb-4" />
+            )}
             <button
               onClick={() => router.push(`/chat/${result.username}`)}
               className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl transition"
