@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-// PUT YOUR CURRENT ADMIN USER UUID HERE
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
 export default function ReportsDashboard() {
@@ -12,9 +11,33 @@ export default function ReportsDashboard() {
   const [user, setUser] = useState<any>(null)
   const [reports, setReports] = useState<any[]>([])
   const [logs, setLogs] = useState<any[]>([])
+  const [names, setNames] = useState<Record<string, string>>({})
   const [tab, setTab] = useState<'reports' | 'logs'>('reports')
   const [loading, setLoading] = useState(true)
   const [actionMessage, setActionMessage] = useState('')
+
+  const loadNames = async (ids: string[]) => {
+    const unique = Array.from(new Set(ids.filter(Boolean)))
+    if (unique.length === 0) return
+
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .in('id', unique)
+
+    const map: Record<string, string> = {}
+    ;(data || []).forEach((p) => {
+      map[p.id] = p.username || 'No username'
+    })
+    setNames((prev) => ({ ...prev, ...map }))
+  }
+
+  const displayUser = (id?: string) => {
+    if (!id) return '—'
+    const username = names[id]
+    if (!username) return id
+    return `${username} (${id})`
+  }
 
   useEffect(() => {
     const init = async () => {
@@ -23,7 +46,6 @@ export default function ReportsDashboard() {
         router.push('/auth')
         return
       }
-
       setUser(user)
 
       if (user.id !== ADMIN_ID) {
@@ -42,11 +64,15 @@ export default function ReportsDashboard() {
         .order('created_at', { ascending: false })
         .limit(50)
 
-      setReports(reportData || [])
+      const list = reportData || []
+      setReports(list)
       setLogs(logData || [])
+
+      const ids = list.flatMap((r) => [r.reporter_id, r.reported_id])
+      await loadNames(ids)
+
       setLoading(false)
     }
-
     init()
   }, [])
 
@@ -77,7 +103,10 @@ export default function ReportsDashboard() {
     setActionMessage('Report deleted')
   }
 
-  const setUserStatus = async (userId: string, status: 'suspended' | 'banned' | 'active') => {
+  const setUserStatus = async (
+    userId: string,
+    status: 'suspended' | 'banned' | 'active'
+  ) => {
     const { error } = await supabase
       .from('profiles')
       .update({ status })
@@ -87,7 +116,6 @@ export default function ReportsDashboard() {
       setActionMessage(error.message)
       return
     }
-
     setActionMessage(`User set to ${status}`)
   }
 
@@ -174,19 +202,23 @@ export default function ReportsDashboard() {
                     className="bg-zinc-900 p-6 rounded-2xl border border-zinc-800 shadow-lg"
                   >
                     <div className="text-3xl mb-3">⚠️</div>
-                    <h2 className="text-lg font-bold text-cyan-400 mb-3">
-                      Report
-                    </h2>
+                    <h2 className="text-lg font-bold text-cyan-400 mb-3">Report</h2>
 
-                    <p className="text-sm text-zinc-400 mb-1 break-all">
-                      <span className="text-white">Reporter:</span> {report.reporter_id}
+                    <p className="text-sm text-zinc-400 mb-2 break-all">
+                      <span className="text-white">Reporter:</span>{' '}
+                      {displayUser(report.reporter_id)}
                     </p>
-                    <p className="text-sm text-zinc-400 mb-1 break-all">
-                      <span className="text-white">Reported:</span> {report.reported_id}
+
+                    <p className="text-sm text-zinc-400 mb-2 break-all">
+                      <span className="text-white">Reported:</span>{' '}
+                      {displayUser(report.reported_id)}
                     </p>
+
                     <p className="text-sm text-zinc-400 mb-1">
-                      <span className="text-white">Reason:</span> {report.reason || '—'}
+                      <span className="text-white">Reason:</span>{' '}
+                      {report.reason || '—'}
                     </p>
+
                     <p className="text-sm text-zinc-400 mb-4">
                       <span className="text-white">Time:</span>{' '}
                       {report.created_at
@@ -206,7 +238,9 @@ export default function ReportsDashboard() {
                     )}
 
                     <button
-                      onClick={() => setUserStatus(report.reported_id, 'suspended')}
+                      onClick={() =>
+                        setUserStatus(report.reported_id, 'suspended')
+                      }
                       className="w-full bg-yellow-600 hover:bg-yellow-500 text-black py-2 rounded-lg mb-2"
                     >
                       Suspend User
@@ -243,7 +277,8 @@ export default function ReportsDashboard() {
           <>
             {logs.length === 0 ? (
               <p className="text-zinc-500 text-center mt-20">
-                No safety logs found. Cleared chats and flagged events will appear here.
+                No safety logs found. Cleared chats and flagged events will appear
+                here.
               </p>
             ) : (
               <div className="space-y-4">
