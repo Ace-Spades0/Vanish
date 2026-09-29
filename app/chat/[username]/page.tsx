@@ -33,12 +33,21 @@ export default function ChatPage() {
   const [fileCount, setFileCount] = useState(0)
   const [videoCount, setVideoCount] = useState(0)
   const [blocked, setBlocked] = useState(false)
+  const [chatExpired, setChatExpired] = useState(false)
+  const [chatEndsAt, setChatEndsAt] = useState<string | null>(null)
   const [modal, setModal] = useState<'clear' | 'block' | 'report' | null>(null)
   const [reportReason, setReportReason] = useState('')
   const [warningLevel, setWarningLevel] = useState(0)
   const [warningText, setWarningText] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
+
+  // Conversation ends 3 hours after FIRST message
+  const getConversationEnd = (firstCreatedAt: string) => {
+    return new Date(
+      new Date(firstCreatedAt).getTime() + 3 * 60 * 60 * 1000
+    ).toISOString()
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -104,6 +113,37 @@ export default function ChatPage() {
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
+      // Find first message ever in this conversation (including deleted, for timer)
+      const { data: firstRows } = await supabase
+        .from('messages')
+        .select('created_at')
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+
+      const firstCreatedAt = firstRows?.[0]?.created_at || null
+
+      if (firstCreatedAt) {
+        const endsAt = getConversationEnd(firstCreatedAt)
+        setChatEndsAt(endsAt)
+
+        if (new Date(endsAt).getTime() <= Date.now()) {
+          // Chat lifetime over — clear everything
+          await supabase
+            .from('messages')
+            .update({ deleted: true })
+            .eq('conversation_id', convId)
+
+          setMessages([])
+          setFileCount(0)
+          setVideoCount(0)
+          setChatExpired(true)
+          setLoading(false)
+          return
+        }
+      }
+
+      // Remove any individual expired leftovers
       await supabase
         .from('messages')
         .delete()
@@ -170,8 +210,38 @@ export default function ChatPage() {
     }
   }, [targetUsername])
 
+  const resolveExpiresAt = async (forceShort: boolean) => {
+    // Anti-interrogation: 30 minutes from now
+    if (forceShort) {
+      return new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    }
+
+    // Normal: 3 hours from FIRST message in conversation
+    if (chatEndsAt) {
+      return chatEndsAt
+    }
+
+    const { data: firstRows } = await supabase
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+
+    if (firstRows?.[0]?.created_at) {
+      const endsAt = getConversationEnd(firstRows[0].created_at)
+      setChatEndsAt(endsAt)
+      return endsAt
+    }
+
+    // This is the first message of the chat
+    const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+    setChatEndsAt(endsAt)
+    return endsAt
+  }
+
   const sendMessage = async () => {
-    if (!newMessage.trim() || !user || !conversationId) return
+    if (!newMessage.trim() || !user || !conversationId || chatExpired) return
     const content = newMessage.trim()
     setNewMessage('')
 
@@ -199,14 +269,19 @@ export default function ChatPage() {
       } else {
         useShortExpiry = true
         setWarningText(
-          'Anti-interrogation limit applied. New messages in this chat expire in 30 minutes.'
+          'Anti-interrogation limit applied. New messages may expire in 30 minutes.'
         )
       }
     }
 
-    const expiresAt = useShortExpiry
-      ? new Date(Date.now() + 30 * 60 * 1000).toISOString()
-      : new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+    const expiresAt = await resolveExpiresAt(useShortExpiry)
+
+    // If conversation already past end, block send
+    if (new Date(expiresAt).getTime() <= Date.now()) {
+      setChatExpired(true)
+      alert('This chat has ended (3 hours from the first message).')
+      return
+    }
 
     await supabase.from('messages').insert({
       conversation_id: conversationId,
@@ -241,7 +316,7 @@ export default function ChatPage() {
 
   const uploadFile = async (e: any) => {
     const file = e.target.files?.[0]
-    if (!file || !user || !conversationId) return
+    if (!file || !user || !conversationId || chatExpired) return
 
     const isVideo = file.type.startsWith('video/')
     const isImage = file.type.startsWith('image/')
@@ -266,6 +341,13 @@ export default function ChatPage() {
       }
     }
 
+    const expiresAt = await resolveExpiresAt(false)
+    if (new Date(expiresAt).getTime() <= Date.now()) {
+      setChatExpired(true)
+      alert('This chat has ended (3 hours from the first message).')
+      return
+    }
+
     const fileName = `${conversationId}/${Date.now()}-${file.name}`
     const { error } = await supabase.storage
       .from('chat-photos')
@@ -284,7 +366,7 @@ export default function ChatPage() {
       sender_id: user.id,
       content: data.publicUrl,
       type,
-      expires_at: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+      expires_at: expiresAt,
     })
 
     e.target.value = ''
@@ -341,13 +423,11 @@ export default function ChatPage() {
       alert('Cannot report right now')
       return
     }
-
     if (!reportReason.trim()) {
       alert('Please enter a reason')
       return
     }
 
-    // Do NOT send conversation_id as UUID — our chat id is text like "user1_user2"
     const { error } = await supabase.from('reports').insert({
       reporter_id: user.id,
       reported_id: targetUser.id,
@@ -391,6 +471,24 @@ export default function ChatPage() {
         <div className="text-6xl mb-4">🚫</div>
         <h1 className="text-2xl font-bold mb-2">Chat Unavailable</h1>
         <p className="text-zinc-400 mb-6">You cannot chat with this user.</p>
+        <button
+          onClick={() => router.push('/search')}
+          className="bg-zinc-700 hover:bg-zinc-600 px-6 py-3 rounded-xl transition"
+        >
+          Back to Search
+        </button>
+      </div>
+    )
+  }
+
+  if (chatExpired) {
+    return (
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
+        <div className="text-6xl mb-4">⌛</div>
+        <h1 className="text-2xl font-bold mb-2">Chat ended</h1>
+        <p className="text-zinc-400 mb-6">
+          This conversation expired 3 hours after the first message.
+        </p>
         <button
           onClick={() => router.push('/search')}
           className="bg-zinc-700 hover:bg-zinc-600 px-6 py-3 rounded-xl transition"
@@ -457,7 +555,9 @@ export default function ChatPage() {
           <div className="flex flex-col items-center justify-center h-full text-center pt-10">
             <div className="text-3xl mb-2 opacity-40">💬</div>
             <p className="text-zinc-400 text-sm">No messages yet</p>
-            <p className="text-zinc-600 text-xs mt-1">Send a message to start</p>
+            <p className="text-zinc-600 text-xs mt-1">
+              Timer starts when the first message is sent
+            </p>
           </div>
         ) : (
           messages.map((msg) => (
@@ -562,7 +662,7 @@ export default function ChatPage() {
           </button>
         </div>
         <p className="text-[10px] text-zinc-500 mt-1 text-center">
-          Max 4 files (10MB) • Max 1 video (30MB)
+          Chat ends 3 hours after the first message • Timer hidden
         </p>
       </div>
 
