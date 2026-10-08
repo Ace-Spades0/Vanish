@@ -39,14 +39,22 @@ export default function ChatPage() {
   const [reportReason, setReportReason] = useState('')
   const [warningLevel, setWarningLevel] = useState(0)
   const [warningText, setWarningText] = useState('')
+  const [activeMsg, setActiveMsg] = useState<any>(null)
+  const [editText, setEditText] = useState('')
+  const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
 
-  // Conversation ends 3 hours after FIRST message
   const getConversationEnd = (firstCreatedAt: string) => {
     return new Date(
       new Date(firstCreatedAt).getTime() + 3 * 60 * 60 * 1000
     ).toISOString()
+  }
+
+  const recountMedia = (list: any[]) => {
+    setFileCount(list.filter((m) => m.type === 'file' || m.type === 'image').length)
+    setVideoCount(list.filter((m) => m.type === 'video').length)
   }
 
   useEffect(() => {
@@ -57,7 +65,9 @@ export default function ChatPage() {
     let isMounted = true
 
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (!user) {
         router.push('/auth')
         return
@@ -113,7 +123,6 @@ export default function ChatPage() {
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
-      // Find first message ever in this conversation (including deleted, for timer)
       const { data: firstRows } = await supabase
         .from('messages')
         .select('created_at')
@@ -128,7 +137,6 @@ export default function ChatPage() {
         setChatEndsAt(endsAt)
 
         if (new Date(endsAt).getTime() <= Date.now()) {
-          // Chat lifetime over — clear everything
           await supabase
             .from('messages')
             .update({ deleted: true })
@@ -143,7 +151,6 @@ export default function ChatPage() {
         }
       }
 
-      // Remove any individual expired leftovers
       await supabase
         .from('messages')
         .delete()
@@ -160,11 +167,7 @@ export default function ChatPage() {
 
       if (existingMessages && isMounted) {
         setMessages(existingMessages)
-        setFileCount(
-          existingMessages.filter((m) => m.type === 'file' || m.type === 'image')
-            .length
-        )
-        setVideoCount(existingMessages.filter((m) => m.type === 'video').length)
+        recountMedia(existingMessages)
       }
 
       if (!isMounted) return
@@ -175,6 +178,8 @@ export default function ChatPage() {
       }
 
       const channel = supabase.channel(`chat-${convId}`)
+
+      // New messages
       channel.on(
         'postgres_changes',
         {
@@ -187,16 +192,40 @@ export default function ChatPage() {
           if (payload.new.deleted) return
           setMessages((prev) => {
             if (prev.some((m) => m.id === payload.new.id)) return prev
-            return [...prev, payload.new]
+            const next = [...prev, payload.new]
+            recountMedia(next)
+            return next
           })
-          if (payload.new.type === 'file' || payload.new.type === 'image') {
-            setFileCount((prev) => prev + 1)
-          }
-          if (payload.new.type === 'video') {
-            setVideoCount((prev) => prev + 1)
-          }
         }
       )
+
+      // Edits + single vanish + clear chat (instant for both)
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${convId}`,
+        },
+        (payload) => {
+          const row = payload.new as any
+
+          if (row.deleted) {
+            setMessages((prev) => {
+              const next = prev.filter((m) => m.id !== row.id)
+              recountMedia(next)
+              return next
+            })
+            return
+          }
+
+          setMessages((prev) =>
+            prev.map((m) => (m.id === row.id ? { ...m, ...row } : m))
+          )
+        }
+      )
+
       channel.subscribe()
       channelRef.current = channel
     }
@@ -211,15 +240,10 @@ export default function ChatPage() {
   }, [targetUsername])
 
   const resolveExpiresAt = async (forceShort: boolean) => {
-    // Anti-interrogation: 30 minutes from now
     if (forceShort) {
       return new Date(Date.now() + 30 * 60 * 1000).toISOString()
     }
-
-    // Normal: 3 hours from FIRST message in conversation
-    if (chatEndsAt) {
-      return chatEndsAt
-    }
+    if (chatEndsAt) return chatEndsAt
 
     const { data: firstRows } = await supabase
       .from('messages')
@@ -234,7 +258,6 @@ export default function ChatPage() {
       return endsAt
     }
 
-    // This is the first message of the chat
     const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
     setChatEndsAt(endsAt)
     return endsAt
@@ -258,13 +281,11 @@ export default function ChatPage() {
       if (warningLevel < 2) {
         const nextLevel = warningLevel + 1
         setWarningLevel(nextLevel)
-        if (nextLevel === 1) {
-          setWarningText('You are asking a lot of questions. Please slow down.')
-        } else {
-          setWarningText(
-            'Final warning: continued questioning may shorten this chat.'
-          )
-        }
+        setWarningText(
+          nextLevel === 1
+            ? 'You are asking a lot of questions. Please slow down.'
+            : 'Final warning: continued questioning may shorten this chat.'
+        )
         useShortExpiry = false
       } else {
         useShortExpiry = true
@@ -275,8 +296,6 @@ export default function ChatPage() {
     }
 
     const expiresAt = await resolveExpiresAt(useShortExpiry)
-
-    // If conversation already past end, block send
     if (new Date(expiresAt).getTime() <= Date.now()) {
       setChatExpired(true)
       alert('This chat has ended (3 hours from the first message).')
@@ -372,18 +391,74 @@ export default function ChatPage() {
     e.target.value = ''
   }
 
-  const deleteMessage = async (id: string) => {
-    await supabase.from('messages').update({ deleted: true }).eq('id', id)
-    setMessages((prev) => prev.filter((m) => m.id !== id))
+  const openMsgMenu = (msg: any) => {
+    if (!user || msg.sender_id !== user.id) return
+    if (msg.type !== 'text') return
+    setActiveMsg(msg)
+    setEditText(msg.content || '')
+    setMsgMenu('menu')
+  }
+
+  const vanishOneMessage = async () => {
+    if (!activeMsg) return
+    const { error } = await supabase
+      .from('messages')
+      .update({ deleted: true })
+      .eq('id', activeMsg.id)
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    // Instant local remove (Realtime also updates the other user)
+    setMessages((prev) => {
+      const next = prev.filter((m) => m.id !== activeMsg.id)
+      recountMedia(next)
+      return next
+    })
+    setActiveMsg(null)
+    setMsgMenu(null)
+  }
+
+  const saveEditMessage = async () => {
+    if (!activeMsg || !editText.trim()) return
+
+    const { error } = await supabase
+      .from('messages')
+      .update({ content: editText.trim() })
+      .eq('id', activeMsg.id)
+      .eq('sender_id', user.id)
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === activeMsg.id ? { ...m, content: editText.trim() } : m
+      )
+    )
+    setActiveMsg(null)
+    setMsgMenu(null)
+    setEditText('')
   }
 
   const confirmClearChat = async () => {
     if (!user || !conversationId) return
 
-    await supabase
+    // Mark all deleted — Realtime UPDATE removes them for both users instantly
+    const { error } = await supabase
       .from('messages')
       .update({ deleted: true })
       .eq('conversation_id', conversationId)
+      .eq('deleted', false)
+
+    if (error) {
+      alert(error.message)
+      return
+    }
 
     await supabase.from('audit_logs').insert({
       conversation_id: conversationId,
@@ -403,17 +478,14 @@ export default function ChatPage() {
 
   const confirmBlockUser = async () => {
     if (!user || !targetUser) return
-
     const { error } = await supabase.from('blocks').insert({
       blocker_id: user.id,
       blocked_id: targetUser.id,
     })
-
     if (error) {
       alert(error.message)
       return
     }
-
     setModal(null)
     setBlocked(true)
   }
@@ -449,7 +521,6 @@ export default function ChatPage() {
     const newCount = (profile?.report_count || 0) + 1
     const updateData: any = { report_count: newCount }
     if (newCount >= 5) updateData.status = 'suspended'
-
     await supabase.from('profiles').update(updateData).eq('id', targetUser.id)
 
     alert('Report submitted')
@@ -500,8 +571,23 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="h-[100dvh] bg-black text-white flex flex-col overflow-hidden">
-      <div className="bg-zinc-900/95 backdrop-blur px-3 py-2 border-b border-zinc-800 shrink-0">
+    <div className="h-[100dvh] text-white flex flex-col overflow-hidden relative">
+      {/* Wallpaper — platform feel: dark void + cyan dust */}
+      <div className="pointer-events-none absolute inset-0 bg-[#05070a]">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(34,211,238,0.12),_transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_rgba(37,99,235,0.10),_transparent_50%)]" />
+        <div
+          className="absolute inset-0 opacity-[0.07]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle, rgba(34,211,238,0.9) 1px, transparent 1px)',
+            backgroundSize: '18px 18px',
+          }}
+        />
+      </div>
+
+      {/* Header */}
+      <div className="relative z-10 bg-black/50 backdrop-blur-md px-3 py-2 border-b border-white/10 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <p className="text-[10px] text-zinc-500">Chatting with</p>
@@ -510,10 +596,10 @@ export default function ChatPage() {
             </h1>
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end">
-            <span className="text-[10px] text-zinc-400 bg-zinc-800 px-2 py-1 rounded-full">
+            <span className="text-[10px] text-zinc-400 bg-zinc-800/80 px-2 py-1 rounded-full">
               {fileCount}/4
             </span>
-            <span className="text-[10px] text-zinc-400 bg-zinc-800 px-2 py-1 rounded-full">
+            <span className="text-[10px] text-zinc-400 bg-zinc-800/80 px-2 py-1 rounded-full">
               {videoCount}/1
             </span>
             <button
@@ -545,98 +631,86 @@ export default function ChatPage() {
       </div>
 
       {warningText && (
-        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-xs text-yellow-200 text-center">
+        <div className="relative z-10 bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-xs text-yellow-200 text-center">
           {warningText}
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+      {/* Messages */}
+      <div className="relative z-10 flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-10">
             <div className="text-3xl mb-2 opacity-40">💬</div>
             <p className="text-zinc-400 text-sm">No messages yet</p>
-            <p className="text-zinc-600 text-xs mt-1">
-              Timer starts when the first message is sent
-            </p>
           </div>
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${
-                msg.sender_id === user?.id ? 'justify-end' : 'justify-start'
-              }`}
-            >
+          messages.map((msg) => {
+            const mine = msg.sender_id === user?.id
+            return (
               <div
-                className={`relative max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
-                  msg.sender_id === user?.id
-                    ? 'bg-cyan-500 text-black rounded-br-md'
-                    : 'bg-zinc-800 text-white rounded-bl-md'
-                }`}
+                key={msg.id}
+                className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
               >
-                {msg.type === 'image' && (
-                  <div className="relative">
-                    <img
-                      src={msg.content}
-                      alt="photo"
-                      className="rounded-xl max-h-40 object-cover"
-                    />
+                <button
+                  type="button"
+                  onClick={() => openMsgMenu(msg)}
+                  className={`max-w-[82%] px-4 py-2.5 text-left transition ${
+                    mine
+                      ? 'bg-gradient-to-br from-cyan-400 to-cyan-600 text-black rounded-[22px] rounded-br-md shadow-[0_0_20px_rgba(34,211,238,0.15)]'
+                      : 'bg-zinc-900/85 text-white border border-white/10 rounded-[22px] rounded-bl-md backdrop-blur-sm'
+                  }`}
+                >
+                  {msg.type === 'image' && (
+                    <div className="relative">
+                      <img
+                        src={msg.content}
+                        alt="photo"
+                        className="rounded-xl max-h-44 object-cover"
+                      />
+                      <a
+                        href={msg.content}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded-lg"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Download
+                      </a>
+                    </div>
+                  )}
+                  {msg.type === 'video' && (
+                    <div className="relative" onClick={(e) => e.stopPropagation()}>
+                      <video src={msg.content} controls className="rounded-xl max-h-44" />
+                    </div>
+                  )}
+                  {msg.type === 'file' && (
                     <a
                       href={msg.content}
                       download
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded-lg"
+                      className="underline text-sm"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      Download
+                      📄 Download file
                     </a>
-                  </div>
-                )}
-                {msg.type === 'video' && (
-                  <div className="relative">
-                    <video src={msg.content} controls className="rounded-xl max-h-40" />
-                    <a
-                      href={msg.content}
-                      download
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded-lg"
-                    >
-                      Download
-                    </a>
-                  </div>
-                )}
-                {msg.type === 'file' && (
-                  <div className="flex items-center gap-2">
-                    <span>📄</span>
-                    <a
-                      href={msg.content}
-                      download
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline text-xs"
-                    >
-                      Download file
-                    </a>
-                  </div>
-                )}
-                {msg.type === 'text' && msg.content}
-                {msg.sender_id === user?.id && (
-                  <button
-                    onClick={() => deleteMessage(msg.id)}
-                    className="absolute -top-2 -right-2 bg-red-600 text-white text-xs w-5 h-5 rounded-full"
-                  >
-                    ×
-                  </button>
-                )}
+                  )}
+                  {msg.type === 'text' && (
+                    <p className="text-[16px] sm:text-[17px] leading-relaxed whitespace-pre-wrap break-words">
+                      {msg.content}
+                    </p>
+                  )}
+                </button>
               </div>
-            </div>
-          ))
+            )
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="bg-zinc-900 px-3 py-2 border-t border-zinc-800 shrink-0">
+      {/* Input */}
+      <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-2 border-t border-white/10 shrink-0">
         <div className="flex gap-2 items-end">
           <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-xl">
             📎
@@ -652,7 +726,7 @@ export default function ChatPage() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             rows={2}
-            className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm resize-none"
+            className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none"
           />
           <button
             onClick={sendMessage}
@@ -661,11 +735,70 @@ export default function ChatPage() {
             Send
           </button>
         </div>
-        <p className="text-[10px] text-zinc-500 mt-1 text-center">
-          Chat ends 3 hours after the first message • Timer hidden
-        </p>
       </div>
 
+      {/* Message menu: Edit / Vanish */}
+      {msgMenu && activeMsg && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            {msgMenu === 'menu' && (
+              <>
+                <h3 className="text-lg font-semibold mb-4">Message</h3>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setMsgMenu('edit')}
+                    className="w-full bg-cyan-600 hover:bg-cyan-500 py-2.5 rounded-xl"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={vanishOneMessage}
+                    className="w-full bg-red-600 hover:bg-red-500 py-2.5 rounded-xl"
+                  >
+                    Vanish this message
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMsgMenu(null)
+                      setActiveMsg(null)
+                    }}
+                    className="w-full bg-zinc-700 py-2.5 rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+            {msgMenu === 'edit' && (
+              <>
+                <h3 className="text-lg font-semibold mb-3">Edit message</h3>
+                <textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  rows={3}
+                  className="w-full p-3 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 text-[15px] resize-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setMsgMenu('menu')}
+                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={saveEditMessage}
+                    className="flex-1 bg-cyan-500 text-black py-2 rounded-xl"
+                  >
+                    Save
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Clear / Block / Report modals */}
       {modal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
@@ -673,7 +806,7 @@ export default function ChatPage() {
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  This will clear all messages in this chat.
+                  Messages will disappear for both of you immediately.
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -691,7 +824,6 @@ export default function ChatPage() {
                 </div>
               </>
             )}
-
             {modal === 'block' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">
@@ -716,7 +848,6 @@ export default function ChatPage() {
                 </div>
               </>
             )}
-
             {modal === 'report' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">
