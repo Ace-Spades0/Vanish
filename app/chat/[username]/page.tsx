@@ -179,7 +179,6 @@ export default function ChatPage() {
 
       const channel = supabase.channel(`chat-${convId}`)
 
-      // New messages
       channel.on(
         'postgres_changes',
         {
@@ -199,7 +198,6 @@ export default function ChatPage() {
         }
       )
 
-      // Edits + single vanish + clear chat (instant for both)
       channel.on(
         'postgres_changes',
         {
@@ -411,7 +409,6 @@ export default function ChatPage() {
       return
     }
 
-    // Instant local remove (Realtime also updates the other user)
     setMessages((prev) => {
       const next = prev.filter((m) => m.id !== activeMsg.id)
       recountMedia(next)
@@ -448,7 +445,6 @@ export default function ChatPage() {
   const confirmClearChat = async () => {
     if (!user || !conversationId) return
 
-    // Mark all deleted — Realtime UPDATE removes them for both users instantly
     const { error } = await supabase
       .from('messages')
       .update({ deleted: true })
@@ -572,7 +568,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-[100dvh] text-white flex flex-col overflow-hidden relative">
-      {/* Wallpaper — platform feel: dark void + cyan dust */}
+      {/* Wallpaper */}
       <div className="pointer-events-none absolute inset-0 bg-[#05070a]">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(34,211,238,0.12),_transparent_55%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_rgba(37,99,235,0.10),_transparent_50%)]" />
@@ -654,10 +650,16 @@ export default function ChatPage() {
                 <button
                   type="button"
                   onClick={() => openMsgMenu(msg)}
-                  className={`max-w-[82%] px-4 py-2.5 text-left transition ${
+                  className={`max-w-[82%] px-4 py-2.5 text-left transition relative ${
                     mine
-                      ? 'bg-gradient-to-br from-cyan-400 to-cyan-600 text-black rounded-[22px] rounded-br-md shadow-[0_0_20px_rgba(34,211,238,0.15)]'
-                      : 'bg-zinc-900/85 text-white border border-white/10 rounded-[22px] rounded-bl-md backdrop-blur-sm'
+                      ? 'bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black ' +
+                        'rounded-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-sm ' +
+                        'shadow-[0_0_24px_rgba(34,211,238,0.22)] ' +
+                        'border border-cyan-200/40'
+                      : 'bg-zinc-900/70 text-zinc-100 backdrop-blur-md ' +
+                        'rounded-2xl rounded-tl-2xl rounded-br-2xl rounded-bl-sm ' +
+                        'border border-cyan-500/20 ' +
+                        'shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
                   }`}
                 >
                   {msg.type === 'image' && (
@@ -681,7 +683,11 @@ export default function ChatPage() {
                   )}
                   {msg.type === 'video' && (
                     <div className="relative" onClick={(e) => e.stopPropagation()}>
-                      <video src={msg.content} controls className="rounded-xl max-h-44" />
+                      <video
+                        src={msg.content}
+                        controls
+                        className="rounded-xl max-h-44"
+                      />
                     </div>
                   )}
                   {msg.type === 'file' && (
@@ -700,6 +706,10 @@ export default function ChatPage() {
                     <p className="text-[16px] sm:text-[17px] leading-relaxed whitespace-pre-wrap break-words">
                       {msg.content}
                     </p>
+                  )}
+
+                  {mine && (
+                    <span className="pointer-events-none absolute -bottom-1 right-2 h-[2px] w-8 rounded-full bg-gradient-to-r from-cyan-300 to-transparent opacity-70" />
                   )}
                 </button>
               </div>
@@ -737,7 +747,7 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Message menu: Edit / Vanish */}
+      {/* Message menu */}
       {msgMenu && activeMsg && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
@@ -798,7 +808,7 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Clear / Block / Report modals */}
+      {/* Clear / Block / Report */}
       {modal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
