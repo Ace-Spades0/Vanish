@@ -44,26 +44,59 @@ export default function HomePage() {
     setLangState(getLang())
 
     const loadData = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
       if (!user) {
         router.push('/auth')
         return
       }
       setUser(user)
 
-      const { data: profileData } = await supabase
+      let { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
 
-      if (profileData?.status === 'suspended' || profileData?.status === 'banned') {
+      // AUTO-REPAIR admin permanent username (never depends on manual SQL)
+      if (user.id === ADMIN_ID) {
+        const needsRepair =
+          !profileData ||
+          profileData.username !== 'LESTAT' ||
+          profileData.is_permanent_username !== true ||
+          profileData.is_offline === true
+
+        if (needsRepair) {
+          await supabase.from('profiles').upsert({
+            id: user.id,
+            username: 'LESTAT',
+            is_permanent_username: true,
+            is_offline: false,
+            username_claimed_at: new Date().toISOString(),
+            status: 'active',
+          })
+
+          const { data: fixed } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .maybeSingle()
+
+          profileData = fixed
+        }
+      }
+
+      if (
+        profileData?.status === 'suspended' ||
+        profileData?.status === 'banned'
+      ) {
         await supabase.auth.signOut()
         router.push('/auth')
         return
       }
 
-      // Permanent usernames (admin LESTAT) never expire
       if (profileData?.username) {
         if (profileData.is_permanent_username) {
           setProfile(profileData)
@@ -83,6 +116,7 @@ export default function HomePage() {
       await loadBlockedUsers(user.id)
       setLoading(false)
     }
+
     loadData()
   }, [])
 
@@ -113,7 +147,9 @@ export default function HomePage() {
 
   const deleteAccount = async () => {
     setDeleting(true)
-    const { data: { session } } = await supabase.auth.getSession()
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
     if (!session) {
       setDeleting(false)
       return
@@ -123,7 +159,6 @@ export default function HomePage() {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
-
     const data = await res.json()
     if (data.error) {
       alert(data.error)
@@ -180,7 +215,7 @@ export default function HomePage() {
         <div className="mb-6">
           <Image
             src="/logo.png"
-            alt="Vanish Logo"
+            alt="Go Vanish"
             width={88}
             height={88}
             className="mx-auto drop-shadow-[0_0_25px_rgba(34,211,238,0.35)]"
@@ -188,7 +223,9 @@ export default function HomePage() {
           />
         </div>
 
-        <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-2">{t.appName}</h1>
+        <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-2">
+          {t.appName}
+        </h1>
         <p className="text-zinc-400 mb-8 text-center">{t.tagline}</p>
 
         <div className="w-full max-w-md bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 shadow-2xl">
@@ -282,11 +319,17 @@ export default function HomePage() {
         </div>
 
         <div className="mt-8 flex items-center gap-4 text-xs text-zinc-500">
-          <button onClick={() => router.push('/terms')} className="hover:text-cyan-400 transition">
+          <button
+            onClick={() => router.push('/terms')}
+            className="hover:text-cyan-400 transition"
+          >
             {t.termsShort}
           </button>
           <span>•</span>
-          <button onClick={() => router.push('/privacy')} className="hover:text-cyan-400 transition">
+          <button
+            onClick={() => router.push('/privacy')}
+            className="hover:text-cyan-400 transition"
+          >
             {t.privacyShort}
           </button>
         </div>
@@ -304,9 +347,10 @@ export default function HomePage() {
                 ×
               </button>
             </div>
-
             {blockedUsers.length === 0 ? (
-              <p className="text-zinc-500 text-sm py-6 text-center">{t.noBlockedUsers}</p>
+              <p className="text-zinc-500 text-sm py-6 text-center">
+                {t.noBlockedUsers}
+              </p>
             ) : (
               <div className="space-y-2 max-h-72 overflow-y-auto">
                 {blockedUsers.map((u) => (
@@ -314,7 +358,9 @@ export default function HomePage() {
                     key={u.id}
                     className="flex items-center justify-between bg-zinc-800/80 px-3 py-3 rounded-2xl border border-zinc-700"
                   >
-                    <span className="text-sm text-zinc-200">{u.username || 'Unknown'}</span>
+                    <span className="text-sm text-zinc-200">
+                      {u.username || 'Unknown'}
+                    </span>
                     <button
                       onClick={() => unblockUser(u.id)}
                       className="text-xs bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 rounded-lg transition"
