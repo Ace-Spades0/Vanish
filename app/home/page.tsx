@@ -8,6 +8,22 @@ import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
+function getExpiryLabel(profile: any): string | null {
+  if (!profile?.username) return null
+  if (profile.is_permanent_username) return 'Permanent'
+  if (!profile.username_claimed_at) return null
+
+  const end =
+    new Date(profile.username_claimed_at).getTime() + 24 * 60 * 60 * 1000
+  const msLeft = end - Date.now()
+
+  if (msLeft <= 0) return 'Expired — pick a new username'
+  const hours = Math.floor(msLeft / (1000 * 60 * 60))
+  const mins = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60))
+  if (hours >= 1) return `Expires in ${hours}h ${mins}m`
+  return `Expires in ${mins}m`
+}
+
 export default function HomePage() {
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
@@ -17,6 +33,7 @@ export default function HomePage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showBlockedModal, setShowBlockedModal] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
+  const [expiryLabel, setExpiryLabel] = useState<string | null>(null)
   const router = useRouter()
   const t = translations[lang]
 
@@ -60,7 +77,6 @@ export default function HomePage() {
         .eq('id', user.id)
         .maybeSingle()
 
-      // AUTO-REPAIR admin permanent username (never depends on manual SQL)
       if (user.id === ADMIN_ID) {
         const needsRepair =
           !profileData ||
@@ -113,12 +129,22 @@ export default function HomePage() {
         setProfile(null)
       }
 
+      setExpiryLabel(getExpiryLabel(profileData))
       await loadBlockedUsers(user.id)
       setLoading(false)
     }
 
     loadData()
   }, [])
+
+  // Refresh countdown every minute
+  useEffect(() => {
+    if (!profile) return
+    const tick = () => setExpiryLabel(getExpiryLabel(profile))
+    tick()
+    const id = setInterval(tick, 60 * 1000)
+    return () => clearInterval(id)
+  }, [profile])
 
   const changeLang = (next: Lang) => {
     setLang(next)
@@ -237,6 +263,23 @@ export default function HomePage() {
             <p className="text-3xl font-semibold text-cyan-400">
               {profile?.username ? profile.username : t.noUsername}
             </p>
+
+            {/* Daily reset badge */}
+            {profile?.username && expiryLabel && (
+              <p
+                className={`text-xs mt-2 ${
+                  expiryLabel === 'Permanent'
+                    ? 'text-purple-300'
+                    : expiryLabel.startsWith('Expires in 0') ||
+                        expiryLabel.includes('Expired')
+                      ? 'text-amber-400'
+                      : 'text-zinc-400'
+                }`}
+              >
+                {expiryLabel}
+              </p>
+            )}
+
             {profile?.bio ? (
               <p className="text-sm text-zinc-400 mt-2">{profile.bio}</p>
             ) : null}

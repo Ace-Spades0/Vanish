@@ -42,9 +42,12 @@ export default function ChatPage() {
   const [activeMsg, setActiveMsg] = useState<any>(null)
   const [editText, setEditText] = useState('')
   const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
+  const [ghostReply, setGhostReply] = useState(false)
+  const [sealed, setSealed] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
+  const hadMessagesRef = useRef(false)
 
   const getConversationEnd = (firstCreatedAt: string) => {
     return new Date(
@@ -146,6 +149,7 @@ export default function ChatPage() {
           setFileCount(0)
           setVideoCount(0)
           setChatExpired(true)
+          setSealed(true)
           setLoading(false)
           return
         }
@@ -168,6 +172,9 @@ export default function ChatPage() {
       if (existingMessages && isMounted) {
         setMessages(existingMessages)
         recountMedia(existingMessages)
+        if (existingMessages.length > 0) {
+          hadMessagesRef.current = true
+        }
       }
 
       if (!isMounted) return
@@ -189,6 +196,8 @@ export default function ChatPage() {
         },
         (payload) => {
           if (payload.new.deleted) return
+          hadMessagesRef.current = true
+          setSealed(false)
           setMessages((prev) => {
             if (prev.some((m) => m.id === payload.new.id)) return prev
             const next = [...prev, payload.new]
@@ -213,6 +222,9 @@ export default function ChatPage() {
             setMessages((prev) => {
               const next = prev.filter((m) => m.id !== row.id)
               recountMedia(next)
+              if (hadMessagesRef.current && next.length === 0) {
+                setSealed(true)
+              }
               return next
             })
             return
@@ -262,7 +274,8 @@ export default function ChatPage() {
   }
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !user || !conversationId || chatExpired) return
+    if (!newMessage.trim() || !user || !conversationId || chatExpired || sealed)
+      return
     const content = newMessage.trim()
     setNewMessage('')
 
@@ -296,17 +309,36 @@ export default function ChatPage() {
     const expiresAt = await resolveExpiresAt(useShortExpiry)
     if (new Date(expiresAt).getTime() <= Date.now()) {
       setChatExpired(true)
+      setSealed(true)
       alert('This chat has ended (3 hours from the first message).')
       return
     }
 
-    await supabase.from('messages').insert({
+    const { error } = await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
       content,
       type: 'text',
       expires_at: expiresAt,
     })
+
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    hadMessagesRef.current = true
+    setSealed(false)
+
+    // Ghost reply → go offline after send
+    if (ghostReply) {
+      await supabase
+        .from('profiles')
+        .update({ is_offline: true })
+        .eq('id', user.id)
+      setGhostReply(false)
+      alert('Ghost reply on. You are now offline in Search.')
+    }
 
     if (useShortExpiry) {
       const { data: profile } = await supabase
@@ -333,7 +365,7 @@ export default function ChatPage() {
 
   const uploadFile = async (e: any) => {
     const file = e.target.files?.[0]
-    if (!file || !user || !conversationId || chatExpired) return
+    if (!file || !user || !conversationId || chatExpired || sealed) return
 
     const isVideo = file.type.startsWith('video/')
     const isImage = file.type.startsWith('image/')
@@ -361,6 +393,7 @@ export default function ChatPage() {
     const expiresAt = await resolveExpiresAt(false)
     if (new Date(expiresAt).getTime() <= Date.now()) {
       setChatExpired(true)
+      setSealed(true)
       alert('This chat has ended (3 hours from the first message).')
       return
     }
@@ -386,6 +419,8 @@ export default function ChatPage() {
       expires_at: expiresAt,
     })
 
+    hadMessagesRef.current = true
+    setSealed(false)
     e.target.value = ''
   }
 
@@ -412,6 +447,9 @@ export default function ChatPage() {
     setMessages((prev) => {
       const next = prev.filter((m) => m.id !== activeMsg.id)
       recountMedia(next)
+      if (hadMessagesRef.current && next.length === 0) {
+        setSealed(true)
+      }
       return next
     })
     setActiveMsg(null)
@@ -469,6 +507,7 @@ export default function ChatPage() {
     setMessages([])
     setFileCount(0)
     setVideoCount(0)
+    setSealed(true)
     setModal(null)
   }
 
@@ -548,13 +587,16 @@ export default function ChatPage() {
     )
   }
 
-  if (chatExpired) {
+  // Seal screen (clear or 3-hour end)
+  if (chatExpired || sealed) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
-        <div className="text-6xl mb-4">⌛</div>
-        <h1 className="text-2xl font-bold mb-2">Chat ended</h1>
-        <p className="text-zinc-400 mb-6">
-          This conversation expired 3 hours after the first message.
+        <div className="text-5xl mb-4 text-cyan-400/80">◎</div>
+        <h1 className="text-2xl font-bold mb-2">This chat has vanished</h1>
+        <p className="text-zinc-400 mb-6 text-sm max-w-xs">
+          {chatExpired
+            ? 'This conversation ended 3 hours after the first message.'
+            : 'The conversation was cleared.'}
         </p>
         <button
           onClick={() => router.push('/search')}
@@ -568,7 +610,6 @@ export default function ChatPage() {
 
   return (
     <div className="h-[100dvh] text-white flex flex-col overflow-hidden relative">
-      {/* Wallpaper */}
       <div className="pointer-events-none absolute inset-0 bg-[#05070a]">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(34,211,238,0.12),_transparent_55%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_rgba(37,99,235,0.10),_transparent_50%)]" />
@@ -582,7 +623,7 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* Header */}
+      {/* Header + Trust line */}
       <div className="relative z-10 bg-black/50 backdrop-blur-md px-3 py-2 border-b border-white/10 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -590,6 +631,9 @@ export default function ChatPage() {
             <h1 className="text-sm sm:text-base font-bold text-cyan-400 truncate">
               {targetUsername}
             </h1>
+            <p className="text-[10px] text-zinc-500 mt-0.5">
+              No last seen · No read receipts
+            </p>
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end">
             <span className="text-[10px] text-zinc-400 bg-zinc-800/80 px-2 py-1 rounded-full">
@@ -632,7 +676,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Messages */}
       <div className="relative z-10 flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-10">
@@ -707,7 +750,6 @@ export default function ChatPage() {
                       {msg.content}
                     </p>
                   )}
-
                   {mine && (
                     <span className="pointer-events-none absolute -bottom-1 right-2 h-[2px] w-8 rounded-full bg-gradient-to-r from-cyan-300 to-transparent opacity-70" />
                   )}
@@ -719,7 +761,7 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
+      {/* Input + Ghost */}
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-2 border-t border-white/10 shrink-0">
         <div className="flex gap-2 items-end">
           <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-xl">
@@ -731,6 +773,18 @@ export default function ChatPage() {
               className="hidden"
             />
           </label>
+          <button
+            type="button"
+            onClick={() => setGhostReply(!ghostReply)}
+            className={`text-[10px] px-2.5 py-2 rounded-xl border shrink-0 ${
+              ghostReply
+                ? 'bg-cyan-500 text-black border-cyan-400'
+                : 'bg-zinc-800 text-zinc-300 border-zinc-700'
+            }`}
+            title="After you send, go offline in Search"
+          >
+            Ghost
+          </button>
           <textarea
             placeholder="Type a message..."
             value={newMessage}
@@ -745,9 +799,13 @@ export default function ChatPage() {
             Send
           </button>
         </div>
+        {ghostReply && (
+          <p className="text-[10px] text-cyan-400/90 mt-1.5 px-1">
+            Ghost on: after Send, you go offline in Search.
+          </p>
+        )}
       </div>
 
-      {/* Message menu */}
       {msgMenu && activeMsg && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
@@ -808,7 +866,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Clear / Block / Report */}
       {modal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
@@ -816,7 +873,8 @@ export default function ChatPage() {
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  Messages will disappear for both of you immediately.
+                  Messages will disappear for both of you. You will see: This chat
+                  has vanished.
                 </p>
                 <div className="flex gap-2">
                   <button
