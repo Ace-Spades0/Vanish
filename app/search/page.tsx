@@ -13,11 +13,9 @@ function isUsernameActive(profile: {
   if (!profile?.username) return false
   if (profile.is_permanent_username) return true
   if (!profile.username_claimed_at) return false
-
   const hoursPassed =
     (Date.now() - new Date(profile.username_claimed_at).getTime()) /
     (1000 * 60 * 60)
-
   return hoursPassed < 24
 }
 
@@ -36,7 +34,9 @@ export default function SearchPage() {
     setLangState(getLang())
 
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (!user) {
         router.push('/auth')
         return
@@ -49,7 +49,6 @@ export default function SearchPage() {
         .eq('id', user.id)
         .maybeSingle()
 
-      // Permanent usernames never force "Pick a username"
       if (!isUsernameActive(profile || {})) {
         router.push('/username')
         return
@@ -76,6 +75,7 @@ export default function SearchPage() {
       setLoading(false)
       return
     }
+
     if (!currentUser) {
       setMessage('Please login again')
       setLoading(false)
@@ -84,7 +84,6 @@ export default function SearchPage() {
 
     const q = searchText.trim()
 
-    // Case-insensitive match (LESTAT / lestat)
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
@@ -103,7 +102,6 @@ export default function SearchPage() {
       return
     }
 
-    // Target must have active username (permanent OR within 24h)
     if (!isUsernameActive(data)) {
       setMessage('User not found')
       setLoading(false)
@@ -136,8 +134,12 @@ export default function SearchPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center px-4 relative">
-      <div className="absolute top-4 right-4 flex gap-2">
+    <div className="min-h-screen bg-black text-white flex items-center justify-center px-4 relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[400px] bg-cyan-500/10 blur-[100px] rounded-full" />
+      </div>
+
+      <div className="absolute top-4 right-4 flex gap-2 z-10">
         <button
           onClick={() => changeLang('en')}
           className={`text-xs px-3 py-1.5 rounded-full border ${
@@ -160,9 +162,10 @@ export default function SearchPage() {
         </button>
       </div>
 
-      <div className="bg-zinc-900/90 backdrop-blur p-8 rounded-3xl w-full max-w-md shadow-2xl border border-zinc-800">
+      <div className="relative z-10 bg-zinc-900/90 backdrop-blur p-8 rounded-3xl w-full max-w-md shadow-2xl border border-zinc-800">
         <h1 className="text-3xl font-bold mb-2 text-center">{t.searchTitle}</h1>
-        <p className="text-zinc-400 text-center mb-6 text-sm">{t.searchHelp}</p>
+        <p className="text-zinc-400 text-center mb-2 text-sm">{t.searchHelp}</p>
+        <p className="text-zinc-600 text-center mb-6 text-xs">{t.emptySearchHint}</p>
 
         <input
           type="text"
@@ -170,13 +173,13 @@ export default function SearchPage() {
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          className="w-full p-3 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+          className="w-full p-3.5 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-base"
         />
 
         <button
           onClick={handleSearch}
           disabled={loading}
-          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl transition disabled:opacity-50"
+          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3.5 rounded-xl transition disabled:opacity-50"
         >
           {loading ? t.searching : t.search}
         </button>
@@ -186,10 +189,10 @@ export default function SearchPage() {
         )}
 
         {result && (
-          <div className="mt-6 p-5 bg-zinc-800 rounded-2xl text-center border border-zinc-700">
-            <div className="text-3xl mb-2">{result.avatar_icon || '🎭'}</div>
+          <div className="mt-6 p-5 bg-zinc-800/90 rounded-2xl text-center border border-zinc-700">
+            <div className="text-4xl mb-2">{result.avatar_icon || '🎭'}</div>
             <p className="text-zinc-400 text-sm mb-1">{t.foundUser}</p>
-            <p className="text-cyan-400 text-xl font-medium mb-1">
+            <p className="text-cyan-400 text-2xl font-medium mb-1">
               {result.username}
             </p>
             {result.bio ? (
@@ -199,7 +202,7 @@ export default function SearchPage() {
             )}
             <button
               onClick={() => router.push(`/chat/${result.username}`)}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl transition"
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-2.5 rounded-xl transition"
             >
               {t.startChatBtn}
             </button>

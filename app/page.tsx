@@ -14,9 +14,10 @@ export default function LandingPage() {
 
   useEffect(() => {
     setLangState(getLang())
-
     const checkAuth = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (user) {
         router.push('/home')
         return
@@ -40,8 +41,13 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[520px] h-[520px] bg-cyan-500/10 blur-[120px] rounded-full" />
+        <div className="absolute bottom-0 right-0 w-[360px] h-[360px] bg-blue-600/10 blur-[100px] rounded-full" />
+      </div>
+
+      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-6 text-center py-12">
         <div className="absolute top-4 right-4 flex gap-2">
           <button
             onClick={() => changeLang('en')}
@@ -65,23 +71,21 @@ export default function LandingPage() {
           </button>
         </div>
 
-        <div className="mb-6">
+        <div className="mb-5">
           <Image
             src="/logo.png"
-            alt="Vanish Logo"
-            width={110}
-            height={110}
-            className="mx-auto"
+            alt="Go Vanish"
+            width={120}
+            height={120}
+            className="mx-auto drop-shadow-[0_0_30px_rgba(34,211,238,0.35)]"
             priority
           />
         </div>
 
-        <h1 className="text-6xl md:text-7xl font-bold tracking-tight mb-4">
+        <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-3">
           {t.appName}
         </h1>
-
         <p className="text-xl md:text-2xl text-zinc-400 mb-3">{t.tagline}</p>
-
         <p className="text-zinc-500 max-w-md mb-10 text-sm md:text-base">
           {t.subtitle}
         </p>
@@ -101,19 +105,17 @@ export default function LandingPage() {
           </button>
         </div>
 
-        <div className="mt-20 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl w-full">
+        <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl w-full">
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
             <div className="text-3xl mb-3">⏱️</div>
             <h3 className="font-semibold mb-2">{t.hourMessages}</h3>
             <p className="text-zinc-400 text-sm">{t.hourMessagesDesc}</p>
           </div>
-
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
             <div className="text-3xl mb-3">🛡️</div>
             <h3 className="font-semibold mb-2">{t.antiInterrogation}</h3>
             <p className="text-zinc-400 text-sm">{t.antiInterrogationDesc}</p>
           </div>
-
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
             <div className="text-3xl mb-3">🎭</div>
             <h3 className="font-semibold mb-2">{t.dailyUsernames}</h3>

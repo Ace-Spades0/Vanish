@@ -2,19 +2,22 @@ export type Lang = 'en' | 'sw'
 
 export const translations = {
   en: {
-    appName: 'VANISH',
+    appName: 'Go Vanish',
     tagline: 'Talk freely. Stay private.',
-    subtitle: 'Temporary usernames. Messages that disappear. No permanent identity.',
+    subtitle:
+      'Temporary usernames. Chats that disappear. No permanent identity.',
     getStarted: 'Get Started',
     login: 'Login',
     signUp: 'Sign Up',
-    hourMessages: '3-Hour Messages',
-    hourMessagesDesc: 'Every message automatically disappears after 3 hours.',
+    hourMessages: '3-Hour Chats',
+    hourMessagesDesc:
+      'Each conversation ends 3 hours after the first message.',
     antiInterrogation: 'Anti-Interrogation',
     antiInterrogationDesc:
       'Protects conversations from pressure and spam. Fair warnings before any limits apply.',
     dailyUsernames: 'Daily Usernames',
-    dailyUsernamesDesc: 'Pick a new name every 24 hours. Fully temporary identity.',
+    dailyUsernamesDesc:
+      'Pick a new name every 24 hours. Fully temporary identity.',
     terms: 'Terms of Service',
     privacy: 'Privacy & Security',
     termsShort: 'Terms',
@@ -31,14 +34,15 @@ export const translations = {
     logout: 'Logout',
     deleteAccount: 'Delete account',
     deleteAccountTitle: 'Delete account?',
-    deleteAccountDesc: 'This permanently deletes your account. This cannot be undone.',
+    deleteAccountDesc:
+      'This permanently deletes your account. This cannot be undone.',
     cancel: 'Cancel',
     delete: 'Delete',
     deleting: 'Deleting...',
     unblock: 'Unblock',
     admin: 'Admin',
     language: 'Language',
-    loading: 'Loading VANISH...',
+    loading: 'Loading Go Vanish...',
     pleaseWait: 'Please wait...',
     email: 'Email',
     password: 'Password',
@@ -49,7 +53,8 @@ export const translations = {
     and: 'and',
     sendResetLink: 'Send Reset Link',
     backToLogin: 'Back to Login',
-    resetHelp: 'Enter your email and we will send you a link to reset your password.',
+    resetHelp:
+      'Enter your email and we will send you a link to reset your password.',
     setNewPassword: 'Set a new password for your account.',
     newPassword: 'New password',
     confirmNewPassword: 'Confirm new password',
@@ -61,9 +66,10 @@ export const translations = {
     search: 'Search',
     foundUser: 'Found user',
     startChatBtn: 'Start Chat',
-    backHome: 'Back to Home',
+    backHome: '← Back to Home',
     profileTitle: 'Profile',
-    profileHelp: 'Edit bio, offline mode, and anonymous icon. Username cannot be changed here.',
+    profileHelp:
+      'Edit bio, offline mode, and anonymous icon. Username cannot be changed here.',
     anonymousIcon: 'Anonymous icon',
     clearIcon: 'Clear icon',
     bio: 'Bio',
@@ -75,21 +81,27 @@ export const translations = {
     changePasswordHelp:
       'For security, we send a confirmation email. Open the email link to set a new password.',
     sendPasswordEmail: 'Send password change email',
+    showLess: 'Show less',
+    viewMoreIcons: 'View more icons',
+    emptySearchHint: 'Usernames are temporary. Ask them for today’s name.',
   },
   sw: {
-    appName: 'VANISH',
+    appName: 'Go Vanish',
     tagline: 'Ongea kwa uhuru. Kaa faraghani.',
-    subtitle: 'Majina ya muda. Ujumbe unaotoweka. Hakuna utambulisho wa kudumu.',
+    subtitle:
+      'Majina ya muda. Gumzo linalotoweka. Hakuna utambulisho wa kudumu.',
     getStarted: 'Anza',
     login: 'Ingia',
     signUp: 'Jisajili',
-    hourMessages: 'Ujumbe wa Saa 3',
-    hourMessagesDesc: 'Kila ujumbe hufutwa kiotomatiki baada ya saa 3.',
+    hourMessages: 'Gumzo la Saa 3',
+    hourMessagesDesc:
+      'Kila gumzo linaisha saa 3 baada ya ujumbe wa kwanza.',
     antiInterrogation: 'Kinga dhidi ya Uchunguzi',
     antiInterrogationDesc:
       'Hulinda mazungumzo dhidi ya shinikizo na spam. Onyo la haki kabla ya mipaka.',
     dailyUsernames: 'Majina ya Kila Siku',
-    dailyUsernamesDesc: 'Chagua jina jipya kila saa 24. Utambulisho wa muda tu.',
+    dailyUsernamesDesc:
+      'Chagua jina jipya kila saa 24. Utambulisho wa muda tu.',
     terms: 'Sheria na Masharti',
     privacy: 'Faragha na Usalama',
     termsShort: 'Sheria',
@@ -106,14 +118,15 @@ export const translations = {
     logout: 'Toka',
     deleteAccount: 'Futa akaunti',
     deleteAccountTitle: 'Futa akaunti?',
-    deleteAccountDesc: 'Hii itafuta akaunti yako kabisa. Haiwezi kurekebishwa.',
+    deleteAccountDesc:
+      'Hii itafuta akaunti yako kabisa. Haiwezi kurekebishwa.',
     cancel: 'Ghairi',
     delete: 'Futa',
     deleting: 'Inafuta...',
     unblock: 'Ondoa zuio',
     admin: 'Admin',
     language: 'Lugha',
-    loading: 'Inapakia VANISH...',
+    loading: 'Inapakia Go Vanish...',
     pleaseWait: 'Tafadhali subiri...',
     email: 'Barua pepe',
     password: 'Nenosiri',
@@ -124,7 +137,8 @@ export const translations = {
     and: 'na',
     sendResetLink: 'Tuma Kiungo cha Kuweka Upya',
     backToLogin: 'Rudi Ingia',
-    resetHelp: 'Weka barua pepe yako tutakutumia kiungo cha kuweka nenosiri upya.',
+    resetHelp:
+      'Weka barua pepe yako tutakutumia kiungo cha kuweka nenosiri upya.',
     setNewPassword: 'Weka nenosiri jipya la akaunti yako.',
     newPassword: 'Nenosiri jipya',
     confirmNewPassword: 'Thibitisha nenosiri jipya',
@@ -136,20 +150,26 @@ export const translations = {
     search: 'Tafuta',
     foundUser: 'Mtumiaji amepatikana',
     startChatBtn: 'Anza Gumzo',
-    backHome: 'Rudi Nyumbani',
+    backHome: '← Rudi Nyumbani',
     profileTitle: 'Wasifu',
-    profileHelp: 'Hariri bio, hali ya nje ya mtandao, na ikoni. Jina halibadilishwi hapa.',
+    profileHelp:
+      'Hariri bio, hali ya nje ya mtandao, na ikoni. Jina halibadilishwi hapa.',
     anonymousIcon: 'Ikoni ya siri',
     clearIcon: 'Futa ikoni',
     bio: 'Bio',
     maxBio: 'Herufi 20 tu',
     goOffline: 'Nenda nje ya mtandao',
-    goOfflineHelp: 'Ukikaa nje ya mtandao, wengine hawawezi kukupata kwenye utafutaji.',
+    goOfflineHelp:
+      'Ukikaa nje ya mtandao, wengine hawawezi kukupata kwenye utafutaji.',
     saveProfile: 'Hifadhi wasifu',
     changePassword: 'Badilisha nenosiri',
     changePasswordHelp:
       'Kwa usalama, tunatuma barua pepe ya uthibitisho. Fungua kiungo kuweka nenosiri jipya.',
     sendPasswordEmail: 'Tuma barua pepe ya kubadilisha nenosiri',
+    showLess: 'Onyesha chache',
+    viewMoreIcons: 'Ona ikoni zaidi',
+    emptySearchHint:
+      'Majina ni ya muda. Waulize jina la leo.',
   },
 } as const
 

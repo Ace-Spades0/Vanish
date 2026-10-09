@@ -14,13 +14,14 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'VANISH',
-  description: 'Talk freely. Stay private. Temporary usernames and vanishing messages.',
-  applicationName: 'VANISH',
+  title: 'Go Vanish',
+  description:
+    'Talk freely. Stay private. Temporary usernames and vanishing chats.',
+  applicationName: 'Go Vanish',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'VANISH',
+    title: 'Go Vanish',
   },
   formatDetection: {
     telephone: false,

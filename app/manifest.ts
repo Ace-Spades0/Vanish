@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'VANISH',
-    short_name: 'VANISH',
+    name: 'Go Vanish',
+    short_name: 'Go Vanish',
     description: 'Talk freely. Stay private.',
     start_url: '/',
     scope: '/',
