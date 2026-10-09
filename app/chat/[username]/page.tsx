@@ -29,6 +29,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<any[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(true)
+  const [startingNew, setStartingNew] = useState(false)
   const [conversationId, setConversationId] = useState('')
   const [fileCount, setFileCount] = useState(0)
   const [videoCount, setVideoCount] = useState(0)
@@ -130,6 +131,7 @@ export default function ChatPage() {
         .from('messages')
         .select('created_at')
         .eq('conversation_id', convId)
+        .eq('deleted', false)
         .order('created_at', { ascending: true })
         .limit(1)
 
@@ -198,6 +200,7 @@ export default function ChatPage() {
           if (payload.new.deleted) return
           hadMessagesRef.current = true
           setSealed(false)
+          setChatExpired(false)
           setMessages((prev) => {
             if (prev.some((m) => m.id === payload.new.id)) return prev
             const next = [...prev, payload.new]
@@ -259,6 +262,7 @@ export default function ChatPage() {
       .from('messages')
       .select('created_at')
       .eq('conversation_id', conversationId)
+      .eq('deleted', false)
       .order('created_at', { ascending: true })
       .limit(1)
 
@@ -271,6 +275,48 @@ export default function ChatPage() {
     const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
     setChatEndsAt(endsAt)
     return endsAt
+  }
+
+  // Start a fresh session with the same person
+  const startNewChat = async () => {
+    if (!conversationId || startingNew) return
+    setStartingNew(true)
+
+    // Remove old messages so the next message starts a new 3-hour window
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('conversation_id', conversationId)
+
+    if (error) {
+      // Fallback: mark all deleted if hard delete blocked by RLS
+      await supabase
+        .from('messages')
+        .update({ deleted: true })
+        .eq('conversation_id', conversationId)
+    }
+
+    await supabase.from('audit_logs').insert({
+      conversation_id: conversationId,
+      payload: {
+        action: 'start_new_chat',
+        by: user?.id,
+        at: new Date().toISOString(),
+        target_username: targetUsername,
+      },
+    })
+
+    setMessages([])
+    setFileCount(0)
+    setVideoCount(0)
+    setChatEndsAt(null)
+    setChatExpired(false)
+    setSealed(false)
+    setWarningLevel(0)
+    setWarningText('')
+    setNewMessage('')
+    hadMessagesRef.current = false
+    setStartingNew(false)
   }
 
   const sendMessage = async () => {
@@ -329,8 +375,8 @@ export default function ChatPage() {
 
     hadMessagesRef.current = true
     setSealed(false)
+    setChatExpired(false)
 
-    // Ghost reply → go offline after send
     if (ghostReply) {
       await supabase
         .from('profiles')
@@ -421,6 +467,7 @@ export default function ChatPage() {
 
     hadMessagesRef.current = true
     setSealed(false)
+    setChatExpired(false)
     e.target.value = ''
   }
 
@@ -587,23 +634,32 @@ export default function ChatPage() {
     )
   }
 
-  // Seal screen (clear or 3-hour end)
+  // Seal / expired — with Start new chat
   if (chatExpired || sealed) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
         <div className="text-5xl mb-4 text-cyan-400/80">◎</div>
         <h1 className="text-2xl font-bold mb-2">This chat has vanished</h1>
-        <p className="text-zinc-400 mb-6 text-sm max-w-xs">
+        <p className="text-zinc-400 mb-8 text-sm max-w-xs">
           {chatExpired
             ? 'This conversation ended 3 hours after the first message.'
             : 'The conversation was cleared.'}
         </p>
-        <button
-          onClick={() => router.push('/search')}
-          className="bg-zinc-700 hover:bg-zinc-600 px-6 py-3 rounded-xl transition"
-        >
-          Back to Search
-        </button>
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button
+            onClick={startNewChat}
+            disabled={startingNew}
+            className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl transition"
+          >
+            {startingNew ? 'Starting...' : 'Start new chat'}
+          </button>
+          <button
+            onClick={() => router.push('/search')}
+            className="w-full bg-zinc-700 hover:bg-zinc-600 py-3 rounded-xl transition"
+          >
+            Back to Search
+          </button>
+        </div>
       </div>
     )
   }
@@ -623,7 +679,6 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* Header + Trust line */}
       <div className="relative z-10 bg-black/50 backdrop-blur-md px-3 py-2 border-b border-white/10 shrink-0">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -681,6 +736,9 @@ export default function ChatPage() {
           <div className="flex flex-col items-center justify-center h-full text-center pt-10">
             <div className="text-3xl mb-2 opacity-40">💬</div>
             <p className="text-zinc-400 text-sm">No messages yet</p>
+            <p className="text-zinc-600 text-xs mt-1">
+              New chat — 3 hours starts at the first message
+            </p>
           </div>
         ) : (
           messages.map((msg) => {
@@ -725,7 +783,10 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    <div
+                      className="relative"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <video
                         src={msg.content}
                         controls
@@ -761,7 +822,6 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input + Ghost */}
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-2 border-t border-white/10 shrink-0">
         <div className="flex gap-2 items-end">
           <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-xl">
@@ -873,8 +933,8 @@ export default function ChatPage() {
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  Messages will disappear for both of you. You will see: This chat
-                  has vanished.
+                  Messages will disappear for both of you. You can start a new chat
+                  after.
                 </p>
                 <div className="flex gap-2">
                   <button
