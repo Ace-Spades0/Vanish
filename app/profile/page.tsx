@@ -10,7 +10,7 @@ const ANON_ICONS = [
   '🎃', '🧟', '🧛', '🧜', '🧞', '🧚', '🧙',
   '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄', '🐲', '🦇', '🕷️', '🦂',
   '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶', '🐨', '🐻',
-  '🐮', '🐷', '🐵', '🐔', '🦅', '🦆', 'swan', '🦜', '🦩', '🦚',
+  '🐮', '🐷', '🐵', '🐔', '🦅', '🦆', '🦜', '🦩', '🦚',
   '🐢', '🦕', '🦖', '🐳', '🐋', '🐬', '🦭', '🦦', '🦥', '🦨', '🦡', '🦫',
   '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑', '🌕', '🛰️',
   '💫', '🌠', '🌎', '🌍', '🌏',
@@ -26,10 +26,7 @@ const ANON_ICONS = [
   '◆', '◇', '○', '●', '□', '■', '△', '▲', '▽', '▼',
 ]
 
-// Remove accidental non-emoji placeholders if any
-const CLEAN_ICONS = ANON_ICONS.filter((i) => i !== 'swan')
-
-const INITIAL_VISIBLE = 12
+const uniqueIcons = Array.from(new Set(ANON_ICONS))
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -43,16 +40,10 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [sendingPassword, setSendingPassword] = useState(false)
-  const [showAllIcons, setShowAllIcons] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const t = translations[lang]
-
-  const uniqueIcons = Array.from(new Set(CLEAN_ICONS))
-  const visibleIcons = showAllIcons
-    ? uniqueIcons
-    : uniqueIcons.slice(0, INITIAL_VISIBLE)
 
   useEffect(() => {
     setLangState(getLang())
@@ -168,208 +159,205 @@ export default function ProfilePage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">{t.loading || 'Loading...'}</p>
+        <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-white px-4 py-10 relative">
-      <div className="absolute top-4 right-4 flex gap-2">
-        <button
-          onClick={() => changeLang('en')}
-          className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'en'
-              ? 'bg-cyan-500 text-black border-cyan-400'
-              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-          }`}
-        >
-          EN
-        </button>
-        <button
-          onClick={() => changeLang('sw')}
-          className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'sw'
-              ? 'bg-cyan-500 text-black border-cyan-400'
-              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-          }`}
-        >
-          SW
-        </button>
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[520px] h-[420px] bg-cyan-500/10 blur-[120px] rounded-full" />
+        <div className="absolute bottom-0 right-0 w-[280px] h-[280px] bg-blue-600/10 blur-[100px] rounded-full" />
       </div>
 
-      <div className="max-w-md mx-auto">
-        <button
-          onClick={() => router.push('/home')}
-          className="text-sm text-zinc-400 hover:text-white mb-8"
-        >
-          {t.backHome || '← Back to Home'}
-        </button>
+      <div className="relative z-10 px-4 py-10">
+        <div className="absolute top-4 right-4 flex gap-2">
+          <button
+            onClick={() => changeLang('en')}
+            className={`text-xs px-3 py-1.5 rounded-full border ${
+              lang === 'en'
+                ? 'bg-cyan-500 text-black border-cyan-400'
+                : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+            }`}
+          >
+            EN
+          </button>
+          <button
+            onClick={() => changeLang('sw')}
+            className={`text-xs px-3 py-1.5 rounded-full border ${
+              lang === 'sw'
+                ? 'bg-cyan-500 text-black border-cyan-400'
+                : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+            }`}
+          >
+            SW
+          </button>
+        </div>
 
-        <h1 className="text-3xl font-bold mb-2">
-          {t.profileTitle || 'My account'}
-        </h1>
-        <p className="text-zinc-500 text-sm mb-8">
-          {t.profileHelp || 'Bio, icon, offline, password, logout'}
-        </p>
+        <div className="max-w-md mx-auto">
+          <button
+            onClick={() => router.push('/home')}
+            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full mb-8 transition"
+          >
+            ← Back to Home
+          </button>
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6 shadow-2xl">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
-              {t.username || 'Username'}
-            </p>
-            <p className="text-2xl font-semibold text-cyan-400">
-              {username || t.noUsername || 'No username'}
-            </p>
-            {user?.email && (
-              <p className="text-xs text-zinc-500 mt-1 break-all">{user.email}</p>
+          <h1 className="text-3xl font-bold mb-2">
+            {t.profileTitle || 'My account'}
+          </h1>
+          <p className="text-zinc-500 text-sm mb-8">
+            {t.profileHelp || 'Bio, icon, offline, password, logout'}
+          </p>
+
+          <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 space-y-6 shadow-2xl backdrop-blur-sm">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
+                {t.username || 'Username'}
+              </p>
+              <p className="text-2xl font-semibold text-cyan-400">
+                {username || t.noUsername || 'No username'}
+              </p>
+              {user?.email && (
+                <p className="text-xs text-zinc-500 mt-1 break-all">{user.email}</p>
+              )}
+            </div>
+
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
+                {t.anonymousIcon || 'Anonymous icon'}
+              </p>
+
+              {avatarIcon ? (
+                <div className="mb-3 text-center text-4xl">{avatarIcon}</div>
+              ) : null}
+
+              {/* Horizontal scroll — all icons, no stressful dump */}
+              <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
+                {uniqueIcons.map((icon, index) => (
+                  <button
+                    key={`${icon}-${index}`}
+                    type="button"
+                    onClick={() => setAvatarIcon(icon)}
+                    className={`h-12 w-12 shrink-0 rounded-xl text-xl flex items-center justify-center border transition ${
+                      avatarIcon === icon
+                        ? 'bg-cyan-500/20 border-cyan-400 scale-105'
+                        : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500'
+                    }`}
+                  >
+                    {icon}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-[11px] text-zinc-500">
+                  Swipe sideways to browse all {uniqueIcons.length} icons
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setAvatarIcon('')}
+                  className="text-xs text-zinc-400 hover:text-white"
+                >
+                  {t.clearIcon || 'Clear'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                  {t.bio || 'Bio'}
+                </p>
+                <p className="text-xs text-zinc-500">{bio.length}/20</p>
+              </div>
+              <input
+                type="text"
+                value={bio}
+                maxLength={20}
+                onChange={(e) => setBio(e.target.value)}
+                placeholder={t.maxBio || 'Max 20 characters'}
+                className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
+              />
+            </div>
+
+            <div className="flex items-center justify-between bg-zinc-800/70 border border-zinc-700 rounded-2xl px-4 py-3">
+              <div>
+                <p className="font-medium">{t.goOffline || 'Go offline'}</p>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {t.goOfflineHelp || 'Hidden from search while offline'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsOffline(!isOffline)}
+                className={`w-14 h-8 rounded-full p-1 transition ${
+                  isOffline ? 'bg-cyan-500' : 'bg-zinc-600'
+                }`}
+              >
+                <div
+                  className={`w-6 h-6 bg-white rounded-full transition ${
+                    isOffline ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <button
+              onClick={saveProfile}
+              disabled={saving}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3.5 rounded-2xl transition"
+            >
+              {saving
+                ? t.pleaseWait || 'Please wait...'
+                : t.saveProfile || 'Save profile'}
+            </button>
+
+            {message && (
+              <p className="text-center text-sm text-cyan-400">{message}</p>
             )}
           </div>
 
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
-              {t.anonymousIcon || 'Anonymous icon'}
+          <div className="mt-6 bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 shadow-2xl backdrop-blur-sm">
+            <h2 className="text-lg font-semibold mb-2">
+              {t.changePassword || 'Change password'}
+            </h2>
+            <p className="text-sm text-zinc-400 mb-4">
+              {t.changePasswordHelp || 'We will email you a reset link.'}
             </p>
-
-            {avatarIcon ? (
-              <div className="mb-3 text-center text-3xl">{avatarIcon}</div>
-            ) : null}
-
-            <div className="grid grid-cols-6 gap-2">
-              {visibleIcons.map((icon, index) => (
-                <button
-                  key={`${icon}-${index}`}
-                  type="button"
-                  onClick={() => setAvatarIcon(icon)}
-                  className={`h-11 rounded-xl text-xl flex items-center justify-center border transition ${
-                    avatarIcon === icon
-                      ? 'bg-cyan-500/20 border-cyan-400'
-                      : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500'
-                  }`}
-                >
-                  {icon}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setAvatarIcon('')}
-                className="text-xs text-zinc-400 hover:text-white"
-              >
-                {t.clearIcon || 'Clear icon'}
-              </button>
-
-              {uniqueIcons.length > INITIAL_VISIBLE && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllIcons(!showAllIcons)}
-                  className="text-xs text-cyan-400 hover:text-cyan-300"
-                >
-                  {showAllIcons
-                    ? 'Show less'
-                    : `More icons (${uniqueIcons.length - INITIAL_VISIBLE}+)`}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-                {t.bio || 'Bio'}
-              </p>
-              <p className="text-xs text-zinc-500">{bio.length}/20</p>
-            </div>
-            <input
-              type="text"
-              value={bio}
-              maxLength={20}
-              onChange={(e) => setBio(e.target.value)}
-              placeholder={t.maxBio || 'Max 20 characters'}
-              className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
-            />
-          </div>
-
-          <div className="flex items-center justify-between bg-zinc-800/70 border border-zinc-700 rounded-2xl px-4 py-3">
-            <div>
-              <p className="font-medium">{t.goOffline || 'Go offline'}</p>
-              <p className="text-xs text-zinc-400 mt-1">
-                {t.goOfflineHelp || 'Hidden from search while offline'}
-              </p>
-            </div>
             <button
-              type="button"
-              onClick={() => setIsOffline(!isOffline)}
-              className={`w-14 h-8 rounded-full p-1 transition ${
-                isOffline ? 'bg-cyan-500' : 'bg-zinc-600'
-              }`}
+              onClick={sendPasswordChangeEmail}
+              disabled={sendingPassword}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
             >
-              <div
-                className={`w-6 h-6 bg-white rounded-full transition ${
-                  isOffline ? 'translate-x-6' : 'translate-x-0'
-                }`}
-              />
+              {sendingPassword
+                ? t.pleaseWait || 'Please wait...'
+                : t.sendPasswordEmail || 'Send password email'}
+            </button>
+            {passwordMessage && (
+              <p className="mt-4 text-center text-sm text-cyan-400">
+                {passwordMessage}
+              </p>
+            )}
+          </div>
+
+          <div className="mt-6 bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-3 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold mb-1">Account</h2>
+            <p className="text-sm text-zinc-500 mb-3">
+              Logout or permanently delete your Go Vanish account.
+            </p>
+            <button
+              onClick={handleLogout}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
+            >
+              Logout
+            </button>
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className="w-full bg-red-950 hover:bg-red-900 text-red-300 font-medium py-3 rounded-2xl border border-red-900 transition"
+            >
+              Delete account
             </button>
           </div>
-
-          <button
-            onClick={saveProfile}
-            disabled={saving}
-            className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3.5 rounded-2xl transition"
-          >
-            {saving ? t.pleaseWait || 'Please wait...' : t.saveProfile || 'Save profile'}
-          </button>
-
-          {message && (
-            <p className="text-center text-sm text-cyan-400">{message}</p>
-          )}
-        </div>
-
-        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
-          <h2 className="text-lg font-semibold mb-2">
-            {t.changePassword || 'Change password'}
-          </h2>
-          <p className="text-sm text-zinc-400 mb-4">
-            {t.changePasswordHelp || 'We will email you a reset link.'}
-          </p>
-          <button
-            onClick={sendPasswordChangeEmail}
-            disabled={sendingPassword}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
-          >
-            {sendingPassword
-              ? t.pleaseWait || 'Please wait...'
-              : t.sendPasswordEmail || 'Send password email'}
-          </button>
-          {passwordMessage && (
-            <p className="mt-4 text-center text-sm text-cyan-400">
-              {passwordMessage}
-            </p>
-          )}
-        </div>
-
-        {/* Account actions — logout & delete live here */}
-        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-3">
-          <h2 className="text-lg font-semibold mb-1">Account</h2>
-          <p className="text-sm text-zinc-500 mb-3">
-            Logout or permanently delete your Go Vanish account.
-          </p>
-
-          <button
-            onClick={handleLogout}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
-          >
-            Logout
-          </button>
-
-          <button
-            onClick={() => setShowDeleteModal(true)}
-            className="w-full bg-red-950 hover:bg-red-900 text-red-300 font-medium py-3 rounded-2xl border border-red-900 transition"
-          >
-            Delete account
-          </button>
         </div>
       </div>
 
