@@ -34,6 +34,9 @@ export default function HomePage() {
   const [showBlockedModal, setShowBlockedModal] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const [expiryLabel, setExpiryLabel] = useState<string | null>(null)
+  const [inviteUrl, setInviteUrl] = useState('')
+  const [inviteMsg, setInviteMsg] = useState('')
+  const [creatingInvite, setCreatingInvite] = useState(false)
   const router = useRouter()
   const t = translations[lang]
 
@@ -137,7 +140,6 @@ export default function HomePage() {
     loadData()
   }, [])
 
-  // Refresh countdown every minute
   useEffect(() => {
     if (!profile) return
     const tick = () => setExpiryLabel(getExpiryLabel(profile))
@@ -154,6 +156,46 @@ export default function HomePage() {
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  const createInvite = async () => {
+    setInviteMsg('')
+    setCreatingInvite(true)
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+
+    if (!session) {
+      setInviteMsg('Please login again')
+      setCreatingInvite(false)
+      return
+    }
+
+    const res = await fetch('/api/create-invite', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+
+    const data = await res.json()
+
+    if (data.error) {
+      setInviteMsg(data.error)
+      setCreatingInvite(false)
+      return
+    }
+
+    const full = `${window.location.origin}${data.url}`
+    setInviteUrl(full)
+
+    try {
+      await navigator.clipboard.writeText(full)
+      setInviteMsg('Invite link copied!')
+    } catch {
+      setInviteMsg('Invite created — copy the link below.')
+    }
+
+    setCreatingInvite(false)
   }
 
   const unblockUser = async (blockedId: string) => {
@@ -264,14 +306,12 @@ export default function HomePage() {
               {profile?.username ? profile.username : t.noUsername}
             </p>
 
-            {/* Daily reset badge */}
             {profile?.username && expiryLabel && (
               <p
                 className={`text-xs mt-2 ${
                   expiryLabel === 'Permanent'
                     ? 'text-purple-300'
-                    : expiryLabel.startsWith('Expires in 0') ||
-                        expiryLabel.includes('Expired')
+                    : expiryLabel.includes('Expired')
                       ? 'text-amber-400'
                       : 'text-zinc-400'
                 }`}
@@ -317,6 +357,32 @@ export default function HomePage() {
                 {t.startChat}
               </button>
             )}
+
+            {profile?.username && (
+              <button
+                onClick={createInvite}
+                disabled={creatingInvite}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700"
+              >
+                {creatingInvite ? 'Creating...' : 'Create one-shot invite'}
+              </button>
+            )}
+
+            {inviteMsg && (
+              <p className="text-center text-xs text-cyan-400">{inviteMsg}</p>
+            )}
+            {inviteUrl && (
+              <p className="text-[11px] text-zinc-400 break-all text-center">
+                {inviteUrl}
+              </p>
+            )}
+
+            <button
+              onClick={() => router.push('/letters')}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700"
+            >
+              Letters
+            </button>
 
             <button
               onClick={() => router.push('/profile')}
