@@ -32,6 +32,7 @@ export default function HomePage() {
   const [deleting, setDeleting] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showBlockedModal, setShowBlockedModal] = useState(false)
+  const [showInvite, setShowInvite] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const [expiryLabel, setExpiryLabel] = useState<string | null>(null)
   const [inviteUrl, setInviteUrl] = useState('')
@@ -201,9 +202,9 @@ export default function HomePage() {
 
       try {
         await navigator.clipboard.writeText(full)
-        setInviteMsg('Link copied to clipboard')
+        setInviteMsg('Link copied')
       } catch {
-        setInviteMsg('Invite ready — copy the link')
+        setInviteMsg('Invite ready')
       }
     } catch (e: any) {
       setInviteMsg(e?.message || 'Something went wrong')
@@ -216,18 +217,14 @@ export default function HomePage() {
     if (!inviteUrl) return
     try {
       await navigator.clipboard.writeText(inviteUrl)
-      setInviteMsg('Link copied to clipboard')
+      setInviteMsg('Link copied')
     } catch {
-      setInviteMsg('Could not copy — select the link manually')
+      setInviteMsg('Copy failed')
     }
   }
 
   const revokeInvite = async () => {
-    if (!inviteCode) {
-      setInviteMsg('No active invite to revoke')
-      return
-    }
-
+    if (!inviteCode) return
     setRevoking(true)
     setInviteMsg('')
 
@@ -235,7 +232,6 @@ export default function HomePage() {
       const {
         data: { session },
       } = await supabase.auth.getSession()
-
       if (!session) {
         setInviteMsg('Please login again')
         return
@@ -255,7 +251,7 @@ export default function HomePage() {
       try {
         data = JSON.parse(text)
       } catch {
-        setInviteMsg(`Revoke API error (${res.status})`)
+        setInviteMsg(`Revoke error (${res.status})`)
         return
       }
 
@@ -266,7 +262,7 @@ export default function HomePage() {
 
       setInviteUrl('')
       setInviteCode('')
-      setInviteMsg('Invite revoked — link is dead')
+      setInviteMsg('Invite revoked')
     } catch (e: any) {
       setInviteMsg(e?.message || 'Something went wrong')
     } finally {
@@ -281,7 +277,6 @@ export default function HomePage() {
       .delete()
       .eq('blocker_id', user.id)
       .eq('blocked_id', blockedId)
-
     if (error) {
       alert(error.message)
       return
@@ -298,7 +293,6 @@ export default function HomePage() {
       setDeleting(false)
       return
     }
-
     const res = await fetch('/api/delete-account', {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}` },
@@ -309,287 +303,275 @@ export default function HomePage() {
       setDeleting(false)
       return
     }
-
     await supabase.auth.signOut()
     router.push('/')
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-10 h-10 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-zinc-400 text-sm">{t.loading}</p>
-        </div>
+      <div className="min-h-screen bg-[#03050a] text-white flex items-center justify-center">
+        <div className="w-10 h-10 border-2 border-cyan-400/80 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+    <div className="min-h-screen bg-[#03050a] text-white relative overflow-hidden">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-[480px] bg-cyan-500/10 blur-[120px] rounded-full" />
-        <div className="absolute bottom-0 right-0 w-[320px] h-[320px] bg-blue-600/10 blur-[100px] rounded-full" />
+        <div className="absolute top-[-15%] left-1/2 -translate-x-1/2 w-[640px] h-[640px] bg-cyan-500/[0.08] blur-[130px] rounded-full" />
+        <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-blue-700/[0.06] blur-[100px] rounded-full" />
       </div>
 
-      <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-10">
-        <div className="absolute top-4 right-4 flex gap-2">
-          <button
-            onClick={() => changeLang('en')}
-            className={`text-xs px-3 py-1.5 rounded-full border ${
-              lang === 'en'
-                ? 'bg-cyan-500 text-black border-cyan-400'
-                : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-            }`}
-          >
-            EN
-          </button>
-          <button
-            onClick={() => changeLang('sw')}
-            className={`text-xs px-3 py-1.5 rounded-full border ${
-              lang === 'sw'
-                ? 'bg-cyan-500 text-black border-cyan-400'
-                : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-            }`}
-          >
-            SW
-          </button>
+      {/* Top */}
+      <header className="relative z-20 flex items-center justify-between px-5 py-4 max-w-md mx-auto">
+        <div className="flex items-center gap-2">
+          <Image src="/logo.png" alt="Go Vanish" width={28} height={28} priority />
+          <span className="text-sm font-semibold tracking-tight">{t.appName}</span>
+        </div>
+        <div className="flex gap-1">
+          {(['en', 'sw'] as Lang[]).map((l) => (
+            <button
+              key={l}
+              onClick={() => changeLang(l)}
+              className={`text-[10px] uppercase px-2 py-1 rounded-full border ${
+                lang === l
+                  ? 'bg-cyan-500 text-black border-cyan-400'
+                  : 'border-zinc-700 text-zinc-500'
+              }`}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <main className="relative z-10 max-w-md mx-auto px-5 pb-16">
+        {/* CENTER: identity — not a button */}
+        <div className="text-center pt-8 pb-10">
+          <div className="mx-auto mb-5 h-[72px] w-[72px] rounded-full bg-zinc-900/90 border border-cyan-500/20 flex items-center justify-center text-3xl shadow-[0_0_50px_rgba(34,211,238,0.15)]">
+            {profile?.avatar_icon || '🎭'}
+          </div>
+
+          <p className="text-[10px] tracking-[0.3em] uppercase text-zinc-500 mb-2">
+            You are
+          </p>
+          <h1 className="text-4xl font-bold text-cyan-400 tracking-tight">
+            {profile?.username || t.noUsername}
+          </h1>
+
+          {expiryLabel && (
+            <p
+              className={`text-xs mt-2 ${
+                expiryLabel === 'Permanent' ? 'text-purple-300' : 'text-zinc-500'
+              }`}
+            >
+              {expiryLabel}
+            </p>
+          )}
+
+          {profile?.bio && (
+            <p className="text-sm text-zinc-400 mt-3 max-w-[240px] mx-auto">
+              {profile.bio}
+            </p>
+          )}
+
+          <div className="mt-4 flex justify-center gap-2 flex-wrap">
+            <span className="text-[10px] px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400">
+              Private
+            </span>
+            {profile?.is_permanent_username && (
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-purple-950/50 border border-purple-800 text-purple-300">
+                Permanent
+              </span>
+            )}
+            {profile?.is_offline && (
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-700 text-amber-300">
+                Offline
+              </span>
+            )}
+          </div>
         </div>
 
-        <div className="mb-6">
-          <Image
-            src="/logo.png"
-            alt="Go Vanish"
-            width={88}
-            height={88}
-            className="mx-auto drop-shadow-[0_0_25px_rgba(34,211,238,0.35)]"
-            priority
-          />
+        {/* ONE primary action */}
+        <div className="mb-8">
+          {!profile?.username ? (
+            <button
+              onClick={() => router.push('/username')}
+              className="w-full py-4 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-base shadow-[0_0_40px_rgba(34,211,238,0.25)] transition"
+            >
+              {t.pickUsername}
+            </button>
+          ) : (
+            <button
+              onClick={() => router.push('/search')}
+              className="w-full py-4 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-base shadow-[0_0_40px_rgba(34,211,238,0.25)] transition"
+            >
+              Start a vanishing chat
+            </button>
+          )}
         </div>
 
-        <h1 className="text-5xl md:text-6xl font-bold tracking-tight mb-2">
-          {t.appName}
-        </h1>
-        <p className="text-zinc-400 mb-8 text-center">{t.tagline}</p>
-
-        <div className="w-full max-w-md bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 shadow-2xl">
-          {/* Profile */}
-          <div className="text-center mb-6">
-            <div className="text-4xl mb-2">{profile?.avatar_icon || '🎭'}</div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
-              {t.username}
-            </p>
-            <p className="text-3xl font-semibold text-cyan-400">
-              {profile?.username ? profile.username : t.noUsername}
-            </p>
-
-            {profile?.username && expiryLabel && (
-              <p
-                className={`text-xs mt-2 ${
-                  expiryLabel === 'Permanent'
-                    ? 'text-purple-300'
-                    : expiryLabel.includes('Expired')
-                      ? 'text-amber-400'
-                      : 'text-zinc-400'
+        {/* Compact icon row — not a button list */}
+        {profile?.username && (
+          <div className="flex justify-center gap-3 mb-6">
+            {[
+              {
+                label: 'Invite',
+                icon: '🔗',
+                onClick: () => setShowInvite((v) => !v),
+                active: showInvite,
+              },
+              {
+                label: 'Letters',
+                icon: '✉️',
+                onClick: () => router.push('/letters'),
+              },
+              {
+                label: 'Profile',
+                icon: '🎭',
+                onClick: () => router.push('/profile'),
+              },
+              {
+                label: 'Blocked',
+                icon: '🚫',
+                onClick: () => setShowBlockedModal(true),
+                badge: blockedUsers.length,
+              },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={item.onClick}
+                className={`relative flex flex-col items-center justify-center w-[68px] h-[68px] rounded-2xl border transition ${
+                  item.active
+                    ? 'border-cyan-500/50 bg-cyan-500/10'
+                    : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.06]'
                 }`}
               >
-                {expiryLabel}
-              </p>
-            )}
-
-            {profile?.bio ? (
-              <p className="text-sm text-zinc-400 mt-2">{profile.bio}</p>
-            ) : null}
-            <p className="text-xs text-zinc-500 mt-2 break-all">{user?.email}</p>
-            <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
-              <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
-                {t.privateByDesign}
-              </p>
-              {profile?.is_permanent_username ? (
-                <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-purple-900/50 text-purple-300 border border-purple-700">
-                  Permanent
-                </p>
-              ) : null}
-              {profile?.is_offline ? (
-                <p className="inline-block text-[11px] px-3 py-1 rounded-full bg-zinc-800 text-yellow-300 border border-zinc-700">
-                  {t.offline}
-                </p>
-              ) : null}
-            </div>
+                <span className="text-xl leading-none mb-1">{item.icon}</span>
+                <span className="text-[10px] text-zinc-400">{item.label}</span>
+                {typeof item.badge === 'number' && item.badge > 0 && (
+                  <span className="absolute -top-1 -right-1 text-[9px] min-w-[16px] h-4 px-1 rounded-full bg-cyan-500 text-black font-semibold flex items-center justify-center">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
+        )}
 
-          <div className="space-y-3">
-            {!profile?.username ? (
+        {/* Invite panel — only when opened */}
+        {showInvite && profile?.username && (
+          <div className="mb-8 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-4 animate-in">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm font-medium">One-shot invite</p>
+                <p className="text-[11px] text-zinc-500">One use · then gone</p>
+              </div>
               <button
-                onClick={() => router.push('/username')}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3.5 rounded-2xl transition"
+                onClick={() => setShowInvite(false)}
+                className="text-zinc-500 hover:text-white text-sm px-2"
               >
-                {t.pickUsername}
+                ✕
+              </button>
+            </div>
+
+            {!inviteUrl ? (
+              <button
+                onClick={createInvite}
+                disabled={creatingInvite}
+                className="w-full py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-sm hover:border-cyan-500/40 transition disabled:opacity-50"
+              >
+                {creatingInvite ? 'Creating…' : 'Generate link'}
               </button>
             ) : (
-              <button
-                onClick={() => router.push('/search')}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3.5 rounded-2xl transition shadow-[0_0_24px_rgba(34,211,238,0.15)]"
-              >
-                {t.startChat}
-              </button>
-            )}
-
-            {/* One-shot invite card */}
-            {profile?.username && (
-              <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/5 to-transparent p-4 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium text-white">One-shot invite</p>
-                    <p className="text-[11px] text-zinc-500 mt-0.5">
-                      One use · dies after open · 24h max
-                    </p>
-                  </div>
-                  <span className="text-[10px] px-2 py-1 rounded-full border border-cyan-500/30 text-cyan-400 bg-cyan-500/10">
-                    Vanish link
-                  </span>
-                </div>
-
-                {!inviteUrl ? (
-                  <button
-                    onClick={createInvite}
-                    disabled={creatingInvite}
-                    className="w-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-xl transition border border-zinc-700"
-                  >
-                    {creatingInvite ? 'Creating link...' : 'Create invite link'}
-                  </button>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex items-stretch gap-2">
-                      <div className="flex-1 min-w-0 rounded-xl bg-black/50 border border-zinc-700 px-3 py-2.5">
-                        <p className="text-[11px] text-zinc-500 mb-0.5">Your link</p>
-                        <p className="text-xs text-cyan-300/90 break-all font-mono leading-relaxed">
-                          {inviteUrl}
-                        </p>
-                      </div>
-                      <button
-                        onClick={copyInvite}
-                        className="shrink-0 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-semibold transition"
-                        title="Copy"
-                      >
-                        Copy
-                      </button>
-                    </div>
-
-                    <button
-                      onClick={revokeInvite}
-                      disabled={revoking}
-                      className="w-full text-xs text-red-300/90 hover:text-red-200 py-2 rounded-xl border border-red-900/50 hover:border-red-700/60 bg-red-950/30 transition disabled:opacity-50"
-                    >
-                      {revoking ? 'Revoking...' : 'Revoke — kill this link now'}
-                    </button>
-                  </div>
-                )}
-
-                {inviteMsg && (
-                  <p className="text-center text-[11px] text-cyan-400/90">
-                    {inviteMsg}
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <p className="flex-1 text-[11px] font-mono text-cyan-300/90 break-all bg-black/40 rounded-xl px-3 py-2 border border-white/5">
+                    {inviteUrl}
                   </p>
-                )}
+                  <button
+                    onClick={copyInvite}
+                    className="px-3 rounded-xl bg-cyan-500 text-black text-xs font-semibold shrink-0"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <button
+                  onClick={revokeInvite}
+                  disabled={revoking}
+                  className="text-[11px] text-red-300/80 hover:text-red-200"
+                >
+                  {revoking ? 'Revoking…' : 'Revoke link'}
+                </button>
               </div>
             )}
-
-            <button
-              onClick={() => router.push('/letters')}
-              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700"
-            >
-              Letters
-            </button>
-
-            <button
-              onClick={() => router.push('/profile')}
-              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700"
-            >
-              {t.profile}
-            </button>
-
-            <button
-              onClick={() => setShowBlockedModal(true)}
-              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700 flex items-center justify-center gap-2"
-            >
-              {t.blockedUsers}
-              <span className="text-xs bg-zinc-900 border border-zinc-600 px-2 py-0.5 rounded-full">
-                {blockedUsers.length}
-              </span>
-            </button>
-
-            {user?.id === ADMIN_ID && (
-              <button
-                onClick={() => router.push('/admin/reports')}
-                className="w-full bg-purple-700 hover:bg-purple-600 text-white font-medium py-3.5 rounded-2xl transition"
-              >
-                {t.admin}
-              </button>
+            {inviteMsg && (
+              <p className="text-[11px] text-cyan-400/80 mt-2 text-center">
+                {inviteMsg}
+              </p>
             )}
+          </div>
+        )}
 
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <button
-                onClick={handleLogout}
-                className="bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-2xl transition border border-zinc-700"
-              >
-                {t.logout}
-              </button>
-              <button
-                onClick={() => setShowDeleteModal(true)}
-                className="bg-red-950 hover:bg-red-900 text-red-300 font-medium py-3 rounded-2xl transition border border-red-900"
-              >
-                {t.deleteAccount}
-              </button>
-            </div>
+        {/* Quiet footer — text links, not big buttons */}
+        <div className="pt-4 border-t border-white/5">
+          <div className="flex items-center justify-center gap-4 text-xs text-zinc-500">
+            {user?.id === ADMIN_ID && (
+              <>
+                <button
+                  onClick={() => router.push('/admin/reports')}
+                  className="hover:text-purple-300 transition"
+                >
+                  Admin
+                </button>
+                <span className="text-zinc-700">·</span>
+              </>
+            )}
+            <button onClick={handleLogout} className="hover:text-white transition">
+              {t.logout}
+            </button>
+            <span className="text-zinc-700">·</span>
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className="hover:text-red-300 transition"
+            >
+              {t.deleteAccount}
+            </button>
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-zinc-600">
+            <button onClick={() => router.push('/terms')} className="hover:text-cyan-500/70">
+              {t.termsShort}
+            </button>
+            <span>·</span>
+            <button onClick={() => router.push('/privacy')} className="hover:text-cyan-500/70">
+              {t.privacyShort}
+            </button>
           </div>
         </div>
-
-        <div className="mt-8 flex items-center gap-4 text-xs text-zinc-500">
-          <button
-            onClick={() => router.push('/terms')}
-            className="hover:text-cyan-400 transition"
-          >
-            {t.termsShort}
-          </button>
-          <span>•</span>
-          <button
-            onClick={() => router.push('/privacy')}
-            className="hover:text-cyan-400 transition"
-          >
-            {t.privacyShort}
-          </button>
-        </div>
-      </div>
+      </main>
 
       {showBlockedModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">{t.blockedUsers}</h3>
-              <button
-                onClick={() => setShowBlockedModal(false)}
-                className="text-zinc-400 hover:text-white text-xl leading-none"
-              >
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-[#0c0e14] border border-white/10 rounded-3xl p-5 w-full max-w-sm">
+            <div className="flex justify-between mb-4">
+              <h3 className="font-semibold">{t.blockedUsers}</h3>
+              <button onClick={() => setShowBlockedModal(false)} className="text-zinc-500">
                 ×
               </button>
             </div>
             {blockedUsers.length === 0 ? (
-              <p className="text-zinc-500 text-sm py-6 text-center">
-                {t.noBlockedUsers}
-              </p>
+              <p className="text-zinc-500 text-sm text-center py-8">{t.noBlockedUsers}</p>
             ) : (
-              <div className="space-y-2 max-h-72 overflow-y-auto">
+              <div className="space-y-2 max-h-64 overflow-y-auto">
                 {blockedUsers.map((u) => (
                   <div
                     key={u.id}
-                    className="flex items-center justify-between bg-zinc-800/80 px-3 py-3 rounded-2xl border border-zinc-700"
+                    className="flex justify-between items-center py-2 px-3 rounded-xl bg-white/[0.03]"
                   >
-                    <span className="text-sm text-zinc-200">
-                      {u.username || 'Unknown'}
-                    </span>
+                    <span className="text-sm">{u.username || 'Unknown'}</span>
                     <button
                       onClick={() => unblockUser(u.id)}
-                      className="text-xs bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 rounded-lg transition"
+                      className="text-xs text-cyan-400"
                     >
                       {t.unblock}
                     </button>
@@ -602,21 +584,21 @@ export default function HomePage() {
       )}
 
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
-            <h3 className="text-lg font-semibold mb-2">{t.deleteAccountTitle}</h3>
-            <p className="text-zinc-400 text-sm mb-5">{t.deleteAccountDesc}</p>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-[#0c0e14] border border-white/10 rounded-3xl p-5 w-full max-w-sm">
+            <h3 className="font-semibold mb-2">{t.deleteAccountTitle}</h3>
+            <p className="text-sm text-zinc-400 mb-5">{t.deleteAccountDesc}</p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowDeleteModal(false)}
-                className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl transition"
+                className="flex-1 py-2.5 rounded-xl bg-zinc-800"
               >
                 {t.cancel}
               </button>
               <button
                 onClick={deleteAccount}
                 disabled={deleting}
-                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition"
+                className="flex-1 py-2.5 rounded-xl bg-red-600"
               >
                 {deleting ? t.deleting : t.delete}
               </button>
