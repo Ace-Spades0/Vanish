@@ -11,7 +11,7 @@ function extractInviteCode(input: string) {
     const part = raw.split('/i/')[1] || ''
     return part.split(/[?#]/)[0].trim().toLowerCase()
   }
-  return raw.toLowerCase()
+  return raw.trim().toLowerCase()
 }
 
 export default function LettersPage() {
@@ -54,30 +54,58 @@ export default function LettersPage() {
     const trimmed = input.trim()
     if (!trimmed) return { error: 'Enter a username or vanish link' }
 
-    if (trimmed.includes('/i/') || /^[a-z0-9]{6,16}$/i.test(trimmed)) {
+    // 1) Full vanish link → invite
+    if (trimmed.includes('/i/')) {
       const code = extractInviteCode(trimmed)
       const { data: invite } = await supabase
         .from('invites')
-        .select('creator_id, code')
+        .select('creator_id')
         .eq('code', code)
         .maybeSingle()
+
       if (!invite) return { error: 'Vanish link not found' }
+
       const { data: creator } = await supabase
         .from('profiles')
-        .select('id, username')
+        .select('id, username, is_offline')
         .eq('id', invite.creator_id)
         .maybeSingle()
+
       if (!creator) return { error: 'User not available' }
       return { target: creator }
     }
 
-    const { data: target } = await supabase
+    // 2) Username first (fixes LESTAT / spades etc.)
+    const { data: byName } = await supabase
       .from('profiles')
-      .select('id, username')
+      .select('id, username, is_offline, is_permanent_username, username_claimed_at')
       .ilike('username', trimmed)
       .maybeSingle()
-    if (!target) return { error: 'User not found' }
-    return { target }
+
+    if (byName) {
+      return { target: byName }
+    }
+
+    // 3) Optional: bare invite code only if no username matched
+    const code = extractInviteCode(trimmed)
+    if (code.length >= 6) {
+      const { data: invite } = await supabase
+        .from('invites')
+        .select('creator_id')
+        .eq('code', code)
+        .maybeSingle()
+
+      if (invite) {
+        const { data: creator } = await supabase
+          .from('profiles')
+          .select('id, username, is_offline')
+          .eq('id', invite.creator_id)
+          .maybeSingle()
+        if (creator) return { target: creator }
+      }
+    }
+
+    return { error: 'User not found' }
   }
 
   const isBlockedEitherWay = async (a: string, b: string) => {
@@ -216,7 +244,7 @@ export default function LettersPage() {
               className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
             />
             <p className="text-[11px] text-zinc-500">
-              Example: spades or https://yoursite.com/i/abc123
+              Username (e.g. LESTAT) or full link (.../i/abc123)
             </p>
             <textarea
               value={body}
@@ -245,7 +273,7 @@ export default function LettersPage() {
                 <button
                   key={l.id}
                   onClick={() => openLetter(l)}
-                  className="w-full text-left p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:border-cyan-700 transition backdrop-blur-sm"
+                  className="w-full text-left p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:border-cyan-700 transition"
                 >
                   <p className="text-sm text-cyan-400">Tap to read once</p>
                   <p className="text-xs text-zinc-500 mt-1">

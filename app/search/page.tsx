@@ -70,118 +70,145 @@ export default function SearchPage() {
     setResult(null)
     setLoading(true)
 
-    if (!searchText.trim()) {
+    const q = searchText.trim()
+    if (!q) {
       setMessage('Please enter a username')
       setLoading(false)
       return
     }
 
-    if (!currentUser) {
-      setMessage('Please login again')
-      setLoading(false)
-      return
-    }
-
-    const q = searchText.trim()
-
-    const { data, error } = await supabase
+    const { data: found, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select(
+        'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
+      )
       .ilike('username', q)
       .maybeSingle()
 
     if (error) {
-      setMessage('Something went wrong')
+      setMessage(error.message)
       setLoading(false)
       return
     }
 
-    if (!data || data.is_offline) {
+    if (!found) {
       setMessage('User not found')
       setLoading(false)
       return
     }
 
-    if (!isUsernameActive(data)) {
-      setMessage('User not found')
+    if (found.id === currentUser?.id) {
+      setMessage('That is your own username')
       setLoading(false)
       return
     }
 
-    const { data: blocks } = await supabase
-      .from('blocks')
-      .select('id')
-      .or(
-        `and(blocker_id.eq.${currentUser.id},blocked_id.eq.${data.id}),and(blocker_id.eq.${data.id},blocked_id.eq.${currentUser.id})`
-      )
-
-    if (blocks && blocks.length > 0) {
+    if (found.status === 'suspended' || found.status === 'banned') {
       setMessage('User not available')
       setLoading(false)
       return
     }
 
-    setResult(data)
+    if (found.is_offline) {
+      setMessage('User is offline')
+      setLoading(false)
+      return
+    }
+
+    // Permanent (LESTAT) always searchable; others need active 24h name
+    if (!isUsernameActive(found)) {
+      setMessage('User not found')
+      setLoading(false)
+      return
+    }
+
+    // Block either way
+    if (currentUser) {
+      const { data: blocks } = await supabase
+        .from('blocks')
+        .select('id')
+        .or(
+          `and(blocker_id.eq.${currentUser.id},blocked_id.eq.${found.id}),and(blocker_id.eq.${found.id},blocked_id.eq.${currentUser.id})`
+        )
+        .limit(1)
+
+      if (blocks && blocks.length > 0) {
+        setMessage('User not available')
+        setLoading(false)
+        return
+      }
+    }
+
+    setResult(found)
     setLoading(false)
   }
 
   if (checking) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">{t.loading}</p>
+        <p className="text-zinc-400">Loading...</p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center px-4 relative overflow-hidden">
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[400px] h-[400px] bg-cyan-500/10 blur-[100px] rounded-full" />
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[480px] h-[480px] bg-cyan-500/10 blur-[120px] rounded-full" />
       </div>
 
-      <div className="absolute top-4 right-4 flex gap-2 z-10">
-        <button
-          onClick={() => changeLang('en')}
-          className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'en'
-              ? 'bg-cyan-500 text-black border-cyan-400'
-              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-          }`}
-        >
-          EN
-        </button>
-        <button
-          onClick={() => changeLang('sw')}
-          className={`text-xs px-3 py-1.5 rounded-full border ${
-            lang === 'sw'
-              ? 'bg-cyan-500 text-black border-cyan-400'
-              : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-          }`}
-        >
-          SW
-        </button>
-      </div>
+      <div className="relative z-10 max-w-md mx-auto px-4 py-10">
+        <div className="flex justify-between items-center mb-8">
+          <button
+            onClick={() => router.push('/home')}
+            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
+          >
+            ← Back
+          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={() => changeLang('en')}
+              className={`text-xs px-2.5 py-1 rounded-full border ${
+                lang === 'en'
+                  ? 'bg-cyan-500 text-black border-cyan-400'
+                  : 'border-zinc-700 text-zinc-500'
+              }`}
+            >
+              EN
+            </button>
+            <button
+              onClick={() => changeLang('sw')}
+              className={`text-xs px-2.5 py-1 rounded-full border ${
+                lang === 'sw'
+                  ? 'bg-cyan-500 text-black border-cyan-400'
+                  : 'border-zinc-700 text-zinc-500'
+              }`}
+            >
+              SW
+            </button>
+          </div>
+        </div>
 
-      <div className="relative z-10 bg-zinc-900/90 backdrop-blur p-8 rounded-3xl w-full max-w-md shadow-2xl border border-zinc-800">
-        <h1 className="text-3xl font-bold mb-2 text-center">{t.searchTitle}</h1>
-        <p className="text-zinc-400 text-center mb-2 text-sm">{t.searchHelp}</p>
-        <p className="text-zinc-600 text-center mb-6 text-xs">{t.emptySearchHint}</p>
+        <h1 className="text-3xl font-bold mb-2">{t.search || 'Search'}</h1>
+        <p className="text-zinc-500 text-sm mb-6">
+          Find someone by their exact username
+        </p>
 
         <input
           type="text"
-          placeholder={t.enterUsername}
+          placeholder="Enter username"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          className="w-full p-3.5 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-base"
+          className="w-full p-3 mb-4 rounded-xl bg-zinc-900 border border-zinc-700 focus:outline-none focus:border-cyan-400"
         />
 
         <button
           onClick={handleSearch}
           disabled={loading}
-          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3.5 rounded-xl transition disabled:opacity-50"
+          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl transition disabled:opacity-50"
         >
-          {loading ? t.searching : t.search}
+          {loading ? 'Searching...' : 'Search'}
         </button>
 
         {message && (
@@ -189,10 +216,10 @@ export default function SearchPage() {
         )}
 
         {result && (
-          <div className="mt-6 p-5 bg-zinc-800/90 rounded-2xl text-center border border-zinc-700">
-            <div className="text-4xl mb-2">{result.avatar_icon || '🎭'}</div>
-            <p className="text-zinc-400 text-sm mb-1">{t.foundUser}</p>
-            <p className="text-cyan-400 text-2xl font-medium mb-1">
+          <div className="mt-6 p-5 bg-zinc-900 rounded-2xl text-center border border-zinc-800">
+            <div className="text-3xl mb-2">{result.avatar_icon || '🎭'}</div>
+            <p className="text-zinc-400 text-sm mb-1">Found user</p>
+            <p className="text-cyan-400 text-xl font-medium mb-1">
               {result.username}
             </p>
             {result.bio ? (
@@ -202,19 +229,12 @@ export default function SearchPage() {
             )}
             <button
               onClick={() => router.push(`/chat/${result.username}`)}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-2.5 rounded-xl transition"
+              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl transition"
             >
-              {t.startChatBtn}
+              Start Chat
             </button>
           </div>
         )}
-
-        <button
-          onClick={() => router.push('/home')}
-          className="w-full mt-6 text-zinc-400 hover:text-white text-sm transition"
-        >
-          {t.backHome}
-        </button>
       </div>
     </div>
   )
