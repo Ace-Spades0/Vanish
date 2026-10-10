@@ -186,9 +186,7 @@ export default function HomePage() {
       try {
         data = JSON.parse(text)
       } catch {
-        setInviteMsg(
-          `Invite API error (${res.status}). Check that route is deployed.`
-        )
+        setInviteMsg(`Invite API error (${res.status})`)
         return
       }
 
@@ -203,14 +201,24 @@ export default function HomePage() {
 
       try {
         await navigator.clipboard.writeText(full)
-        setInviteMsg('Invite link copied!')
+        setInviteMsg('Link copied to clipboard')
       } catch {
-        setInviteMsg('Invite created — copy the link below.')
+        setInviteMsg('Invite ready — copy the link')
       }
     } catch (e: any) {
       setInviteMsg(e?.message || 'Something went wrong')
     } finally {
       setCreatingInvite(false)
+    }
+  }
+
+  const copyInvite = async () => {
+    if (!inviteUrl) return
+    try {
+      await navigator.clipboard.writeText(inviteUrl)
+      setInviteMsg('Link copied to clipboard')
+    } catch {
+      setInviteMsg('Could not copy — select the link manually')
     }
   }
 
@@ -258,7 +266,7 @@ export default function HomePage() {
 
       setInviteUrl('')
       setInviteCode('')
-      setInviteMsg('Invite revoked. Link will no longer work.')
+      setInviteMsg('Invite revoked — link is dead')
     } catch (e: any) {
       setInviteMsg(e?.message || 'Something went wrong')
     } finally {
@@ -365,6 +373,7 @@ export default function HomePage() {
         <p className="text-zinc-400 mb-8 text-center">{t.tagline}</p>
 
         <div className="w-full max-w-md bg-zinc-900/80 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 shadow-2xl">
+          {/* Profile */}
           <div className="text-center mb-6">
             <div className="text-4xl mb-2">{profile?.avatar_icon || '🎭'}</div>
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
@@ -420,38 +429,68 @@ export default function HomePage() {
             ) : (
               <button
                 onClick={() => router.push('/search')}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3.5 rounded-2xl transition"
+                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3.5 rounded-2xl transition shadow-[0_0_24px_rgba(34,211,238,0.15)]"
               >
                 {t.startChat}
               </button>
             )}
 
+            {/* One-shot invite card */}
             {profile?.username && (
-              <button
-                onClick={createInvite}
-                disabled={creatingInvite}
-                className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3.5 rounded-2xl transition border border-zinc-700"
-              >
-                {creatingInvite ? 'Creating...' : 'Create one-shot invite'}
-              </button>
-            )}
+              <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/5 to-transparent p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-white">One-shot invite</p>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      One use · dies after open · 24h max
+                    </p>
+                  </div>
+                  <span className="text-[10px] px-2 py-1 rounded-full border border-cyan-500/30 text-cyan-400 bg-cyan-500/10">
+                    Vanish link
+                  </span>
+                </div>
 
-            {inviteMsg && (
-              <p className="text-center text-xs text-cyan-400">{inviteMsg}</p>
-            )}
+                {!inviteUrl ? (
+                  <button
+                    onClick={createInvite}
+                    disabled={creatingInvite}
+                    className="w-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-xl transition border border-zinc-700"
+                  >
+                    {creatingInvite ? 'Creating link...' : 'Create invite link'}
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-stretch gap-2">
+                      <div className="flex-1 min-w-0 rounded-xl bg-black/50 border border-zinc-700 px-3 py-2.5">
+                        <p className="text-[11px] text-zinc-500 mb-0.5">Your link</p>
+                        <p className="text-xs text-cyan-300/90 break-all font-mono leading-relaxed">
+                          {inviteUrl}
+                        </p>
+                      </div>
+                      <button
+                        onClick={copyInvite}
+                        className="shrink-0 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-semibold transition"
+                        title="Copy"
+                      >
+                        Copy
+                      </button>
+                    </div>
 
-            {inviteUrl && (
-              <div className="space-y-2">
-                <p className="text-[11px] text-zinc-400 break-all text-center">
-                  {inviteUrl}
-                </p>
-                <button
-                  onClick={revokeInvite}
-                  disabled={revoking}
-                  className="w-full bg-red-950 hover:bg-red-900 disabled:opacity-50 text-red-300 font-medium py-2.5 rounded-2xl transition border border-red-900 text-sm"
-                >
-                  {revoking ? 'Revoking...' : 'Revoke this invite'}
-                </button>
+                    <button
+                      onClick={revokeInvite}
+                      disabled={revoking}
+                      className="w-full text-xs text-red-300/90 hover:text-red-200 py-2 rounded-xl border border-red-900/50 hover:border-red-700/60 bg-red-950/30 transition disabled:opacity-50"
+                    >
+                      {revoking ? 'Revoking...' : 'Revoke — kill this link now'}
+                    </button>
+                  </div>
+                )}
+
+                {inviteMsg && (
+                  <p className="text-center text-[11px] text-cyan-400/90">
+                    {inviteMsg}
+                  </p>
+                )}
               </div>
             )}
 
