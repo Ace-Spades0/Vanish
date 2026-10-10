@@ -6,31 +6,28 @@ import { supabase } from '@/lib/supabase'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
 const ANON_ICONS = [
-  // masks / mystery
   '🎭', '👻', '💀', '☠️', '👽', '🤖', '🥷', '🤡', '👺', '👹', '👿', '😈',
   '🎃', '🧟', '🧛', '🧜', '🧞', '🧚', '🧙',
-  // animals
   '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄', '🐲', '🦇', '🕷️', '🦂',
   '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶', '🐨', '🐻',
-  '🐯', '🐮', '🐷', '🐸', '🐵', '🐔', '🦅', '🦆', '🦢', '🦜', '🦩', '🦚',
+  '🐮', '🐷', '🐵', '🐔', '🦅', '🦆', 'swan', '🦜', '🦩', '🦚',
   '🐢', '🦕', '🦖', '🐳', '🐋', '🐬', '🦭', '🦦', '🦥', '🦨', '🦡', '🦫',
-  // space / night
   '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑', '🌕', '🛰️',
   '💫', '🌠', '🌎', '🌍', '🌏',
-  // fire / weather / energy
   '🔥', '⚡', '💥', '🌪️', '❄️', '🌊', '🫧', '🧿', '☁️', '🌧️', '⛈️', '🌈',
-  '☀️', '🌤️', '🌫️', '🌪️',
-  // objects / weird / symbols
+  '☀️', '🌤️', '🌫️',
   '👁️', '🧠', '🦴', '🪞', '🎩', '🕶️', '🎱', '🃏', '♟️', '🔮',
   '🧱', '🗝️', '🗿', '🎪', '🎯', '🎲', '🧩', '🪬', '💎', '👑',
   '🗡️', '⚔️', '🛡️', '🏹', '💣', '🧨', '🪓', '🪄', '📿', '💍',
-  '⌚', '📱', '💻', '🖥️', '⌨️', '🖱️', '📷', '📹', '🎥', '📺',
-  '📻', '🎙️', ' bell', '🎧', '🎵', '🎶', '🎼', '🎹', '🥁', '🎸',
-  '😈', '💀', '🔥', '⚡', '🌀', '♠️', '♥️', '♦️', '♣️', '🃏',
-  '∞', '※', '☯', '☮', '☢', '☣', '✪', '✦', '✧', '✧',
+  '⌚', '📱', '💻', '📷', '📹', '🎥', '📺',
+  '📻', '🎙️', '🔔', '🎧', '🎵', '🎶', '🎼', '🎹', '🥁', '🎸',
+  '♠️', '♥️', '♦️', '♣️',
+  '∞', '※', '☯', '☮', '☢', '☣', '✪', '✦',
   '◆', '◇', '○', '●', '□', '■', '△', '▲', '▽', '▼',
-  '⊕', '⊗', '⊙', '⊚', '⋆', '⋆', '✫', '✬', '✭', '✮',
 ]
+
+// Remove accidental non-emoji placeholders if any
+const CLEAN_ICONS = ANON_ICONS.filter((i) => i !== 'swan')
 
 const INITIAL_VISIBLE = 12
 
@@ -47,11 +44,12 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false)
   const [sendingPassword, setSendingPassword] = useState(false)
   const [showAllIcons, setShowAllIcons] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const t = translations[lang]
 
-  // unique list (remove duplicates)
-  const uniqueIcons = Array.from(new Set(ANON_ICONS))
+  const uniqueIcons = Array.from(new Set(CLEAN_ICONS))
   const visibleIcons = showAllIcons
     ? uniqueIcons
     : uniqueIcons.slice(0, INITIAL_VISIBLE)
@@ -60,7 +58,9 @@ export default function ProfilePage() {
     setLangState(getLang())
 
     const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (!user) {
         router.push('/auth')
         return
@@ -135,10 +135,40 @@ export default function ProfilePage() {
     setSendingPassword(false)
   }
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.push('/')
+  }
+
+  const deleteAccount = async () => {
+    setDeleting(true)
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      setDeleting(false)
+      return
+    }
+
+    const res = await fetch('/api/delete-account', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+    const data = await res.json()
+    if (data.error) {
+      alert(data.error)
+      setDeleting(false)
+      return
+    }
+
+    await supabase.auth.signOut()
+    router.push('/')
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">{t.loading}</p>
+        <p className="text-zinc-400">{t.loading || 'Loading...'}</p>
       </div>
     )
   }
@@ -173,25 +203,32 @@ export default function ProfilePage() {
           onClick={() => router.push('/home')}
           className="text-sm text-zinc-400 hover:text-white mb-8"
         >
-          {t.backHome}
+          {t.backHome || '← Back to Home'}
         </button>
 
-        <h1 className="text-3xl font-bold mb-2">{t.profileTitle}</h1>
-        <p className="text-zinc-500 text-sm mb-8">{t.profileHelp}</p>
+        <h1 className="text-3xl font-bold mb-2">
+          {t.profileTitle || 'My account'}
+        </h1>
+        <p className="text-zinc-500 text-sm mb-8">
+          {t.profileHelp || 'Bio, icon, offline, password, logout'}
+        </p>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6 shadow-2xl">
           <div>
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
-              {t.username}
+              {t.username || 'Username'}
             </p>
             <p className="text-2xl font-semibold text-cyan-400">
-              {username || t.noUsername}
+              {username || t.noUsername || 'No username'}
             </p>
+            {user?.email && (
+              <p className="text-xs text-zinc-500 mt-1 break-all">{user.email}</p>
+            )}
           </div>
 
           <div>
             <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
-              {t.anonymousIcon}
+              {t.anonymousIcon || 'Anonymous icon'}
             </p>
 
             {avatarIcon ? (
@@ -221,7 +258,7 @@ export default function ProfilePage() {
                 onClick={() => setAvatarIcon('')}
                 className="text-xs text-zinc-400 hover:text-white"
               >
-                {t.clearIcon}
+                {t.clearIcon || 'Clear icon'}
               </button>
 
               {uniqueIcons.length > INITIAL_VISIBLE && (
@@ -232,7 +269,7 @@ export default function ProfilePage() {
                 >
                   {showAllIcons
                     ? 'Show less'
-                    : `View more anonymous icons (${uniqueIcons.length - INITIAL_VISIBLE}+)`}
+                    : `More icons (${uniqueIcons.length - INITIAL_VISIBLE}+)`}
                 </button>
               )}
             </div>
@@ -241,7 +278,7 @@ export default function ProfilePage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-                {t.bio}
+                {t.bio || 'Bio'}
               </p>
               <p className="text-xs text-zinc-500">{bio.length}/20</p>
             </div>
@@ -250,15 +287,17 @@ export default function ProfilePage() {
               value={bio}
               maxLength={20}
               onChange={(e) => setBio(e.target.value)}
-              placeholder={t.maxBio}
+              placeholder={t.maxBio || 'Max 20 characters'}
               className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-sm"
             />
           </div>
 
           <div className="flex items-center justify-between bg-zinc-800/70 border border-zinc-700 rounded-2xl px-4 py-3">
             <div>
-              <p className="font-medium">{t.goOffline}</p>
-              <p className="text-xs text-zinc-400 mt-1">{t.goOfflineHelp}</p>
+              <p className="font-medium">{t.goOffline || 'Go offline'}</p>
+              <p className="text-xs text-zinc-400 mt-1">
+                {t.goOfflineHelp || 'Hidden from search while offline'}
+              </p>
             </div>
             <button
               type="button"
@@ -280,7 +319,7 @@ export default function ProfilePage() {
             disabled={saving}
             className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3.5 rounded-2xl transition"
           >
-            {saving ? t.pleaseWait : t.saveProfile}
+            {saving ? t.pleaseWait || 'Please wait...' : t.saveProfile || 'Save profile'}
           </button>
 
           {message && (
@@ -289,14 +328,20 @@ export default function ProfilePage() {
         </div>
 
         <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
-          <h2 className="text-lg font-semibold mb-2">{t.changePassword}</h2>
-          <p className="text-sm text-zinc-400 mb-4">{t.changePasswordHelp}</p>
+          <h2 className="text-lg font-semibold mb-2">
+            {t.changePassword || 'Change password'}
+          </h2>
+          <p className="text-sm text-zinc-400 mb-4">
+            {t.changePasswordHelp || 'We will email you a reset link.'}
+          </p>
           <button
             onClick={sendPasswordChangeEmail}
             disabled={sendingPassword}
             className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
           >
-            {sendingPassword ? t.pleaseWait : t.sendPasswordEmail}
+            {sendingPassword
+              ? t.pleaseWait || 'Please wait...'
+              : t.sendPasswordEmail || 'Send password email'}
           </button>
           {passwordMessage && (
             <p className="mt-4 text-center text-sm text-cyan-400">
@@ -304,7 +349,55 @@ export default function ProfilePage() {
             </p>
           )}
         </div>
+
+        {/* Account actions — logout & delete live here */}
+        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-3">
+          <h2 className="text-lg font-semibold mb-1">Account</h2>
+          <p className="text-sm text-zinc-500 mb-3">
+            Logout or permanently delete your Go Vanish account.
+          </p>
+
+          <button
+            onClick={handleLogout}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
+          >
+            Logout
+          </button>
+
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="w-full bg-red-950 hover:bg-red-900 text-red-300 font-medium py-3 rounded-2xl border border-red-900 transition"
+          >
+            Delete account
+          </button>
+        </div>
       </div>
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
+            <h3 className="text-lg font-semibold mb-2">Delete account?</h3>
+            <p className="text-zinc-400 text-sm mb-5">
+              This permanently deletes your account. This cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteAccount}
+                disabled={deleting}
+                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
