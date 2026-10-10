@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 function extractInviteCode(input: string) {
@@ -16,7 +16,6 @@ function extractInviteCode(input: string) {
 
 export default function LettersPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [user, setUser] = useState<any>(null)
   const [tab, setTab] = useState<'inbox' | 'send'>('inbox')
   const [letters, setLetters] = useState<any[]>([])
@@ -48,16 +47,17 @@ export default function LettersPage() {
       setUser(user)
       await loadInbox(user.id)
 
-      // Prefill from vanish link choice
-      if (typeof window !== 'undefined') {
+      // Prefill from vanish-link choice (no useSearchParams — avoids Vercel prerender crash)
+      try {
         const pre = sessionStorage.getItem('letter_to')
         if (pre) {
           setToInput(pre)
           setTab('send')
           sessionStorage.removeItem('letter_to')
         }
+      } catch {
+        /* ignore */
       }
-      if (searchParams.get('tab') === 'send') setTab('send')
 
       setLoading(false)
     }
@@ -250,7 +250,7 @@ export default function LettersPage() {
               <p className="text-xs text-amber-100/90 mb-2 font-medium">Safety</p>
               <p className="text-[11px] text-zinc-400 leading-relaxed">
                 Do not share passwords or send money. If a note feels wrong, leave
-                and use Report on that user from chat or search when you can.
+                and use Report when you can.
               </p>
               <label className="flex items-start gap-2 mt-3 cursor-pointer">
                 <input
