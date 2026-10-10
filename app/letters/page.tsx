@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
 function extractInviteCode(input: string) {
@@ -16,6 +16,7 @@ function extractInviteCode(input: string) {
 
 export default function LettersPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [user, setUser] = useState<any>(null)
   const [tab, setTab] = useState<'inbox' | 'send'>('inbox')
   const [letters, setLetters] = useState<any[]>([])
@@ -23,6 +24,7 @@ export default function LettersPage() {
   const [body, setBody] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
+  const [acceptedSafety, setAcceptedSafety] = useState(false)
 
   const loadInbox = async (userId: string) => {
     const { data } = await supabase
@@ -45,6 +47,18 @@ export default function LettersPage() {
       }
       setUser(user)
       await loadInbox(user.id)
+
+      // Prefill from vanish link choice
+      if (typeof window !== 'undefined') {
+        const pre = sessionStorage.getItem('letter_to')
+        if (pre) {
+          setToInput(pre)
+          setTab('send')
+          sessionStorage.removeItem('letter_to')
+        }
+      }
+      if (searchParams.get('tab') === 'send') setTab('send')
+
       setLoading(false)
     }
     init()
@@ -54,7 +68,6 @@ export default function LettersPage() {
     const trimmed = input.trim()
     if (!trimmed) return { error: 'Enter a username or vanish link' }
 
-    // 1) Full vanish link → invite
     if (trimmed.includes('/i/')) {
       const code = extractInviteCode(trimmed)
       const { data: invite } = await supabase
@@ -62,31 +75,24 @@ export default function LettersPage() {
         .select('creator_id')
         .eq('code', code)
         .maybeSingle()
-
       if (!invite) return { error: 'Vanish link not found' }
-
       const { data: creator } = await supabase
         .from('profiles')
-        .select('id, username, is_offline')
+        .select('id, username')
         .eq('id', invite.creator_id)
         .maybeSingle()
-
       if (!creator) return { error: 'User not available' }
       return { target: creator }
     }
 
-    // 2) Username first (fixes LESTAT / spades etc.)
     const { data: byName } = await supabase
       .from('profiles')
-      .select('id, username, is_offline, is_permanent_username, username_claimed_at')
+      .select('id, username')
       .ilike('username', trimmed)
       .maybeSingle()
 
-    if (byName) {
-      return { target: byName }
-    }
+    if (byName) return { target: byName }
 
-    // 3) Optional: bare invite code only if no username matched
     const code = extractInviteCode(trimmed)
     if (code.length >= 6) {
       const { data: invite } = await supabase
@@ -94,11 +100,10 @@ export default function LettersPage() {
         .select('creator_id')
         .eq('code', code)
         .maybeSingle()
-
       if (invite) {
         const { data: creator } = await supabase
           .from('profiles')
-          .select('id, username, is_offline')
+          .select('id, username')
           .eq('id', invite.creator_id)
           .maybeSingle()
         if (creator) return { target: creator }
@@ -122,6 +127,10 @@ export default function LettersPage() {
   const sendLetter = async () => {
     setMessage('')
     if (!user) return
+    if (!acceptedSafety) {
+      setMessage('Please confirm the safety note first')
+      return
+    }
     if (!toInput.trim() || !body.trim()) {
       setMessage('Recipient and message required')
       return
@@ -237,6 +246,23 @@ export default function LettersPage() {
 
         {tab === 'send' ? (
           <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
+              <p className="text-xs text-amber-100/90 mb-2 font-medium">Safety</p>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Do not share passwords or send money. If a note feels wrong, leave
+                and use Report on that user from chat or search when you can.
+              </p>
+              <label className="flex items-start gap-2 mt-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={acceptedSafety}
+                  onChange={(e) => setAcceptedSafety(e.target.checked)}
+                  className="mt-0.5 accent-cyan-500"
+                />
+                <span className="text-[11px] text-zinc-300">I understand</span>
+              </label>
+            </div>
+
             <input
               value={toInput}
               onChange={(e) => setToInput(e.target.value)}
@@ -244,7 +270,7 @@ export default function LettersPage() {
               className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
             />
             <p className="text-[11px] text-zinc-500">
-              Username (e.g. LESTAT) or full link (.../i/abc123)
+              Example: shadow_42 or https://yoursite.com/i/x7k2m9
             </p>
             <textarea
               value={body}
