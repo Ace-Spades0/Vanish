@@ -35,8 +35,10 @@ export default function HomePage() {
   const [lang, setLangState] = useState<Lang>('en')
   const [expiryLabel, setExpiryLabel] = useState<string | null>(null)
   const [inviteUrl, setInviteUrl] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
   const [inviteMsg, setInviteMsg] = useState('')
   const [creatingInvite, setCreatingInvite] = useState(false)
+  const [revoking, setRevoking] = useState(false)
   const router = useRouter()
   const t = translations[lang]
 
@@ -161,6 +163,7 @@ export default function HomePage() {
   const createInvite = async () => {
     setInviteMsg('')
     setInviteUrl('')
+    setInviteCode('')
     setCreatingInvite(true)
 
     try {
@@ -184,7 +187,7 @@ export default function HomePage() {
         data = JSON.parse(text)
       } catch {
         setInviteMsg(
-          `Invite API error (${res.status}). Check that file is route.ts and deployed.`
+          `Invite API error (${res.status}). Check that route is deployed.`
         )
         return
       }
@@ -196,6 +199,7 @@ export default function HomePage() {
 
       const full = `${window.location.origin}${data.url}`
       setInviteUrl(full)
+      setInviteCode(data.code || '')
 
       try {
         await navigator.clipboard.writeText(full)
@@ -207,6 +211,58 @@ export default function HomePage() {
       setInviteMsg(e?.message || 'Something went wrong')
     } finally {
       setCreatingInvite(false)
+    }
+  }
+
+  const revokeInvite = async () => {
+    if (!inviteCode) {
+      setInviteMsg('No active invite to revoke')
+      return
+    }
+
+    setRevoking(true)
+    setInviteMsg('')
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        setInviteMsg('Please login again')
+        return
+      }
+
+      const res = await fetch('/api/revoke-invite', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code: inviteCode }),
+      })
+
+      const text = await res.text()
+      let data: any = {}
+      try {
+        data = JSON.parse(text)
+      } catch {
+        setInviteMsg(`Revoke API error (${res.status})`)
+        return
+      }
+
+      if (!res.ok || data.error) {
+        setInviteMsg(data.error || `Failed (${res.status})`)
+        return
+      }
+
+      setInviteUrl('')
+      setInviteCode('')
+      setInviteMsg('Invite revoked. Link will no longer work.')
+    } catch (e: any) {
+      setInviteMsg(e?.message || 'Something went wrong')
+    } finally {
+      setRevoking(false)
     }
   }
 
@@ -383,10 +439,20 @@ export default function HomePage() {
             {inviteMsg && (
               <p className="text-center text-xs text-cyan-400">{inviteMsg}</p>
             )}
+
             {inviteUrl && (
-              <p className="text-[11px] text-zinc-400 break-all text-center">
-                {inviteUrl}
-              </p>
+              <div className="space-y-2">
+                <p className="text-[11px] text-zinc-400 break-all text-center">
+                  {inviteUrl}
+                </p>
+                <button
+                  onClick={revokeInvite}
+                  disabled={revoking}
+                  className="w-full bg-red-950 hover:bg-red-900 disabled:opacity-50 text-red-300 font-medium py-2.5 rounded-2xl transition border border-red-900 text-sm"
+                >
+                  {revoking ? 'Revoking...' : 'Revoke this invite'}
+                </button>
+              </div>
             )}
 
             <button
