@@ -5,28 +5,47 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
-const ANON_ICONS = [
-  '🎭', '👻', '💀', '☠️', '👽', '🤖', '🥷', '🤡', '👺', '👹', '👿', '😈',
-  '🎃', '🧟', '🧛', '🧜', '🧞', '🧚', '🧙',
-  '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄', '🐲', '🦇', '🕷️', '🦂',
-  '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶', '🐨', '🐻',
-  '🐮', '🐷', '🐵', '🐔', '🦅', '🦆', '🦜', '🦩', '🦚',
-  '🐢', '🦕', '🦖', '🐳', '🐋', '🐬', '🦭', '🦦', '🦥', '🦨', '🦡', '🦫',
-  '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑', '🌕', '🛰️',
-  '💫', '🌠', '🌎', '🌍', '🌏',
-  '🔥', '⚡', '💥', '🌪️', '❄️', '🌊', '🫧', '🧿', '☁️', '🌧️', '⛈️', '🌈',
-  '☀️', '🌤️', '🌫️',
-  '👁️', '🧠', '🦴', '🪞', '🎩', '🕶️', '🎱', '🃏', '♟️', '🔮',
-  '🧱', '🗝️', '🗿', '🎪', '🎯', '🎲', '🧩', '🪬', '💎', '👑',
-  '🗡️', '⚔️', '🛡️', '🏹', '💣', '🧨', '🪓', '🪄', '📿', '💍',
-  '⌚', '📱', '💻', '📷', '📹', '🎥', '📺',
-  '📻', '🎙️', '🔔', '🎧', '🎵', '🎶', '🎼', '🎹', '🥁', '🎸',
-  '♠️', '♥️', '♦️', '♣️',
-  '∞', '※', '☯', '☮', '☢', '☣', '✪', '✦',
-  '◆', '◇', '○', '●', '□', '■', '△', '▲', '▽', '▼',
+const ICON_CATEGORIES: { title: string; icons: string[] }[] = [
+  {
+    title: 'Masks & mystery',
+    icons: [
+      '🎭', '👻', '💀', '☠️', '👽', '🤖', '🥷', '🤡', '👺', '👹', '👿', '😈',
+      '🎃', '🧟', '🧛', '🧜', '🧞', '🧚', '🧙',
+    ],
+  },
+  {
+    title: 'Animals',
+    icons: [
+      '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄', '🐲', '🦇', '🕷️', '蝎',
+      '🐍', '🦈', '🦑', '🦎', '🐊', '🐧', '🦉', '🦝', '🐱', '🐶', '🐨', '🐻',
+      '🐮', '🐷', '🐵', '🐔', '🦅', '🦆', '🦜', '🦩', '🦚', '🐢', '🦕', '🦖',
+      '🐳', '🐋', '🐬', '🦭', '🦦', '🦥', '🦨', '🦡', '🦫',
+    ],
+  },
+  {
+    title: 'Space & night',
+    icons: [
+      '🌙', '⭐', '🌟', '✨', '☄️', '🪐', '🌌', '🛸', '🚀', '🌑', '🌕', '🛰️',
+      '💫', '🌠', '🌎', '🌍', '🌏',
+    ],
+  },
+  {
+    title: 'Fire & weather',
+    icons: [
+      '🔥', '⚡', '💥', '🌪️', '❄️', '🌊', '🫧', '🧿', '☁️', '🌧️', '⛈️', '🌈',
+      '☀️', '🌤️', '🌫️',
+    ],
+  },
+  {
+    title: 'Objects & symbols',
+    icons: [
+      '👁️', '🧠', '🦴', '🪞', '🎩', '🕶️', '🎱', '🃏', '♟️', '🔮', '🧱', '🗝️',
+      '🗿', '🎪', '🎯', '🎲', '🧩', '🪬', '💎', '👑', '🗡️', '⚔️', '🛡️', '🏹',
+      '💣', '🧨', '🪓', '🪄', '📿', '💍', '⌚', '📱', '💻', '📷', '🔔', '🎧',
+      '🎵', '♠️', '♥️', '♦️', '♣️', '∞', '☯', '☮', '✦', '◆', '●', '▲',
+    ],
+  },
 ]
-
-const uniqueIcons = Array.from(new Set(ANON_ICONS))
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -47,7 +66,6 @@ export default function ProfilePage() {
 
   useEffect(() => {
     setLangState(getLang())
-
     const load = async () => {
       const {
         data: { user },
@@ -57,24 +75,20 @@ export default function ProfilePage() {
         return
       }
       setUser(user)
-
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
-
       if (!profile) {
         router.push('/home')
         return
       }
-
       if (profile.status === 'suspended' || profile.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
         return
       }
-
       setUsername(profile.username || '')
       setBio(profile.bio || '')
       setIsOffline(!!profile.is_offline)
@@ -94,7 +108,6 @@ export default function ProfilePage() {
     const cleanBio = bio.trim().slice(0, 20)
     setSaving(true)
     setMessage('')
-
     const { error } = await supabase
       .from('profiles')
       .update({
@@ -103,7 +116,6 @@ export default function ProfilePage() {
         avatar_icon: avatarIcon || null,
       })
       .eq('id', user.id)
-
     if (error) setMessage(error.message)
     else {
       setBio(cleanBio)
@@ -116,11 +128,9 @@ export default function ProfilePage() {
     if (!user?.email) return
     setSendingPassword(true)
     setPasswordMessage('')
-
     const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
       redirectTo: `${window.location.origin}/auth`,
     })
-
     if (error) setPasswordMessage(error.message)
     else setPasswordMessage('Password change email sent. Check your inbox.')
     setSendingPassword(false)
@@ -140,7 +150,6 @@ export default function ProfilePage() {
       setDeleting(false)
       return
     }
-
     const res = await fetch('/api/delete-account', {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}` },
@@ -151,7 +160,6 @@ export default function ProfilePage() {
       setDeleting(false)
       return
     }
-
     await supabase.auth.signOut()
     router.push('/')
   }
@@ -172,7 +180,7 @@ export default function ProfilePage() {
       </div>
 
       <div className="relative z-10 px-4 py-10">
-        <div className="absolute top-4 right-4 flex gap-2">
+        <div className="absolute top-4 right-4 flex gap-2 z-20">
           <button
             onClick={() => changeLang('en')}
             className={`text-xs px-3 py-1.5 rounded-full border ${
@@ -229,29 +237,37 @@ export default function ProfilePage() {
               </p>
 
               {avatarIcon ? (
-                <div className="mb-3 text-center text-4xl">{avatarIcon}</div>
+                <div className="mb-4 text-center text-4xl">{avatarIcon}</div>
               ) : null}
 
-              {/* Horizontal scroll — all icons, no stressful dump */}
-              <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
-                {uniqueIcons.map((icon, index) => (
-                  <button
-                    key={`${icon}-${index}`}
-                    type="button"
-                    onClick={() => setAvatarIcon(icon)}
-                    className={`h-12 w-12 shrink-0 rounded-xl text-xl flex items-center justify-center border transition ${
-                      avatarIcon === icon
-                        ? 'bg-cyan-500/20 border-cyan-400 scale-105'
-                        : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500'
-                    }`}
-                  >
-                    {icon}
-                  </button>
+              {/* 5 category rows — scroll sideways inside each */}
+              <div className="space-y-4 max-h-[340px] overflow-y-auto pr-1">
+                {ICON_CATEGORIES.map((cat) => (
+                  <div key={cat.title}>
+                    <p className="text-[11px] text-zinc-500 mb-2">{cat.title}</p>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {cat.icons.map((icon, index) => (
+                        <button
+                          key={`${cat.title}-${icon}-${index}`}
+                          type="button"
+                          onClick={() => setAvatarIcon(icon)}
+                          className={`h-11 w-11 shrink-0 rounded-xl text-lg flex items-center justify-center border transition ${
+                            avatarIcon === icon
+                              ? 'bg-cyan-500/20 border-cyan-400'
+                              : 'bg-zinc-800 border-zinc-700 hover:border-zinc-500'
+                          }`}
+                        >
+                          {icon}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
-              <div className="mt-2 flex items-center justify-between">
+
+              <div className="mt-3 flex justify-between">
                 <p className="text-[11px] text-zinc-500">
-                  Swipe sideways to browse all {uniqueIcons.length} icons
+                  Scroll each row sideways · categories go down
                 </p>
                 <button
                   type="button"
@@ -311,7 +327,6 @@ export default function ProfilePage() {
                 ? t.pleaseWait || 'Please wait...'
                 : t.saveProfile || 'Save profile'}
             </button>
-
             {message && (
               <p className="text-center text-sm text-cyan-400">{message}</p>
             )}
@@ -371,14 +386,14 @@ export default function ProfilePage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setShowDeleteModal(false)}
-                className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl transition"
+                className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 onClick={deleteAccount}
                 disabled={deleting}
-                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition disabled:opacity-50"
+                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl disabled:opacity-50"
               >
                 {deleting ? 'Deleting...' : 'Delete'}
               </button>

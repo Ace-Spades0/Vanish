@@ -4,41 +4,34 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+function extractInviteCode(input: string) {
+  const raw = input.trim()
+  if (!raw) return ''
+  if (raw.includes('/i/')) {
+    const part = raw.split('/i/')[1] || ''
+    return part.split(/[?#]/)[0].trim().toLowerCase()
+  }
+  return raw.toLowerCase()
+}
+
 export default function LettersPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
   const [tab, setTab] = useState<'inbox' | 'send'>('inbox')
   const [letters, setLetters] = useState<any[]>([])
-  const [toUsername, setToUsername] = useState('')
+  const [toInput, setToInput] = useState('')
   const [body, setBody] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
 
-  const loadInbox = async (userId: string, username: string) => {
+  const loadInbox = async (userId: string) => {
     const { data } = await supabase
       .from('letters')
       .select('*')
-      .or(`to_id.eq.${userId},and(to_username.ilike.${username},read_at.is.null)`)
-      .order('created_at', { ascending: false })
-      .limit(30)
-
-    // Simpler reliable load:
-    const { data: byId } = await supabase
-      .from('letters')
-      .select('*')
       .eq('to_id', userId)
-      .order('created_at', { ascending: false })
-
-    const { data: byName } = await supabase
-      .from('letters')
-      .select('*')
-      .ilike('to_username', username)
       .is('read_at', null)
       .order('created_at', { ascending: false })
-
-    const map = new Map<string, any>()
-    ;[...(byId || []), ...(byName || [])].forEach((l) => map.set(l.id, l))
-    setLetters(Array.from(map.values()))
+    setLetters(data || [])
   }
 
   useEffect(() => {
@@ -51,25 +44,58 @@ export default function LettersPage() {
         return
       }
       setUser(user)
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('username')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      if (profile?.username) {
-        await loadInbox(user.id, profile.username)
-      }
+      await loadInbox(user.id)
       setLoading(false)
     }
     init()
   }, [])
 
+  const resolveTarget = async (input: string) => {
+    const trimmed = input.trim()
+    if (!trimmed) return { error: 'Enter a username or vanish link' }
+
+    if (trimmed.includes('/i/') || /^[a-z0-9]{6,16}$/i.test(trimmed)) {
+      const code = extractInviteCode(trimmed)
+      const { data: invite } = await supabase
+        .from('invites')
+        .select('creator_id, code')
+        .eq('code', code)
+        .maybeSingle()
+      if (!invite) return { error: 'Vanish link not found' }
+      const { data: creator } = await supabase
+        .from('profiles')
+        .select('id, username')
+        .eq('id', invite.creator_id)
+        .maybeSingle()
+      if (!creator) return { error: 'User not available' }
+      return { target: creator }
+    }
+
+    const { data: target } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .ilike('username', trimmed)
+      .maybeSingle()
+    if (!target) return { error: 'User not found' }
+    return { target }
+  }
+
+  const isBlockedEitherWay = async (a: string, b: string) => {
+    const { data } = await supabase
+      .from('blocks')
+      .select('id')
+      .or(
+        `and(blocker_id.eq.${a},blocked_id.eq.${b}),and(blocker_id.eq.${b},blocked_id.eq.${a})`
+      )
+      .limit(1)
+    return !!(data && data.length)
+  }
+
   const sendLetter = async () => {
     setMessage('')
-    if (!toUsername.trim() || !body.trim()) {
-      setMessage('Username and message required')
+    if (!user) return
+    if (!toInput.trim() || !body.trim()) {
+      setMessage('Recipient and message required')
       return
     }
     if (body.trim().length > 500) {
@@ -77,14 +103,20 @@ export default function LettersPage() {
       return
     }
 
-    const { data: target } = await supabase
-      .from('profiles')
-      .select('id, username')
-      .ilike('username', toUsername.trim())
-      .maybeSingle()
+    const resolved = await resolveTarget(toInput)
+    if (resolved.error || !resolved.target) {
+      setMessage(resolved.error || 'User not found')
+      return
+    }
 
-    if (!target) {
-      setMessage('User not found')
+    const target = resolved.target
+    if (target.id === user.id) {
+      setMessage('You cannot send a letter to yourself')
+      return
+    }
+
+    if (await isBlockedEitherWay(user.id, target.id)) {
+      setMessage('You cannot send a letter to this user')
       return
     }
 
@@ -100,7 +132,7 @@ export default function LettersPage() {
     else {
       setMessage('Letter sent (they can read it once).')
       setBody('')
-      setToUsername('')
+      setToInput('')
     }
   }
 
@@ -115,15 +147,11 @@ export default function LettersPage() {
       setLetters((prev) => prev.filter((l) => l.id !== letter.id))
       return
     }
-
     alert(letter.body)
-
     await supabase
       .from('letters')
       .update({ read_at: new Date().toISOString() })
       .eq('id', letter.id)
-
-    // Vanish after read
     await supabase.from('letters').delete().eq('id', letter.id)
     setLetters((prev) => prev.filter((l) => l.id !== letter.id))
   }
@@ -131,36 +159,48 @@ export default function LettersPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        Loading...
+        <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-white px-4 py-10">
-      <div className="max-w-md mx-auto">
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[520px] h-[400px] bg-cyan-500/10 blur-[120px] rounded-full" />
+        <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-blue-600/10 blur-[100px] rounded-full" />
+      </div>
+
+      <div className="relative z-10 max-w-md mx-auto px-4 py-10">
         <button
           onClick={() => router.push('/home')}
-          className="text-sm text-zinc-400 hover:text-white mb-6"
+          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full mb-8 transition"
         >
           ← Back to Home
         </button>
 
-        <h1 className="text-3xl font-bold mb-6">Letters</h1>
+        <h1 className="text-3xl font-bold mb-2">Letters</h1>
+        <p className="text-zinc-500 text-sm mb-6">
+          One-time notes. Read once, then gone.
+        </p>
 
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setTab('inbox')}
-            className={`flex-1 py-2 rounded-xl ${
-              tab === 'inbox' ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
+            className={`flex-1 py-2.5 rounded-xl text-sm font-medium ${
+              tab === 'inbox'
+                ? 'bg-cyan-500 text-black'
+                : 'bg-zinc-900 border border-zinc-800'
             }`}
           >
-            Inbox
+            Inbox {letters.length > 0 ? `(${letters.length})` : ''}
           </button>
           <button
             onClick={() => setTab('send')}
-            className={`flex-1 py-2 rounded-xl ${
-              tab === 'send' ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
+            className={`flex-1 py-2.5 rounded-xl text-sm font-medium ${
+              tab === 'send'
+                ? 'bg-cyan-500 text-black'
+                : 'bg-zinc-900 border border-zinc-800'
             }`}
           >
             Send
@@ -168,19 +208,22 @@ export default function LettersPage() {
         </div>
 
         {tab === 'send' ? (
-          <div className="space-y-3">
+          <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
             <input
-              value={toUsername}
-              onChange={(e) => setToUsername(e.target.value)}
-              placeholder="To username"
-              className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700"
+              value={toInput}
+              onChange={(e) => setToInput(e.target.value)}
+              placeholder="Username or vanish link"
+              className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
             />
+            <p className="text-[11px] text-zinc-500">
+              Example: spades or https://yoursite.com/i/abc123
+            </p>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value.slice(0, 500))}
-              placeholder="Write a letter (max 500)"
+              placeholder="Write a one-time letter (max 500)"
               rows={5}
-              className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700"
+              className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
             />
             <p className="text-xs text-zinc-500">{body.length}/500</p>
             <button
@@ -196,13 +239,13 @@ export default function LettersPage() {
         ) : (
           <div className="space-y-3">
             {letters.length === 0 ? (
-              <p className="text-zinc-500 text-center py-10">No letters</p>
+              <p className="text-zinc-500 text-center py-16">No letters</p>
             ) : (
               letters.map((l) => (
                 <button
                   key={l.id}
                   onClick={() => openLetter(l)}
-                  className="w-full text-left p-4 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-cyan-700"
+                  className="w-full text-left p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:border-cyan-700 transition backdrop-blur-sm"
                 >
                   <p className="text-sm text-cyan-400">Tap to read once</p>
                   <p className="text-xs text-zinc-500 mt-1">

@@ -8,16 +8,24 @@ import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
-function getExpiryLabel(profile: any): string | null {
+function getExpiryLabel(profile: any, lang: Lang): string | null {
   if (!profile?.username) return null
-  if (profile.is_permanent_username) return 'Permanent'
+  if (profile.is_permanent_username) {
+    return lang === 'sw' ? 'Ya kudumu' : 'Permanent'
+  }
   if (!profile.username_claimed_at) return null
   const end =
     new Date(profile.username_claimed_at).getTime() + 24 * 60 * 60 * 1000
   const msLeft = end - Date.now()
-  if (msLeft <= 0) return 'Expired — pick a new username'
+  if (msLeft <= 0) {
+    return lang === 'sw' ? 'Imeisha — chagua jina jipya' : 'Expired — pick a new username'
+  }
   const hours = Math.floor(msLeft / (1000 * 60 * 60))
   const mins = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60))
+  if (lang === 'sw') {
+    if (hours >= 1) return `Inaisha baada ya ${hours}s ${mins}d`
+    return `Inaisha baada ya ${mins}d`
+  }
   if (hours >= 1) return `Expires in ${hours}h ${mins}m`
   return `Expires in ${mins}m`
 }
@@ -26,6 +34,7 @@ export default function HomePage() {
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
   const [blockedUsers, setBlockedUsers] = useState<any[]>([])
+  const [letterCount, setLetterCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showBlockedModal, setShowBlockedModal] = useState(false)
   const [showInvite, setShowInvite] = useState(false)
@@ -38,6 +47,57 @@ export default function HomePage() {
   const [revoking, setRevoking] = useState(false)
   const router = useRouter()
   const t = translations[lang]
+
+  const copy = {
+    en: {
+      startChat: 'Start a vanishing chat',
+      pickUsername: 'Pick a username',
+      vanishLink: 'Vanish link',
+      vanishLinkHelp: 'One chat with you, then the link dies',
+      letters: 'Letters',
+      lettersHelp: 'One-time notes',
+      myAccount: 'My account',
+      myAccountHelp: 'Profile, logout, delete',
+      blocked: 'Blocked',
+      blockedNone: 'No blocked users',
+      blockedN: (n: number) => `${n} blocked`,
+      offline: 'Offline in search',
+      createLink: 'Create link',
+      copy: 'Copy',
+      revoke: 'Revoke',
+      yourLink: 'Your vanish link',
+      linkHelp:
+        'Share so someone can open one chat with you. After they open it, the link stops working.',
+      close: 'Close',
+      unblock: 'Unblock',
+      none: 'None',
+      username: 'Username',
+    },
+    sw: {
+      startChat: 'Anza gumzo linalotoweka',
+      pickUsername: 'Chagua jina la utumizi',
+      vanishLink: 'Kiungo cha Vanish',
+      vanishLinkHelp: 'Gumzo moja nawe, kisha kiungo kinakufa',
+      letters: 'Barua',
+      lettersHelp: 'Ujumbe wa mara moja',
+      myAccount: 'Akaunti yangu',
+      myAccountHelp: 'Wasifu, tokoka, futa',
+      blocked: 'Waliouzuiwa',
+      blockedNone: 'Hakuna aliyezuiwa',
+      blockedN: (n: number) => `Wamezuiwa ${n}`,
+      offline: 'Nje ya mtandao kwenye utafutaji',
+      createLink: 'Tengeneza kiungo',
+      copy: 'Nakili',
+      revoke: 'Batilisha',
+      yourLink: 'Kiungo chako cha Vanish',
+      linkHelp:
+        'Shiriki ili mtu afungue gumzo moja nawe. Baada ya kufunguliwa, kiungo kinaacha kufanya kazi.',
+      close: 'Funga',
+      unblock: 'Ondoa zuio',
+      none: 'Hakuna',
+      username: 'Jina la utumizi',
+    },
+  }[lang]
 
   const loadBlockedUsers = async (userId: string) => {
     const { data: blocks } = await supabase
@@ -54,6 +114,15 @@ export default function HomePage() {
       .select('id, username')
       .in('id', ids)
     setBlockedUsers(profiles || [])
+  }
+
+  const loadLetterCount = async (userId: string) => {
+    const { count } = await supabase
+      .from('letters')
+      .select('*', { count: 'exact', head: true })
+      .eq('to_id', userId)
+      .is('read_at', null)
+    setLetterCount(count || 0)
   }
 
   useEffect(() => {
@@ -117,8 +186,10 @@ export default function HomePage() {
         } else setProfile(null)
       } else setProfile(null)
 
-      setExpiryLabel(getExpiryLabel(profileData))
+      const currentLang = getLang()
+      setExpiryLabel(getExpiryLabel(profileData, currentLang))
       await loadBlockedUsers(user.id)
+      await loadLetterCount(user.id)
       setLoading(false)
     }
     loadData()
@@ -126,13 +197,18 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!profile) return
-    const id = setInterval(() => setExpiryLabel(getExpiryLabel(profile)), 60000)
+    setExpiryLabel(getExpiryLabel(profile, lang))
+    const id = setInterval(
+      () => setExpiryLabel(getExpiryLabel(profile, lang)),
+      60000
+    )
     return () => clearInterval(id)
-  }, [profile])
+  }, [profile, lang])
 
   const changeLang = (next: Lang) => {
     setLang(next)
     setLangState(next)
+    if (profile) setExpiryLabel(getExpiryLabel(profile, next))
   }
 
   const createInvite = async () => {
@@ -169,9 +245,9 @@ export default function HomePage() {
       setInviteCode(data.code || '')
       try {
         await navigator.clipboard.writeText(full)
-        setInviteMsg('Link copied')
+        setInviteMsg(lang === 'sw' ? 'Imenakiliwa' : 'Link copied')
       } catch {
-        setInviteMsg('Link ready')
+        setInviteMsg(lang === 'sw' ? 'Kiungo kiko tayari' : 'Link ready')
       }
     } catch (e: any) {
       setInviteMsg(e?.message || 'Error')
@@ -184,7 +260,7 @@ export default function HomePage() {
     if (!inviteUrl) return
     try {
       await navigator.clipboard.writeText(inviteUrl)
-      setInviteMsg('Link copied')
+      setInviteMsg(lang === 'sw' ? 'Imenakiliwa' : 'Link copied')
     } catch {
       setInviteMsg('Copy failed')
     }
@@ -213,7 +289,7 @@ export default function HomePage() {
       }
       setInviteUrl('')
       setInviteCode('')
-      setInviteMsg('Link revoked')
+      setInviteMsg(lang === 'sw' ? 'Kiungo kimebatilishwa' : 'Link revoked')
     } finally {
       setRevoking(false)
     }
@@ -244,28 +320,53 @@ export default function HomePage() {
       </div>
 
       <div className="relative z-10 max-w-md mx-auto px-5 min-h-screen flex flex-col">
-        {/* top bar */}
         <div className="flex items-center justify-between pt-5 pb-2">
-          <div className="flex items-center gap-2">
-            <Image src="/logo.png" alt="Go Vanish" width={28} height={28} priority />
-            <span className="text-sm font-semibold">{t.appName}</span>
+          <div className="flex items-center gap-3">
+            <Image
+              src="/logo.png"
+              alt="Go Vanish"
+              width={48}
+              height={48}
+              className="drop-shadow-[0_0_18px_rgba(34,211,238,0.5)]"
+              priority
+            />
+            <span className="text-xl font-bold tracking-tight text-white">
+              {t.appName || 'Go Vanish'}
+            </span>
           </div>
-          <button
-            onClick={() => changeLang(lang === 'en' ? 'sw' : 'en')}
-            className="text-xs text-zinc-500 border border-zinc-800 px-2.5 py-1 rounded-full"
-          >
-            {lang === 'en' ? 'SW' : 'EN'}
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => changeLang('en')}
+              className={`text-xs px-3 py-1.5 rounded-full border font-medium ${
+                lang === 'en'
+                  ? 'bg-cyan-500 text-black border-cyan-400'
+                  : 'border-zinc-700 text-zinc-400'
+              }`}
+            >
+              EN
+            </button>
+            <button
+              type="button"
+              onClick={() => changeLang('sw')}
+              className={`text-xs px-3 py-1.5 rounded-full border font-medium ${
+                lang === 'sw'
+                  ? 'bg-cyan-500 text-black border-cyan-400'
+                  : 'border-zinc-700 text-zinc-400'
+              }`}
+            >
+              SW
+            </button>
+          </div>
         </div>
 
-        {/* identity */}
         <div className="flex-1 flex flex-col items-center justify-center text-center py-8">
           <div className="text-5xl mb-5">{profile?.avatar_icon || '🎭'}</div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
-            Username
+            {copy.username}
           </p>
           <h1 className="text-4xl font-bold text-cyan-400 tracking-tight">
-            {profile?.username || t.noUsername}
+            {profile?.username || t.noUsername || '—'}
           </h1>
           {expiryLabel && (
             <p className="text-sm text-zinc-400 mt-2">{expiryLabel}</p>
@@ -274,29 +375,27 @@ export default function HomePage() {
             <p className="text-sm text-zinc-500 mt-2 max-w-[240px]">{profile.bio}</p>
           )}
           {profile?.is_offline && (
-            <p className="text-xs text-amber-400 mt-2">Offline in search</p>
+            <p className="text-xs text-amber-400 mt-2">{copy.offline}</p>
           )}
 
-          {/* primary */}
           <div className="w-full mt-10">
             {!profile?.username ? (
               <button
                 onClick={() => router.push('/username')}
                 className="w-full py-4 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-semibold transition"
               >
-                {t.pickUsername}
+                {copy.pickUsername}
               </button>
             ) : (
               <button
                 onClick={() => router.push('/search')}
                 className="w-full py-4 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-semibold transition shadow-[0_0_30px_rgba(34,211,238,0.2)]"
               >
-                Start a vanishing chat
+                {copy.startChat}
               </button>
             )}
           </div>
 
-          {/* 2x2 clear tabs */}
           {profile?.username && (
             <div className="w-full grid grid-cols-2 gap-3 mt-6">
               <button
@@ -307,60 +406,56 @@ export default function HomePage() {
                     : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600'
                 }`}
               >
-                <p className="text-sm font-medium text-white">Vanish link</p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  One chat with you, then the link dies
-                </p>
+                <p className="text-sm font-medium text-white">{copy.vanishLink}</p>
+                <p className="text-xs text-zinc-500 mt-1">{copy.vanishLinkHelp}</p>
               </button>
 
               <button
                 onClick={() => router.push('/letters')}
-                className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
+                className="relative rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
               >
-                <p className="text-sm font-medium text-white">Letters</p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Send or read a one-time note
-                </p>
+                {letterCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center shadow-[0_0_12px_rgba(239,68,68,0.55)]">
+                    {letterCount > 9 ? '9+' : letterCount}
+                  </span>
+                )}
+                <p className="text-sm font-medium text-white">{copy.letters}</p>
+                <p className="text-xs text-zinc-500 mt-1">{copy.lettersHelp}</p>
               </button>
 
               <button
                 onClick={() => router.push('/profile')}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
               >
-                <p className="text-sm font-medium text-white">My account</p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Profile, logout, delete account
-                </p>
+                <p className="text-sm font-medium text-white">{copy.myAccount}</p>
+                <p className="text-xs text-zinc-500 mt-1">{copy.myAccountHelp}</p>
               </button>
 
               <button
                 onClick={() => setShowBlockedModal(true)}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
               >
-                <p className="text-sm font-medium text-white">Blocked</p>
+                <p className="text-sm font-medium text-white">{copy.blocked}</p>
                 <p className="text-xs text-zinc-500 mt-1">
                   {blockedUsers.length === 0
-                    ? 'No blocked users'
-                    : `${blockedUsers.length} blocked`}
+                    ? copy.blockedNone
+                    : copy.blockedN(blockedUsers.length)}
                 </p>
               </button>
             </div>
           )}
 
-          {/* vanish link panel */}
           {showInvite && profile?.username && (
             <div className="w-full mt-4 rounded-2xl border border-cyan-500/20 bg-zinc-900/80 p-4 text-left">
-              <p className="text-sm font-medium mb-1">Your vanish link</p>
-              <p className="text-xs text-zinc-500 mb-3">
-                Share this so someone can open one chat with you. After they open it, the link stops working.
-              </p>
+              <p className="text-sm font-medium mb-1">{copy.yourLink}</p>
+              <p className="text-xs text-zinc-500 mb-3">{copy.linkHelp}</p>
               {!inviteUrl ? (
                 <button
                   onClick={createInvite}
                   disabled={creatingInvite}
                   className="w-full py-3 rounded-xl bg-cyan-500 text-black text-sm font-medium disabled:opacity-50"
                 >
-                  {creatingInvite ? 'Creating…' : 'Create link'}
+                  {creatingInvite ? '…' : copy.createLink}
                 </button>
               ) : (
                 <div className="space-y-2">
@@ -372,14 +467,14 @@ export default function HomePage() {
                       onClick={copyInvite}
                       className="flex-1 py-2 rounded-xl bg-zinc-800 text-sm"
                     >
-                      Copy
+                      {copy.copy}
                     </button>
                     <button
                       onClick={revokeInvite}
                       disabled={revoking}
                       className="flex-1 py-2 rounded-xl border border-red-900 text-red-300 text-sm disabled:opacity-50"
                     >
-                      {revoking ? '…' : 'Revoke'}
+                      {revoking ? '…' : copy.revoke}
                     </button>
                   </div>
                 </div>
@@ -391,7 +486,6 @@ export default function HomePage() {
           )}
         </div>
 
-        {/* footer — legal + admin only */}
         <div className="pb-8 pt-2 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-600">
           {user?.id === ADMIN_ID && (
             <button
@@ -402,10 +496,10 @@ export default function HomePage() {
             </button>
           )}
           <button onClick={() => router.push('/terms')} className="hover:text-zinc-400">
-            Terms
+            {t.termsShort || 'Terms'}
           </button>
           <button onClick={() => router.push('/privacy')} className="hover:text-zinc-400">
-            Privacy
+            {t.privacyShort || 'Privacy'}
           </button>
         </div>
       </div>
@@ -414,23 +508,29 @@ export default function HomePage() {
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-sm">
             <div className="flex justify-between mb-4">
-              <p className="font-medium">Blocked users</p>
-              <button onClick={() => setShowBlockedModal(false)} className="text-zinc-500">
-                Close
+              <p className="font-medium">{copy.blocked}</p>
+              <button
+                onClick={() => setShowBlockedModal(false)}
+                className="text-zinc-400 text-sm"
+              >
+                {copy.close}
               </button>
             </div>
             {blockedUsers.length === 0 ? (
-              <p className="text-sm text-zinc-500 text-center py-6">None</p>
+              <p className="text-sm text-zinc-500 text-center py-6">{copy.none}</p>
             ) : (
               <div className="space-y-2 max-h-56 overflow-y-auto">
                 {blockedUsers.map((u) => (
-                  <div key={u.id} className="flex justify-between text-sm py-2">
+                  <div
+                    key={u.id}
+                    className="flex justify-between items-center text-sm py-2 border-b border-zinc-800"
+                  >
                     <span>{u.username || 'Unknown'}</span>
                     <button
                       onClick={() => unblockUser(u.id)}
-                      className="text-cyan-400 text-xs"
+                      className="text-cyan-400 text-xs font-medium px-2 py-1"
                     >
-                      Unblock
+                      {copy.unblock}
                     </button>
                   </div>
                 ))}
