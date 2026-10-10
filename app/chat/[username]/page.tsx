@@ -1,9 +1,18 @@
 'use client'
-
 //force vercel rebuild
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+
+const REPORT_TYPES = [
+  'Spam',
+  'Harassment',
+  'Threats',
+  'Scam / fraud',
+  'Sexual content',
+  'Hate / abuse',
+  'Other',
+]
 
 function isUsernameActive(profile: {
   username?: string | null
@@ -36,8 +45,11 @@ export default function ChatPage() {
   const [blocked, setBlocked] = useState(false)
   const [chatExpired, setChatExpired] = useState(false)
   const [chatEndsAt, setChatEndsAt] = useState<string | null>(null)
-  const [modal, setModal] = useState<'clear' | 'block' | 'report' | null>(null)
+  const [modal, setModal] = useState<'clear' | 'block' | 'report' | 'safety' | null>(null)
+  const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
+  const [reportMessageId, setReportMessageId] = useState<string | null>(null)
+  const [reportMessagePreview, setReportMessagePreview] = useState('')
   const [warningLevel, setWarningLevel] = useState(0)
   const [warningText, setWarningText] = useState('')
   const [activeMsg, setActiveMsg] = useState<any>(null)
@@ -45,10 +57,10 @@ export default function ChatPage() {
   const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
   const [ghostReply, setGhostReply] = useState(false)
   const [sealed, setSealed] = useState(false)
-
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const getConversationEnd = (firstCreatedAt: string) => {
     return new Date(
@@ -67,7 +79,6 @@ export default function ChatPage() {
 
   useEffect(() => {
     let isMounted = true
-
     const init = async () => {
       const {
         data: { user },
@@ -107,7 +118,6 @@ export default function ChatPage() {
         setLoading(false)
         return
       }
-
       setTargetUser(targetProfile)
 
       const { data: blocks } = await supabase
@@ -127,6 +137,12 @@ export default function ChatPage() {
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
+      // Safety note once per conversation on this device
+      const safetyKey = `safety_seen_${convId}`
+      if (typeof window !== 'undefined' && !sessionStorage.getItem(safetyKey)) {
+        setModal('safety')
+      }
+
       const { data: firstRows } = await supabase
         .from('messages')
         .select('created_at')
@@ -136,17 +152,14 @@ export default function ChatPage() {
         .limit(1)
 
       const firstCreatedAt = firstRows?.[0]?.created_at || null
-
       if (firstCreatedAt) {
         const endsAt = getConversationEnd(firstCreatedAt)
         setChatEndsAt(endsAt)
-
         if (new Date(endsAt).getTime() <= Date.now()) {
           await supabase
             .from('messages')
             .update({ deleted: true })
             .eq('conversation_id', convId)
-
           setMessages([])
           setFileCount(0)
           setVideoCount(0)
@@ -174,9 +187,7 @@ export default function ChatPage() {
       if (existingMessages && isMounted) {
         setMessages(existingMessages)
         recountMedia(existingMessages)
-        if (existingMessages.length > 0) {
-          hadMessagesRef.current = true
-        }
+        if (existingMessages.length > 0) hadMessagesRef.current = true
       }
 
       if (!isMounted) return
@@ -187,7 +198,6 @@ export default function ChatPage() {
       }
 
       const channel = supabase.channel(`chat-${convId}`)
-
       channel.on(
         'postgres_changes',
         {
@@ -209,7 +219,6 @@ export default function ChatPage() {
           })
         }
       )
-
       channel.on(
         'postgres_changes',
         {
@@ -220,44 +229,43 @@ export default function ChatPage() {
         },
         (payload) => {
           const row = payload.new as any
-
           if (row.deleted) {
             setMessages((prev) => {
               const next = prev.filter((m) => m.id !== row.id)
               recountMedia(next)
-              if (hadMessagesRef.current && next.length === 0) {
-                setSealed(true)
-              }
+              if (hadMessagesRef.current && next.length === 0) setSealed(true)
               return next
             })
             return
           }
-
           setMessages((prev) =>
             prev.map((m) => (m.id === row.id ? { ...m, ...row } : m))
           )
         }
       )
-
       channel.subscribe()
       channelRef.current = channel
     }
-
     init()
     return () => {
       isMounted = false
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
-      }
+      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (longPressTimer.current) clearTimeout(longPressTimer.current)
     }
   }, [targetUsername])
+
+  const acceptSafety = () => {
+    if (conversationId && typeof window !== 'undefined') {
+      sessionStorage.setItem(`safety_seen_${conversationId}`, '1')
+    }
+    setModal(null)
+  }
 
   const resolveExpiresAt = async (forceShort: boolean) => {
     if (forceShort) {
       return new Date(Date.now() + 30 * 60 * 1000).toISOString()
     }
     if (chatEndsAt) return chatEndsAt
-
     const { data: firstRows } = await supabase
       .from('messages')
       .select('created_at')
@@ -265,37 +273,29 @@ export default function ChatPage() {
       .eq('deleted', false)
       .order('created_at', { ascending: true })
       .limit(1)
-
     if (firstRows?.[0]?.created_at) {
       const endsAt = getConversationEnd(firstRows[0].created_at)
       setChatEndsAt(endsAt)
       return endsAt
     }
-
     const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
     setChatEndsAt(endsAt)
     return endsAt
   }
 
-  // Start a fresh session with the same person
   const startNewChat = async () => {
     if (!conversationId || startingNew) return
     setStartingNew(true)
-
-    // Remove old messages so the next message starts a new 3-hour window
     const { error } = await supabase
       .from('messages')
       .delete()
       .eq('conversation_id', conversationId)
-
     if (error) {
-      // Fallback: mark all deleted if hard delete blocked by RLS
       await supabase
         .from('messages')
         .update({ deleted: true })
         .eq('conversation_id', conversationId)
     }
-
     await supabase.from('audit_logs').insert({
       conversation_id: conversationId,
       payload: {
@@ -305,7 +305,6 @@ export default function ChatPage() {
         target_username: targetUsername,
       },
     })
-
     setMessages([])
     setFileCount(0)
     setVideoCount(0)
@@ -333,7 +332,6 @@ export default function ChatPage() {
     const interrogationDetected = isQuestion && totalQuestions >= 6
 
     let useShortExpiry = warningLevel >= 2
-
     if (interrogationDetected) {
       if (warningLevel < 2) {
         const nextLevel = warningLevel + 1
@@ -367,7 +365,6 @@ export default function ChatPage() {
       type: 'text',
       expires_at: expiresAt,
     })
-
     if (error) {
       alert(error.message)
       return
@@ -392,13 +389,10 @@ export default function ChatPage() {
         .select('anti_interrogation_count')
         .eq('id', user.id)
         .maybeSingle()
-
       const newCount = (profile?.anti_interrogation_count || 0) + 1
       const updateData: any = { anti_interrogation_count: newCount }
       if (newCount > 10) updateData.status = 'suspended'
-
       await supabase.from('profiles').update(updateData).eq('id', user.id)
-
       if (newCount > 10) {
         await supabase.auth.signOut()
         alert(
@@ -412,7 +406,6 @@ export default function ChatPage() {
   const uploadFile = async (e: any) => {
     const file = e.target.files?.[0]
     if (!file || !user || !conversationId || chatExpired || sealed) return
-
     const isVideo = file.type.startsWith('video/')
     const isImage = file.type.startsWith('image/')
 
@@ -448,15 +441,12 @@ export default function ChatPage() {
     const { error } = await supabase.storage
       .from('chat-photos')
       .upload(fileName, file)
-
     if (error) {
       alert('Failed to upload file')
       return
     }
-
     const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
     const type = isVideo ? 'video' : isImage ? 'image' : 'file'
-
     await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
@@ -464,7 +454,6 @@ export default function ChatPage() {
       type,
       expires_at: expiresAt,
     })
-
     hadMessagesRef.current = true
     setSealed(false)
     setChatExpired(false)
@@ -479,24 +468,43 @@ export default function ChatPage() {
     setMsgMenu('menu')
   }
 
+  const startLongPress = (msg: any) => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    longPressTimer.current = setTimeout(() => {
+      // Hold any message → report that message
+      setReportMessageId(msg.id)
+      setReportMessagePreview(
+        msg.type === 'text'
+          ? (msg.content || '').slice(0, 120)
+          : `[${msg.type}]`
+      )
+      setReportType('')
+      setReportReason('')
+      setModal('report')
+    }, 550)
+  }
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
   const vanishOneMessage = async () => {
     if (!activeMsg) return
     const { error } = await supabase
       .from('messages')
       .update({ deleted: true })
       .eq('id', activeMsg.id)
-
     if (error) {
       alert(error.message)
       return
     }
-
     setMessages((prev) => {
       const next = prev.filter((m) => m.id !== activeMsg.id)
       recountMedia(next)
-      if (hadMessagesRef.current && next.length === 0) {
-        setSealed(true)
-      }
+      if (hadMessagesRef.current && next.length === 0) setSealed(true)
       return next
     })
     setActiveMsg(null)
@@ -505,18 +513,15 @@ export default function ChatPage() {
 
   const saveEditMessage = async () => {
     if (!activeMsg || !editText.trim()) return
-
     const { error } = await supabase
       .from('messages')
       .update({ content: editText.trim() })
       .eq('id', activeMsg.id)
       .eq('sender_id', user.id)
-
     if (error) {
       alert(error.message)
       return
     }
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === activeMsg.id ? { ...m, content: editText.trim() } : m
@@ -529,18 +534,15 @@ export default function ChatPage() {
 
   const confirmClearChat = async () => {
     if (!user || !conversationId) return
-
     const { error } = await supabase
       .from('messages')
       .update({ deleted: true })
       .eq('conversation_id', conversationId)
       .eq('deleted', false)
-
     if (error) {
       alert(error.message)
       return
     }
-
     await supabase.from('audit_logs').insert({
       conversation_id: conversationId,
       payload: {
@@ -550,7 +552,6 @@ export default function ChatPage() {
         target_username: targetUsername,
       },
     })
-
     setMessages([])
     setFileCount(0)
     setVideoCount(0)
@@ -577,15 +578,29 @@ export default function ChatPage() {
       alert('Cannot report right now')
       return
     }
-    if (!reportReason.trim()) {
-      alert('Please enter a reason')
+    if (!reportType) {
+      alert('Please choose a report type')
       return
+    }
+    if (!reportReason.trim()) {
+      alert('Please write a short explanation')
+      return
+    }
+
+    const parts = [
+      `type:${reportType}`,
+      `details:${reportReason.trim()}`,
+      `chat:${conversationId || 'unknown'}`,
+    ]
+    if (reportMessageId) {
+      parts.push(`message_id:${reportMessageId}`)
+      parts.push(`message_preview:${reportMessagePreview}`)
     }
 
     const { error } = await supabase.from('reports').insert({
       reporter_id: user.id,
       reported_id: targetUser.id,
-      reason: `${reportReason.trim()} | chat:${conversationId || 'unknown'}`,
+      reason: parts.join(' | '),
       reviewed: false,
     })
 
@@ -599,14 +614,16 @@ export default function ChatPage() {
       .select('report_count')
       .eq('id', targetUser.id)
       .maybeSingle()
-
     const newCount = (profile?.report_count || 0) + 1
     const updateData: any = { report_count: newCount }
     if (newCount >= 5) updateData.status = 'suspended'
     await supabase.from('profiles').update(updateData).eq('id', targetUser.id)
 
-    alert('Report submitted')
+    alert('Report submitted. Thank you.')
     setReportReason('')
+    setReportType('')
+    setReportMessageId(null)
+    setReportMessagePreview('')
     setModal(null)
   }
 
@@ -634,7 +651,6 @@ export default function ChatPage() {
     )
   }
 
-  // Seal / expired — with Start new chat
   if (chatExpired || sealed) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
@@ -679,54 +695,65 @@ export default function ChatPage() {
         />
       </div>
 
-      <div className="relative z-10 bg-black/50 backdrop-blur-md px-3 py-2 border-b border-white/10 shrink-0">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[10px] text-zinc-500">Chatting with</p>
-            <h1 className="text-sm sm:text-base font-bold text-cyan-400 truncate">
+      {/* Header — larger text & actions */}
+      <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-3 border-b border-white/10 shrink-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-zinc-400">Chatting with</p>
+            <h1 className="text-lg sm:text-xl font-bold text-cyan-400 truncate leading-tight">
               {targetUsername}
             </h1>
-            <p className="text-[10px] text-zinc-500 mt-0.5">
+            <p className="text-xs sm:text-sm text-zinc-400 mt-1">
               No last seen · No read receipts
             </p>
           </div>
-          <div className="flex items-center gap-1 flex-wrap justify-end">
-            <span className="text-[10px] text-zinc-400 bg-zinc-800/80 px-2 py-1 rounded-full">
-              {fileCount}/4
-            </span>
-            <span className="text-[10px] text-zinc-400 bg-zinc-800/80 px-2 py-1 rounded-full">
-              {videoCount}/1
-            </span>
-            <button
-              onClick={() => setModal('clear')}
-              className="text-[10px] bg-orange-600 hover:bg-orange-500 px-2 py-1 rounded-lg"
-            >
-              Clear
-            </button>
-            <button
-              onClick={() => setModal('report')}
-              className="text-[10px] bg-yellow-600 hover:bg-yellow-500 px-2 py-1 rounded-lg"
-            >
-              Report
-            </button>
-            <button
-              onClick={() => setModal('block')}
-              className="text-[10px] bg-red-600 hover:bg-red-500 px-2 py-1 rounded-lg"
-            >
-              Block
-            </button>
-            <button
-              onClick={() => router.push('/home')}
-              className="text-[10px] bg-zinc-700 hover:bg-zinc-600 px-2 py-1 rounded-lg"
-            >
-              Back
-            </button>
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="flex gap-1.5">
+              <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+                {fileCount}/4
+              </span>
+              <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+                {videoCount}/1
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 justify-end">
+              <button
+                onClick={() => setModal('clear')}
+                className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-1.5 rounded-lg"
+              >
+                Clear chat
+              </button>
+              <button
+                onClick={() => {
+                  setReportMessageId(null)
+                  setReportMessagePreview('')
+                  setReportType('')
+                  setReportReason('')
+                  setModal('report')
+                }}
+                className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-1.5 rounded-lg"
+              >
+                Report
+              </button>
+              <button
+                onClick={() => setModal('block')}
+                className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg"
+              >
+                Block
+              </button>
+              <button
+                onClick={() => router.push('/home')}
+                className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg"
+              >
+                Back
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {warningText && (
-        <div className="relative z-10 bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-xs text-yellow-200 text-center">
+        <div className="relative z-10 bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-sm text-yellow-200 text-center">
           {warningText}
         </div>
       )}
@@ -738,6 +765,9 @@ export default function ChatPage() {
             <p className="text-zinc-400 text-sm">No messages yet</p>
             <p className="text-zinc-600 text-xs mt-1">
               New chat — 3 hours starts at the first message
+            </p>
+            <p className="text-zinc-600 text-[11px] mt-3 max-w-xs">
+              Hold any message to report it. Tap your own text to edit or vanish it.
             </p>
           </div>
         ) : (
@@ -751,16 +781,28 @@ export default function ChatPage() {
                 <button
                   type="button"
                   onClick={() => openMsgMenu(msg)}
-                  className={`max-w-[82%] px-4 py-2.5 text-left transition relative ${
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    setReportMessageId(msg.id)
+                    setReportMessagePreview(
+                      msg.type === 'text'
+                        ? (msg.content || '').slice(0, 120)
+                        : `[${msg.type}]`
+                    )
+                    setReportType('')
+                    setReportReason('')
+                    setModal('report')
+                  }}
+                  onTouchStart={() => startLongPress(msg)}
+                  onTouchEnd={cancelLongPress}
+                  onTouchMove={cancelLongPress}
+                  onMouseDown={() => startLongPress(msg)}
+                  onMouseUp={cancelLongPress}
+                  onMouseLeave={cancelLongPress}
+                  className={`max-w-[82%] px-4 py-2.5 text-left transition relative select-none ${
                     mine
-                      ? 'bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black ' +
-                        'rounded-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-sm ' +
-                        'shadow-[0_0_24px_rgba(34,211,238,0.22)] ' +
-                        'border border-cyan-200/40'
-                      : 'bg-zinc-900/70 text-zinc-100 backdrop-blur-md ' +
-                        'rounded-2xl rounded-tl-2xl rounded-br-2xl rounded-bl-sm ' +
-                        'border border-cyan-500/20 ' +
-                        'shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
+                      ? 'bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black rounded-2xl rounded-br-sm shadow-[0_0_24px_rgba(34,211,238,0.22)] border border-cyan-200/40'
+                      : 'bg-zinc-900/70 text-zinc-100 backdrop-blur-md rounded-2xl rounded-bl-sm border border-cyan-500/20'
                   }`}
                 >
                   {msg.type === 'image' && (
@@ -783,10 +825,7 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div
-                      className="relative"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="relative" onClick={(e) => e.stopPropagation()}>
                       <video
                         src={msg.content}
                         controls
@@ -811,9 +850,6 @@ export default function ChatPage() {
                       {msg.content}
                     </p>
                   )}
-                  {mine && (
-                    <span className="pointer-events-none absolute -bottom-1 right-2 h-[2px] w-8 rounded-full bg-gradient-to-r from-cyan-300 to-transparent opacity-70" />
-                  )}
                 </button>
               </div>
             )
@@ -836,12 +872,11 @@ export default function ChatPage() {
           <button
             type="button"
             onClick={() => setGhostReply(!ghostReply)}
-            className={`text-[10px] px-2.5 py-2 rounded-xl border shrink-0 ${
+            className={`text-xs px-2.5 py-2 rounded-xl border shrink-0 ${
               ghostReply
                 ? 'bg-cyan-500 text-black border-cyan-400'
                 : 'bg-zinc-800 text-zinc-300 border-zinc-700'
             }`}
-            title="After you send, go offline in Search"
           >
             Ghost
           </button>
@@ -860,7 +895,7 @@ export default function ChatPage() {
           </button>
         </div>
         {ghostReply && (
-          <p className="text-[10px] text-cyan-400/90 mt-1.5 px-1">
+          <p className="text-[11px] text-cyan-400/90 mt-1.5 px-1">
             Ghost on: after Send, you go offline in Search.
           </p>
         )}
@@ -927,79 +962,129 @@ export default function ChatPage() {
       )}
 
       {modal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
+            {modal === 'safety' && (
+              <>
+                <h3 className="text-lg font-semibold mb-2">Stay safe on Go Vanish</h3>
+                <ul className="text-sm text-zinc-400 space-y-2 mb-5 list-disc pl-4">
+                  <li>Never share passwords, codes, or payment details.</li>
+                  <li>You can Clear chat, Block, or leave anytime.</li>
+                  <li>Hold a message to report it. Use Report for the person.</li>
+                  <li>Chats vanish — still treat people with respect.</li>
+                </ul>
+                <button
+                  onClick={acceptSafety}
+                  className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
+                >
+                  I understand
+                </button>
+              </>
+            )}
+
             {modal === 'clear' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  Messages will disappear for both of you. You can start a new chat
-                  after.
+                  Messages disappear for both of you. You can start a new chat after.
                 </p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={confirmClearChat}
-                    className="flex-1 bg-orange-600 py-2 rounded-xl"
+                    className="flex-1 bg-orange-600 py-2.5 rounded-xl"
                   >
                     Clear
                   </button>
                 </div>
               </>
             )}
+
             {modal === 'block' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">
                   Block {targetUsername}?
                 </h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  You will not be able to chat with this user.
+                  Blocks the account (not only the username). No chat or letters either way.
                 </p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={confirmBlockUser}
-                    className="flex-1 bg-red-600 py-2 rounded-xl"
+                    className="flex-1 bg-red-600 py-2.5 rounded-xl"
                   >
                     Block
                   </button>
                 </div>
               </>
             )}
+
             {modal === 'report' && (
               <>
-                <h3 className="text-lg font-semibold mb-2">
+                <h3 className="text-lg font-semibold mb-1">
                   Report {targetUsername}
                 </h3>
-                <input
-                  type="text"
-                  placeholder="Reason..."
+                {reportMessageId && (
+                  <p className="text-xs text-zinc-500 mb-3 break-words">
+                    About message: “{reportMessagePreview}”
+                  </p>
+                )}
+                <p className="text-xs text-zinc-400 mb-2">Type of report</p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {REPORT_TYPES.map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setReportType(type)}
+                      className={`text-xs px-2.5 py-1.5 rounded-full border ${
+                        reportType === type
+                          ? 'bg-yellow-500 text-black border-yellow-400'
+                          : 'border-zinc-600 text-zinc-300'
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-zinc-400 mb-1">Explain (required)</p>
+                <textarea
+                  placeholder="What happened?"
                   value={reportReason}
-                  onChange={(e) => setReportReason(e.target.value)}
-                  className="w-full p-3 mb-4 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
+                  onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
+                  rows={3}
+                  className="w-full p-3 mb-2 rounded-xl bg-zinc-800 border border-zinc-700 text-sm resize-none"
                 />
+                <p className="text-[11px] text-zinc-500 mb-4">
+                  {reportReason.length}/400
+                </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                    onClick={() => {
+                      setModal(null)
+                      setReportMessageId(null)
+                      setReportType('')
+                      setReportReason('')
+                    }}
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={confirmReportUser}
-                    className="flex-1 bg-yellow-600 py-2 rounded-xl"
+                    className="flex-1 bg-yellow-600 py-2.5 rounded-xl font-medium"
                   >
-                    Report
+                    Submit
                   </button>
                 </div>
               </>
