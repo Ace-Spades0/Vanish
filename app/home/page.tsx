@@ -160,42 +160,54 @@ export default function HomePage() {
 
   const createInvite = async () => {
     setInviteMsg('')
+    setInviteUrl('')
     setCreatingInvite(true)
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-
-    if (!session) {
-      setInviteMsg('Please login again')
-      setCreatingInvite(false)
-      return
-    }
-
-    const res = await fetch('/api/create-invite', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-
-    const data = await res.json()
-
-    if (data.error) {
-      setInviteMsg(data.error)
-      setCreatingInvite(false)
-      return
-    }
-
-    const full = `${window.location.origin}${data.url}`
-    setInviteUrl(full)
-
     try {
-      await navigator.clipboard.writeText(full)
-      setInviteMsg('Invite link copied!')
-    } catch {
-      setInviteMsg('Invite created — copy the link below.')
-    }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
 
-    setCreatingInvite(false)
+      if (!session) {
+        setInviteMsg('Please login again')
+        return
+      }
+
+      const res = await fetch('/api/create-invite', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+
+      const text = await res.text()
+      let data: any = {}
+      try {
+        data = JSON.parse(text)
+      } catch {
+        setInviteMsg(
+          `Invite API error (${res.status}). Check that file is route.ts and deployed.`
+        )
+        return
+      }
+
+      if (!res.ok || data.error) {
+        setInviteMsg(data.error || `Failed (${res.status})`)
+        return
+      }
+
+      const full = `${window.location.origin}${data.url}`
+      setInviteUrl(full)
+
+      try {
+        await navigator.clipboard.writeText(full)
+        setInviteMsg('Invite link copied!')
+      } catch {
+        setInviteMsg('Invite created — copy the link below.')
+      }
+    } catch (e: any) {
+      setInviteMsg(e?.message || 'Something went wrong')
+    } finally {
+      setCreatingInvite(false)
+    }
   }
 
   const unblockUser = async (blockedId: string) => {
