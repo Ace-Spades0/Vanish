@@ -7,7 +7,6 @@ const ADMIN_PERMANENT_USERNAME = 'lestat'
 export async function POST(req: Request) {
   try {
     const { username } = await req.json()
-
     if (!username || typeof username !== 'string') {
       return NextResponse.json({ error: 'Username is required' }, { status: 400 })
     }
@@ -20,14 +19,12 @@ export async function POST(req: Request) {
         { status: 400 }
       )
     }
-
     if (cleanUsername.length > 20) {
       return NextResponse.json(
         { error: 'Username must be 20 characters or less' },
         { status: 400 }
       )
     }
-
     if (!/^[a-z0-9_]+$/.test(cleanUsername)) {
       return NextResponse.json(
         { error: 'Username can only contain letters, numbers and underscores' },
@@ -43,11 +40,7 @@ export async function POST(req: Request) {
     const supabaseAuth = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        global: {
-          headers: { Authorization: authHeader },
-        },
-      }
+      { global: { headers: { Authorization: authHeader } } }
     )
 
     const {
@@ -61,28 +54,15 @@ export async function POST(req: Request) {
 
     const isAdmin = user.id === ADMIN_ID
 
-    // Reserve LESTAT for admin only
-    if (cleanUsername === ADMIN_PERMANENT_USERNAME && !isAdmin) {
-      return NextResponse.json(
-        { error: 'This username is reserved' },
-        { status: 403 }
-      )
-    }
-
     const { data: myProfile } = await supabaseAuth
       .from('profiles')
       .select('username, username_claimed_at, is_permanent_username')
       .eq('id', user.id)
       .maybeSingle()
 
-    // Admin with permanent LESTAT cannot switch to another name
-    if (
-      isAdmin &&
-      myProfile?.is_permanent_username &&
-      myProfile.username &&
-      myProfile.username.toLowerCase() === ADMIN_PERMANENT_USERNAME
-    ) {
-      if (cleanUsername !== ADMIN_PERMANENT_USERNAME) {
+    // Admin permanent name cannot be switched away
+    if (isAdmin && myProfile?.is_permanent_username && myProfile.username) {
+      if (cleanUsername !== myProfile.username.toLowerCase()) {
         return NextResponse.json(
           { error: 'Your permanent username cannot be changed' },
           { status: 400 }
@@ -90,7 +70,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // Normal users: cannot claim another name while 24h name is still active
+    // Normal users: block if they still have active 24h name
     if (!isAdmin && myProfile?.username && myProfile.username_claimed_at) {
       const hoursPassed =
         (Date.now() - new Date(myProfile.username_claimed_at).getTime()) /
@@ -103,64 +83,57 @@ export async function POST(req: Request) {
       }
     }
 
-    // Permanent registry: name used once forever (except admin refreshing LESTAT)
-    const { data: usedRow } = await supabaseAuth
+    // Burn list: name used by anyone forever (except admin reclaiming lestat)
+    const { data: used } = await supabaseAuth
       .from('used_usernames')
       .select('username, user_id')
       .eq('username', cleanUsername)
       .maybeSingle()
 
-    if (usedRow) {
-      const adminRefreshingLestat =
+    if (used) {
+      const adminReclaimingLestat =
         isAdmin &&
         cleanUsername === ADMIN_PERMANENT_USERNAME &&
-        usedRow.user_id === user.id
-
-      if (!adminRefreshingLestat) {
+        used.user_id === user.id
+      if (!adminReclaimingLestat) {
         return NextResponse.json(
-          {
-            error:
-              'This username has already been used and cannot be used again',
-          },
+          { error: 'This username has already been used and cannot be reused' },
           { status: 409 }
         )
       }
     }
 
-    // Extra safety: still taken on profiles by someone else
-    const { data: existingProfile } = await supabaseAuth
+    // Also block if another profile currently holds it
+    const { data: taken } = await supabaseAuth
       .from('profiles')
       .select('id')
       .ilike('username', cleanUsername)
       .maybeSingle()
 
-    if (existingProfile && existingProfile.id !== user.id) {
+    if (taken && taken.id !== user.id) {
       return NextResponse.json(
-        {
-          error:
-            'This username has already been used and cannot be used again',
-        },
+        { error: 'This username has already been used and cannot be reused' },
         { status: 409 }
       )
     }
 
     const isPermanent = isAdmin && cleanUsername === ADMIN_PERMANENT_USERNAME
-    const storedUsername = isPermanent ? 'LESTAT' : cleanUsername
+    const finalName = isPermanent ? 'LESTAT' : cleanUsername
 
-    const { error: profileError } = await supabaseAuth.from('profiles').upsert({
+    const { error: upErr } = await supabaseAuth.from('profiles').upsert({
       id: user.id,
-      username: storedUsername,
+      username: finalName,
       username_claimed_at: new Date().toISOString(),
       is_permanent_username: isPermanent,
       is_offline: false,
     })
 
-    if (profileError) {
-      return NextResponse.json({ error: profileError.message }, { status: 500 })
+    if (upErr) {
+      return NextResponse.json({ error: upErr.message }, { status: 500 })
     }
 
-    // Record forever (LESTAT included for admin)
-    const { error: usedError } = await supabaseAuth.from('used_usernames').upsert(
+    // Record burn (lowercase key)
+    const { error: burnErr } = await supabaseAuth.from('used_usernames').upsert(
       {
         username: cleanUsername,
         user_id: user.id,
@@ -169,14 +142,10 @@ export async function POST(req: Request) {
       { onConflict: 'username' }
     )
 
-    if (usedError) {
-      // Profile already saved; still report registry failure clearly
+    if (burnErr) {
+      // Profile already set; surface burn failure so you can fix RLS
       return NextResponse.json(
-        {
-          error:
-            usedError.message ||
-            'Username saved but registry failed. Run used_usernames SQL.',
-        },
+        { error: 'Username saved but registry failed: ' + burnErr.message },
         { status: 500 }
       )
     }
