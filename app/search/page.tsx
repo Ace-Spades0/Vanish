@@ -4,7 +4,33 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
-import { isUsernameActive } from '@/lib/usernameActive'
+
+const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
+
+function isUsernameActive(profile: {
+  id?: string | null
+  username?: string | null
+  username_claimed_at?: string | null
+  is_permanent_username?: boolean | null
+}) {
+  if (!profile?.username) return false
+
+  if (profile.is_permanent_username === true) return true
+
+  // Hard rule: admin LESTAT never expires
+  if (
+    profile.id === ADMIN_ID ||
+    profile.username.toLowerCase() === 'lestat'
+  ) {
+    return true
+  }
+
+  if (!profile.username_claimed_at) return false
+  const hoursPassed =
+    (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+    (1000 * 60 * 60)
+  return hoursPassed < 24
+}
 
 export default function SearchPage() {
   const [searchText, setSearchText] = useState('')
@@ -36,7 +62,7 @@ export default function SearchPage() {
         .eq('id', user.id)
         .maybeSingle()
 
-      if (!isUsernameActive(profile)) {
+      if (!isUsernameActive(profile || {})) {
         router.push('/username')
         return
       }
@@ -64,13 +90,44 @@ export default function SearchPage() {
       return
     }
 
-    const { data: found, error } = await supabase
-      .from('profiles')
-      .select(
-        'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
-      )
-      .ilike('username', q)
-      .maybeSingle()
+    let found: any = null
+    let error: any = null
+
+    // HARD PATH: always resolve LESTAT by admin id
+    if (q.toLowerCase() === 'lestat') {
+      const res = await supabase
+        .from('profiles')
+        .select(
+          'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
+        )
+        .eq('id', ADMIN_ID)
+        .maybeSingle()
+      found = res.data
+      error = res.error
+
+      // fallback by name if id row missing
+      if (!found && !error) {
+        const res2 = await supabase
+          .from('profiles')
+          .select(
+            'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
+          )
+          .ilike('username', 'lestat')
+          .maybeSingle()
+        found = res2.data
+        error = res2.error
+      }
+    } else {
+      const res = await supabase
+        .from('profiles')
+        .select(
+          'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
+        )
+        .ilike('username', q)
+        .maybeSingle()
+      found = res.data
+      error = res.error
+    }
 
     if (error) {
       setMessage(error.message)
@@ -96,14 +153,14 @@ export default function SearchPage() {
       return
     }
 
-    // strict offline only when true
-    if (found.is_offline === true) {
+    // LESTAT / permanent: ignore offline? No — only skip 24h rule.
+    // If you want LESTAT always visible even when offline, comment out this block for lestat:
+    if (found.is_offline === true && found.username?.toLowerCase() !== 'lestat') {
       setMessage('User is offline')
       setLoading(false)
       return
     }
 
-    // Permanent (LESTAT) always searchable via shared helper
     if (!isUsernameActive(found)) {
       setMessage('User not found')
       setLoading(false)
@@ -209,9 +266,7 @@ export default function SearchPage() {
             <p className="text-cyan-400 text-xl font-medium mb-1">
               {result.username}
             </p>
-            {result.is_permanent_username && (
-              <p className="text-[11px] text-zinc-500 mb-2">Permanent username</p>
-            )}
+            <p className="text-[11px] text-zinc-500 mb-2">Permanent username</p>
             {result.bio ? (
               <p className="text-zinc-400 text-sm mb-4">{result.bio}</p>
             ) : (
