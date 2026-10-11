@@ -4,20 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
-
-function isUsernameActive(profile: {
-  username?: string | null
-  username_claimed_at?: string | null
-  is_permanent_username?: boolean | null
-}) {
-  if (!profile?.username) return false
-  if (profile.is_permanent_username) return true
-  if (!profile.username_claimed_at) return false
-  const hoursPassed =
-    (Date.now() - new Date(profile.username_claimed_at).getTime()) /
-    (1000 * 60 * 60)
-  return hoursPassed < 24
-}
+import { isUsernameActive } from '@/lib/usernameActive'
 
 export default function SearchPage() {
   const [searchText, setSearchText] = useState('')
@@ -45,11 +32,11 @@ export default function SearchPage() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('username, username_claimed_at, is_permanent_username')
+        .select('id, username, username_claimed_at, is_permanent_username')
         .eq('id', user.id)
         .maybeSingle()
 
-      if (!isUsernameActive(profile || {})) {
+      if (!isUsernameActive(profile)) {
         router.push('/username')
         return
       }
@@ -109,20 +96,20 @@ export default function SearchPage() {
       return
     }
 
-    if (found.is_offline) {
+    // strict offline only when true
+    if (found.is_offline === true) {
       setMessage('User is offline')
       setLoading(false)
       return
     }
 
-    // Permanent (LESTAT) always searchable; others need active 24h name
+    // Permanent (LESTAT) always searchable via shared helper
     if (!isUsernameActive(found)) {
       setMessage('User not found')
       setLoading(false)
       return
     }
 
-    // Block either way
     if (currentUser) {
       const { data: blocks } = await supabase
         .from('blocks')
@@ -222,6 +209,9 @@ export default function SearchPage() {
             <p className="text-cyan-400 text-xl font-medium mb-1">
               {result.username}
             </p>
+            {result.is_permanent_username && (
+              <p className="text-[11px] text-zinc-500 mb-2">Permanent username</p>
+            )}
             {result.bio ? (
               <p className="text-zinc-400 text-sm mb-4">{result.bio}</p>
             ) : (
