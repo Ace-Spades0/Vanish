@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { rateLimit, clientKey } from '@/lib/rateLimit'
 
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 const ADMIN_PERMANENT_USERNAME = 'lestat'
@@ -52,6 +53,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'You must be logged in' }, { status: 401 })
     }
 
+    const rl = rateLimit(`claim:${clientKey(req, user.id)}`, 5, 60_000)
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Too many attempts. Try again in a minute.' },
+        { status: 429 }
+      )
+    }
+
     const isAdmin = user.id === ADMIN_ID
 
     const { data: myProfile } = await supabaseAuth
@@ -60,18 +69,46 @@ export async function POST(req: Request) {
       .eq('id', user.id)
       .maybeSingle()
 
-    // Admin permanent name cannot be switched away
-    if (isAdmin && myProfile?.is_permanent_username && myProfile.username) {
-      if (cleanUsername !== myProfile.username.toLowerCase()) {
+    if (isAdmin) {
+      if (cleanUsername !== ADMIN_PERMANENT_USERNAME) {
         return NextResponse.json(
-          { error: 'Your permanent username cannot be changed' },
+          { error: 'Admin username is fixed as LESTAT' },
           { status: 400 }
         )
       }
+
+      const { error } = await supabaseAuth.from('profiles').upsert({
+        id: user.id,
+        username: 'LESTAT',
+        username_claimed_at: new Date().toISOString(),
+        is_permanent_username: true,
+        is_offline: false,
+        status: 'active',
+      })
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      await supabaseAuth.from('used_usernames').upsert(
+        {
+          username: 'lestat',
+          user_id: user.id,
+          claimed_at: new Date().toISOString(),
+        },
+        { onConflict: 'username' }
+      )
+
+      return NextResponse.json({ success: true, permanent: true })
     }
 
-    // Normal users: block if they still have active 24h name
-    if (!isAdmin && myProfile?.username && myProfile.username_claimed_at) {
+    if (myProfile?.username && myProfile.username_claimed_at) {
+      if (myProfile.is_permanent_username) {
+        return NextResponse.json(
+          { error: 'Your username cannot be changed' },
+          { status: 400 }
+        )
+      }
       const hoursPassed =
         (Date.now() - new Date(myProfile.username_claimed_at).getTime()) /
         (1000 * 60 * 60)
@@ -83,7 +120,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Burn list: name used by anyone forever (except admin reclaiming lestat)
     const { data: used } = await supabaseAuth
       .from('used_usernames')
       .select('username, user_id')
@@ -91,40 +127,31 @@ export async function POST(req: Request) {
       .maybeSingle()
 
     if (used) {
-      const adminReclaimingLestat =
-        isAdmin &&
-        cleanUsername === ADMIN_PERMANENT_USERNAME &&
-        used.user_id === user.id
-      if (!adminReclaimingLestat) {
-        return NextResponse.json(
-          { error: 'This username has already been used and cannot be reused' },
-          { status: 409 }
-        )
-      }
-    }
-
-    // Also block if another profile currently holds it
-    const { data: taken } = await supabaseAuth
-      .from('profiles')
-      .select('id')
-      .ilike('username', cleanUsername)
-      .maybeSingle()
-
-    if (taken && taken.id !== user.id) {
       return NextResponse.json(
         { error: 'This username has already been used and cannot be reused' },
         { status: 409 }
       )
     }
 
-    const isPermanent = isAdmin && cleanUsername === ADMIN_PERMANENT_USERNAME
-    const finalName = isPermanent ? 'LESTAT' : cleanUsername
+    const { data: taken } = await supabaseAuth
+      .from('profiles')
+      .select('id')
+      .ilike('username', cleanUsername)
+      .neq('id', user.id)
+      .maybeSingle()
+
+    if (taken) {
+      return NextResponse.json(
+        { error: 'This username has already been used and cannot be reused' },
+        { status: 409 }
+      )
+    }
 
     const { error: upErr } = await supabaseAuth.from('profiles').upsert({
       id: user.id,
-      username: finalName,
+      username: cleanUsername,
       username_claimed_at: new Date().toISOString(),
-      is_permanent_username: isPermanent,
+      is_permanent_username: false,
       is_offline: false,
     })
 
@@ -132,7 +159,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: upErr.message }, { status: 500 })
     }
 
-    // Record burn (lowercase key)
     const { error: burnErr } = await supabaseAuth.from('used_usernames').upsert(
       {
         username: cleanUsername,
@@ -143,14 +169,13 @@ export async function POST(req: Request) {
     )
 
     if (burnErr) {
-      // Profile already set; surface burn failure so you can fix RLS
       return NextResponse.json(
         { error: 'Username saved but registry failed: ' + burnErr.message },
         { status: 500 }
       )
     }
 
-    return NextResponse.json({ success: true, permanent: isPermanent })
+    return NextResponse.json({ success: true, permanent: false })
   } catch (err: any) {
     return NextResponse.json(
       { error: err.message || 'Something went wrong' },
