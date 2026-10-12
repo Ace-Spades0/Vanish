@@ -810,77 +810,78 @@ export default function ChatPage() {
       </div>
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-3 border-b border-white/10 shrink-0">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs text-zinc-400">Chatting with</p>
-            <h1 className="text-lg sm:text-xl font-bold text-cyan-400 truncate leading-tight">
-              {targetUsername}
-            </h1>
-            <p className="text-xs sm:text-sm text-zinc-400 mt-1">
-              No last seen · No read receipts
-            </p>
-          </div>
-          <div className="flex gap-1.5 shrink-0">
-            <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-              {fileCount}/4
-            </span>
-            <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-              {videoCount}/1
-            </span>
-          </div>
-        </div>
+  {/* Row 1: username | counts */}
+  <div className="flex items-start justify-between gap-2 mb-2">
+    <div className="min-w-0 flex-1">
+      <p className="text-xs text-zinc-400">Chatting with</p>
+      <h1 className="text-lg sm:text-xl font-bold text-cyan-400 truncate leading-tight">
+        {targetUsername}
+      </h1>
+      <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
+        No last seen · No read receipts
+      </p>
+    </div>
+    <div className="flex gap-1.5 shrink-0 pt-1">
+      <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+        {fileCount}/4
+      </span>
+      <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+        {videoCount}/1
+      </span>
+    </div>
+  </div>
 
-        {/* Large Seal — between username and Clear chat */}
-        <button
-          type="button"
-          onClick={requestSealToggle}
-          disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
-          className={`w-full mb-2 py-2.5 rounded-xl text-sm font-bold tracking-wide border transition ${
-            sealOn
-              ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.35)]'
-              : 'bg-zinc-800/90 text-cyan-300 border-cyan-500/40 hover:bg-zinc-700'
-          } disabled:opacity-50`}
-        >
-          {savingSeal
-            ? 'Please wait...'
-            : sealOn
-              ? 'SEAL ON — only you can reopen'
-              : 'SEAL THIS CHAT'}
-        </button>
+  {/* Row 2: SEAL (main) + Clear / Report / Block / Back */}
+  <div className="flex flex-wrap items-center gap-2">
+    <button
+      type="button"
+      onClick={requestSealToggle}
+      disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
+      className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-sm font-bold tracking-wide border transition text-center ${
+        sealOn
+          ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.35)]'
+          : 'bg-zinc-800/90 text-cyan-300 border-cyan-500/40 hover:bg-zinc-700'
+      } disabled:opacity-50`}
+    >
+      {savingSeal
+        ? 'Please wait...'
+        : sealOn
+          ? 'SEAL ON'
+          : 'SEAL THIS CHAT'}
+    </button>
 
-        <div className="flex flex-wrap gap-1.5 justify-end">
-          <button
-            onClick={() => setModal('clear')}
-            className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-1.5 rounded-lg"
-          >
-            Clear chat
-          </button>
-          <button
-            onClick={() => {
-              setReportMessageId(null)
-              setReportMessagePreview('')
-              setReportType('')
-              setReportReason('')
-              setModal('report')
-            }}
-            className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-1.5 rounded-lg"
-          >
-            Report
-          </button>
-          <button
-            onClick={() => setModal('block')}
-            className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg"
-          >
-            Block
-          </button>
-          <button
-            onClick={() => router.push('/home')}
-            className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg"
-          >
-            Back
-          </button>
-        </div>
-      </div>
+    <button
+      onClick={() => setModal('clear')}
+      className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-2.5 rounded-xl"
+    >
+      Clear chat
+    </button>
+    <button
+      onClick={() => {
+        setReportMessageId(null)
+        setReportMessagePreview('')
+        setReportType('')
+        setReportReason('')
+        setModal('report')
+      }}
+      className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-2.5 rounded-xl"
+    >
+      Report
+    </button>
+    <button
+      onClick={() => setModal('block')}
+      className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-2.5 rounded-xl"
+    >
+      Block
+    </button>
+    <button
+      onClick={() => router.push('/home')}
+      className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-2.5 rounded-xl"
+    >
+      Back
+    </button>
+  </div>
+</div>
 
       {warningText && (
         <div className="relative z-10 bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-sm text-yellow-200 text-center">
