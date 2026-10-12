@@ -1,5 +1,5 @@
 'use client'
-//force vercel rebuild
+//force vercel rebuild — Seal mode
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -60,6 +60,9 @@ export default function ChatPage() {
   const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
   const [ghostReply, setGhostReply] = useState(false)
   const [sealed, setSealed] = useState(false)
+  const [sealOn, setSealOn] = useState(false)
+  const [sealedBy, setSealedBy] = useState<string | null>(null)
+  const [savingSeal, setSavingSeal] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
@@ -74,6 +77,12 @@ export default function ChatPage() {
   const recountMedia = (list: any[]) => {
     setFileCount(list.filter((m) => m.type === 'file' || m.type === 'image').length)
     setVideoCount(list.filter((m) => m.type === 'video').length)
+  }
+
+  /** Only sealer (or nobody sealed) may start a new chat */
+  const canStartNewChat = () => {
+    if (!sealedBy) return true
+    return user?.id && sealedBy === user.id
   }
 
   useEffect(() => {
@@ -140,6 +149,21 @@ export default function ChatPage() {
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
+      // Load Seal setting (silent — other user never gets a notification)
+      const { data: settings } = await supabase
+        .from('conversation_settings')
+        .select('sealed_by')
+        .eq('conversation_id', convId)
+        .maybeSingle()
+
+      if (settings?.sealed_by) {
+        setSealedBy(settings.sealed_by)
+        setSealOn(settings.sealed_by === user.id)
+      } else {
+        setSealedBy(null)
+        setSealOn(false)
+      }
+
       const { data: firstRows } = await supabase
         .from('messages')
         .select('created_at')
@@ -190,7 +214,6 @@ export default function ChatPage() {
       if (!isMounted) return
       setLoading(false)
 
-      // EVERY time you open an active chat → safety
       setSafetyNext('enter')
       setModal('safety')
 
@@ -255,8 +278,58 @@ export default function ChatPage() {
     }
   }, [targetUsername])
 
+  const toggleSeal = async () => {
+    if (!user || !conversationId || savingSeal) return
+    setSavingSeal(true)
+
+    const turningOn = !sealOn
+
+    if (turningOn) {
+      const { error } = await supabase.from('conversation_settings').upsert(
+        {
+          conversation_id: conversationId,
+          sealed_by: user.id,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'conversation_id' }
+      )
+      if (error) {
+        alert(error.message)
+        setSavingSeal(false)
+        return
+      }
+      setSealOn(true)
+      setSealedBy(user.id)
+    } else {
+      // Only the person who sealed can turn Seal off
+      if (sealedBy && sealedBy !== user.id) {
+        setSavingSeal(false)
+        return
+      }
+      const { error } = await supabase.from('conversation_settings').upsert(
+        {
+          conversation_id: conversationId,
+          sealed_by: null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'conversation_id' }
+      )
+      if (error) {
+        alert(error.message)
+        setSavingSeal(false)
+        return
+      }
+      setSealOn(false)
+      setSealedBy(null)
+    }
+
+    setSavingSeal(false)
+  }
+
   const runStartNewChat = async () => {
     if (!conversationId || startingNew) return
+    if (!canStartNewChat()) return
+
     setStartingNew(true)
     const { error } = await supabase
       .from('messages')
@@ -299,6 +372,7 @@ export default function ChatPage() {
   }
 
   const requestNewChat = () => {
+    if (!canStartNewChat()) return
     setSafetyNext('newchat')
     setModal('safety')
   }
@@ -563,7 +637,6 @@ export default function ChatPage() {
     setVideoCount(0)
     setSealed(true)
     setModal(null)
-    // User must use Start new chat → safety shows again
   }
 
   const confirmBlockUser = async () => {
@@ -659,6 +732,8 @@ export default function ChatPage() {
   }
 
   if (chatExpired || sealed) {
+    const showStart = canStartNewChat()
+
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center relative">
         <div className="text-5xl mb-4 text-cyan-400/80">◎</div>
@@ -669,13 +744,19 @@ export default function ChatPage() {
             : 'The conversation was cleared.'}
         </p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
-          <button
-            onClick={requestNewChat}
-            disabled={startingNew}
-            className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl transition"
-          >
-            {startingNew ? 'Starting...' : 'Start new chat'}
-          </button>
+          {showStart ? (
+            <button
+              onClick={requestNewChat}
+              disabled={startingNew}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl transition"
+            >
+              {startingNew ? 'Starting...' : 'Start new chat'}
+            </button>
+          ) : (
+            <p className="text-sm text-zinc-500 py-2">
+              This chat cannot be reopened from your side.
+            </p>
+          )}
           <button
             onClick={() => router.push('/search')}
             className="w-full bg-zinc-700 hover:bg-zinc-600 py-3 rounded-xl transition"
@@ -684,7 +765,7 @@ export default function ChatPage() {
           </button>
         </div>
 
-        {modal === 'safety' && (
+        {modal === 'safety' && showStart && (
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm text-left">
               <h3 className="text-lg font-semibold mb-2">Stay safe on Go Vanish</h3>
@@ -738,13 +819,27 @@ export default function ChatPage() {
             </p>
           </div>
           <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <div className="flex gap-1.5">
+            <div className="flex gap-1.5 items-center">
               <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
                 {fileCount}/4
               </span>
               <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
                 {videoCount}/1
               </span>
+              {/* Seal — silent; other user is not notified */}
+              <button
+                type="button"
+                onClick={toggleSeal}
+                disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
+                title="After the chat ends, only you can start a new one"
+                className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition ${
+                  sealOn
+                    ? 'bg-cyan-500 text-black border-cyan-400'
+                    : 'bg-zinc-800 text-zinc-300 border-zinc-600'
+                } disabled:opacity-50`}
+              >
+                {sealOn ? 'Seal on' : 'Seal'}
+              </button>
             </div>
             <div className="flex flex-wrap gap-1.5 justify-end">
               <button
@@ -1012,7 +1107,8 @@ export default function ChatPage() {
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  Messages disappear for both of you. You can start a new chat after.
+                  Messages disappear for both of you. You can start a new chat after
+                  {sealOn ? ' (only you — Seal is on)' : ''}.
                 </p>
                 <div className="flex gap-2">
                   <button
