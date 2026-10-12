@@ -45,7 +45,10 @@ export default function ChatPage() {
   const [blocked, setBlocked] = useState(false)
   const [chatExpired, setChatExpired] = useState(false)
   const [chatEndsAt, setChatEndsAt] = useState<string | null>(null)
-  const [modal, setModal] = useState<'clear' | 'block' | 'report' | 'safety' | null>(null)
+  const [modal, setModal] = useState<
+    'clear' | 'block' | 'report' | 'safety' | null
+  >(null)
+  const [safetyNext, setSafetyNext] = useState<'enter' | 'newchat'>('enter')
   const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
   const [reportMessageId, setReportMessageId] = useState<string | null>(null)
@@ -137,12 +140,6 @@ export default function ChatPage() {
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
-      // Safety note once per conversation on this device
-      const safetyKey = `safety_seen_${convId}`
-      if (typeof window !== 'undefined' && !sessionStorage.getItem(safetyKey)) {
-        setModal('safety')
-      }
-
       const { data: firstRows } = await supabase
         .from('messages')
         .select('created_at')
@@ -192,6 +189,10 @@ export default function ChatPage() {
 
       if (!isMounted) return
       setLoading(false)
+
+      // EVERY time you open an active chat → safety
+      setSafetyNext('enter')
+      setModal('safety')
 
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current)
@@ -254,36 +255,7 @@ export default function ChatPage() {
     }
   }, [targetUsername])
 
-  const acceptSafety = () => {
-    if (conversationId && typeof window !== 'undefined') {
-      sessionStorage.setItem(`safety_seen_${conversationId}`, '1')
-    }
-    setModal(null)
-  }
-
-  const resolveExpiresAt = async (forceShort: boolean) => {
-    if (forceShort) {
-      return new Date(Date.now() + 30 * 60 * 1000).toISOString()
-    }
-    if (chatEndsAt) return chatEndsAt
-    const { data: firstRows } = await supabase
-      .from('messages')
-      .select('created_at')
-      .eq('conversation_id', conversationId)
-      .eq('deleted', false)
-      .order('created_at', { ascending: true })
-      .limit(1)
-    if (firstRows?.[0]?.created_at) {
-      const endsAt = getConversationEnd(firstRows[0].created_at)
-      setChatEndsAt(endsAt)
-      return endsAt
-    }
-    const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
-    setChatEndsAt(endsAt)
-    return endsAt
-  }
-
-  const startNewChat = async () => {
+  const runStartNewChat = async () => {
     if (!conversationId || startingNew) return
     setStartingNew(true)
     const { error } = await supabase
@@ -316,6 +288,41 @@ export default function ChatPage() {
     setNewMessage('')
     hadMessagesRef.current = false
     setStartingNew(false)
+  }
+
+  const acceptSafety = async () => {
+    setModal(null)
+    if (safetyNext === 'newchat') {
+      await runStartNewChat()
+    }
+    setSafetyNext('enter')
+  }
+
+  const requestNewChat = () => {
+    setSafetyNext('newchat')
+    setModal('safety')
+  }
+
+  const resolveExpiresAt = async (forceShort: boolean) => {
+    if (forceShort) {
+      return new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    }
+    if (chatEndsAt) return chatEndsAt
+    const { data: firstRows } = await supabase
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .eq('deleted', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+    if (firstRows?.[0]?.created_at) {
+      const endsAt = getConversationEnd(firstRows[0].created_at)
+      setChatEndsAt(endsAt)
+      return endsAt
+    }
+    const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+    setChatEndsAt(endsAt)
+    return endsAt
   }
 
   const sendMessage = async () => {
@@ -471,7 +478,6 @@ export default function ChatPage() {
   const startLongPress = (msg: any) => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current)
     longPressTimer.current = setTimeout(() => {
-      // Hold any message → report that message
       setReportMessageId(msg.id)
       setReportMessagePreview(
         msg.type === 'text'
@@ -557,6 +563,7 @@ export default function ChatPage() {
     setVideoCount(0)
     setSealed(true)
     setModal(null)
+    // User must use Start new chat → safety shows again
   }
 
   const confirmBlockUser = async () => {
@@ -653,7 +660,7 @@ export default function ChatPage() {
 
   if (chatExpired || sealed) {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center relative">
         <div className="text-5xl mb-4 text-cyan-400/80">◎</div>
         <h1 className="text-2xl font-bold mb-2">This chat has vanished</h1>
         <p className="text-zinc-400 mb-8 text-sm max-w-xs">
@@ -663,7 +670,7 @@ export default function ChatPage() {
         </p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button
-            onClick={startNewChat}
+            onClick={requestNewChat}
             disabled={startingNew}
             className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl transition"
           >
@@ -676,6 +683,30 @@ export default function ChatPage() {
             Back to Search
           </button>
         </div>
+
+        {modal === 'safety' && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm text-left">
+              <h3 className="text-lg font-semibold mb-2">Stay safe on Go Vanish</h3>
+              <ul className="text-sm text-zinc-400 space-y-2 mb-4 list-disc pl-4">
+                <li>Never share passwords, codes, or payment details.</li>
+                <li>You can Clear chat, Block, or leave anytime.</li>
+                <li>Hold a message to report it. Use Report for the person.</li>
+                <li>Chats vanish — still treat people with respect.</li>
+              </ul>
+              <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
+                NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
+                SECRETS YOU CANNOT AFFORD TO EXPOSE.
+              </p>
+              <button
+                onClick={acceptSafety}
+                className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
+              >
+                I understand — Start
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -695,7 +726,6 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* Header — larger text & actions */}
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
@@ -765,9 +795,6 @@ export default function ChatPage() {
             <p className="text-zinc-400 text-sm">No messages yet</p>
             <p className="text-zinc-600 text-xs mt-1">
               New chat — 3 hours starts at the first message
-            </p>
-            <p className="text-zinc-600 text-[11px] mt-3 max-w-xs">
-              Hold any message to report it. Tap your own text to edit or vanish it.
             </p>
           </div>
         ) : (
@@ -894,11 +921,6 @@ export default function ChatPage() {
             Send
           </button>
         </div>
-        {ghostReply && (
-          <p className="text-[11px] text-cyan-400/90 mt-1.5 px-1">
-            Ghost on: after Send, you go offline in Search.
-          </p>
-        )}
       </div>
 
       {msgMenu && activeMsg && (
@@ -967,12 +989,16 @@ export default function ChatPage() {
             {modal === 'safety' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Stay safe on Go Vanish</h3>
-                <ul className="text-sm text-zinc-400 space-y-2 mb-5 list-disc pl-4">
+                <ul className="text-sm text-zinc-400 space-y-2 mb-4 list-disc pl-4">
                   <li>Never share passwords, codes, or payment details.</li>
                   <li>You can Clear chat, Block, or leave anytime.</li>
                   <li>Hold a message to report it. Use Report for the person.</li>
                   <li>Chats vanish — still treat people with respect.</li>
                 </ul>
+                <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
+                  NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
+                  SECRETS YOU CANNOT AFFORD TO EXPOSE.
+                </p>
                 <button
                   onClick={acceptSafety}
                   className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
