@@ -1,5 +1,5 @@
 'use client'
-//force vercel rebuild — Seal mode
+//force vercel rebuild — Seal mode + large Seal button
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -63,6 +63,7 @@ export default function ChatPage() {
   const [sealOn, setSealOn] = useState(false)
   const [sealedBy, setSealedBy] = useState<string | null>(null)
   const [savingSeal, setSavingSeal] = useState(false)
+  const [sealConfirm, setSealConfirm] = useState<'on' | 'off' | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
@@ -79,7 +80,6 @@ export default function ChatPage() {
     setVideoCount(list.filter((m) => m.type === 'video').length)
   }
 
-  /** Only sealer (or nobody sealed) may start a new chat */
   const canStartNewChat = () => {
     if (!sealedBy) return true
     return user?.id && sealedBy === user.id
@@ -149,7 +149,6 @@ export default function ChatPage() {
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
-      // Load Seal setting (silent — other user never gets a notification)
       const { data: settings } = await supabase
         .from('conversation_settings')
         .select('sealed_by')
@@ -278,13 +277,18 @@ export default function ChatPage() {
     }
   }, [targetUsername])
 
-  const toggleSeal = async () => {
+  const requestSealToggle = () => {
     if (!user || !conversationId || savingSeal) return
+    if (sealedBy && sealedBy !== user.id) return
+    setSealConfirm(sealOn ? 'off' : 'on')
+  }
+
+  const confirmSealToggle = async () => {
+    if (!user || !conversationId || !sealConfirm) return
     setSavingSeal(true)
+    setSealConfirm(null)
 
-    const turningOn = !sealOn
-
-    if (turningOn) {
+    if (sealConfirm === 'on') {
       const { error } = await supabase.from('conversation_settings').upsert(
         {
           conversation_id: conversationId,
@@ -301,7 +305,6 @@ export default function ChatPage() {
       setSealOn(true)
       setSealedBy(user.id)
     } else {
-      // Only the person who sealed can turn Seal off
       if (sealedBy && sealedBy !== user.id) {
         setSavingSeal(false)
         return
@@ -322,7 +325,6 @@ export default function ChatPage() {
       setSealOn(false)
       setSealedBy(null)
     }
-
     setSavingSeal(false)
   }
 
@@ -808,7 +810,7 @@ export default function ChatPage() {
       </div>
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-3 border-b border-white/10 shrink-0">
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start justify-between gap-2 mb-2">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-zinc-400">Chatting with</p>
             <h1 className="text-lg sm:text-xl font-bold text-cyan-400 truncate leading-tight">
@@ -818,62 +820,65 @@ export default function ChatPage() {
               No last seen · No read receipts
             </p>
           </div>
-          <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <div className="flex gap-1.5 items-center">
-              <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-                {fileCount}/4
-              </span>
-              <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-                {videoCount}/1
-              </span>
-              {/* Seal — silent; other user is not notified */}
-              <button
-                type="button"
-                onClick={toggleSeal}
-                disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
-                title="After the chat ends, only you can start a new one"
-                className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition ${
-                  sealOn
-                    ? 'bg-cyan-500 text-black border-cyan-400'
-                    : 'bg-zinc-800 text-zinc-300 border-zinc-600'
-                } disabled:opacity-50`}
-              >
-                {sealOn ? 'Seal on' : 'Seal'}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-1.5 justify-end">
-              <button
-                onClick={() => setModal('clear')}
-                className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-1.5 rounded-lg"
-              >
-                Clear chat
-              </button>
-              <button
-                onClick={() => {
-                  setReportMessageId(null)
-                  setReportMessagePreview('')
-                  setReportType('')
-                  setReportReason('')
-                  setModal('report')
-                }}
-                className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-1.5 rounded-lg"
-              >
-                Report
-              </button>
-              <button
-                onClick={() => setModal('block')}
-                className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg"
-              >
-                Block
-              </button>
-              <button
-                onClick={() => router.push('/home')}
-                className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg"
-              >
-                Back
-              </button>
-            </div>
+          <div className="flex gap-1.5 shrink-0">
+            <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+              {fileCount}/4
+            </span>
+            <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+              {videoCount}/1
+            </span>
           </div>
+        </div>
+
+        {/* Large Seal — between username and Clear chat */}
+        <button
+          type="button"
+          onClick={requestSealToggle}
+          disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
+          className={`w-full mb-2 py-2.5 rounded-xl text-sm font-bold tracking-wide border transition ${
+            sealOn
+              ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.35)]'
+              : 'bg-zinc-800/90 text-cyan-300 border-cyan-500/40 hover:bg-zinc-700'
+          } disabled:opacity-50`}
+        >
+          {savingSeal
+            ? 'Please wait...'
+            : sealOn
+              ? 'SEAL ON — only you can reopen'
+              : 'SEAL THIS CHAT'}
+        </button>
+
+        <div className="flex flex-wrap gap-1.5 justify-end">
+          <button
+            onClick={() => setModal('clear')}
+            className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-1.5 rounded-lg"
+          >
+            Clear chat
+          </button>
+          <button
+            onClick={() => {
+              setReportMessageId(null)
+              setReportMessagePreview('')
+              setReportType('')
+              setReportReason('')
+              setModal('report')
+            }}
+            className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-1.5 rounded-lg"
+          >
+            Report
+          </button>
+          <button
+            onClick={() => setModal('block')}
+            className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg"
+          >
+            Block
+          </button>
+          <button
+            onClick={() => router.push('/home')}
+            className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg"
+          >
+            Back
+          </button>
         </div>
       </div>
 
@@ -1017,6 +1022,39 @@ export default function ChatPage() {
           </button>
         </div>
       </div>
+
+      {sealConfirm && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-cyan-500/40 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              {sealConfirm === 'on' ? 'Seal this chat?' : 'Turn Seal off?'}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
+              {sealConfirm === 'on'
+                ? 'When the chat ends (clear, 3 hours, or limits), only you can start a new chat. The other person will not see “Start new chat” and will not be told that Seal is on.'
+                : 'After the chat ends, both of you can start a new chat again.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSealConfirm(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSealToggle}
+                className={`flex-1 py-2.5 rounded-xl font-semibold ${
+                  sealConfirm === 'on'
+                    ? 'bg-cyan-500 text-black'
+                    : 'bg-zinc-500 text-white'
+                }`}
+              >
+                {sealConfirm === 'on' ? 'Turn Seal on' : 'Turn Seal off'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {msgMenu && activeMsg && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
