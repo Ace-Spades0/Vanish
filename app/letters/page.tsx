@@ -47,7 +47,6 @@ export default function LettersPage() {
       setUser(user)
       await loadInbox(user.id)
 
-      // Prefill from vanish-link choice (no useSearchParams — avoids Vercel prerender crash)
       try {
         const pre = sessionStorage.getItem('letter_to')
         if (pre) {
@@ -184,6 +183,14 @@ export default function LettersPage() {
       setLetters((prev) => prev.filter((l) => l.id !== letter.id))
       return
     }
+
+    const ok = window.confirm(
+      'Read once — then this letter is gone.\n\n' +
+        'NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.\n\n' +
+        'Open letter now?'
+    )
+    if (!ok) return
+
     alert(letter.body)
     await supabase
       .from('letters')
@@ -248,18 +255,25 @@ export default function LettersPage() {
           <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
             <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3">
               <p className="text-xs text-amber-100/90 mb-2 font-medium">Safety</p>
-              <p className="text-[11px] text-zinc-400 leading-relaxed">
-                Do not share passwords or send money. If a note feels wrong, leave
-                and use Report when you can.
+              <ul className="text-[11px] text-zinc-400 space-y-1.5 list-disc pl-4 mb-3">
+                <li>Do not share passwords, codes, or payment details.</li>
+                <li>Letters are read once, then gone — still be careful what you write.</li>
+                <li>If something feels wrong, do not reply; use Report when you can.</li>
+              </ul>
+              <p className="text-[11px] font-semibold text-cyan-300/95 leading-relaxed uppercase tracking-wide mb-3">
+                NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
+                SECRETS YOU CANNOT AFFORD TO EXPOSE.
               </p>
-              <label className="flex items-start gap-2 mt-3 cursor-pointer">
+              <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={acceptedSafety}
                   onChange={(e) => setAcceptedSafety(e.target.checked)}
                   className="mt-0.5 accent-cyan-500"
                 />
-                <span className="text-[11px] text-zinc-300">I understand</span>
+                <span className="text-[11px] text-zinc-300">
+                  I understand — send letter
+                </span>
               </label>
             </div>
 
