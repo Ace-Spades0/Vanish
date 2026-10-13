@@ -14,17 +14,10 @@ function isUsernameActive(profile: {
   is_permanent_username?: boolean | null
 }) {
   if (!profile?.username) return false
-
   if (profile.is_permanent_username === true) return true
-
-  // Hard rule: admin LESTAT never expires
-  if (
-    profile.id === ADMIN_ID ||
-    profile.username.toLowerCase() === 'lestat'
-  ) {
+  if (profile.id === ADMIN_ID || profile.username.toLowerCase() === 'lestat') {
     return true
   }
-
   if (!profile.username_claimed_at) return false
   const hoursPassed =
     (Date.now() - new Date(profile.username_claimed_at).getTime()) /
@@ -40,11 +33,65 @@ export default function SearchPage() {
   const [checking, setChecking] = useState(true)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [lang, setLangState] = useState<Lang>('en')
+  const [showSafety, setShowSafety] = useState(false)
   const router = useRouter()
   const t = translations[lang]
 
+  const copy = {
+    en: {
+      back: '← Back',
+      searchTitle: 'Search',
+      searchHelp: 'Find someone by their exact username',
+      placeholder: 'Enter username',
+      searching: 'Searching...',
+      searchBtn: 'Search',
+      foundUser: 'Found user',
+      startChat: 'Start Chat',
+      loading: 'Loading...',
+      enterUsername: 'Please enter a username',
+      notFound: 'User not found',
+      ownUsername: 'That is your own username',
+      notAvailable: 'User not available',
+      offline: 'User is offline',
+      beforeTitle: 'Before you start',
+      safety1: 'Chats are temporary and may disappear after a limited time.',
+      safety2: 'Do not share passwords, codes, or money details.',
+      safety3: 'If someone pressures or threatens you, use Report or Block.',
+      safety4: 'You can leave or clear the chat at any time.',
+      caps: 'NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.',
+      cancel: 'Cancel',
+      understand: 'I understand — Start',
+    },
+    sw: {
+      back: '← Rudi',
+      searchTitle: 'Tafuta',
+      searchHelp: 'Tafuta mtu kwa jina lake kamili la utumizi',
+      placeholder: 'Weka jina la utumizi',
+      searching: 'Inatafuta...',
+      searchBtn: 'Tafuta',
+      foundUser: 'Mtumiaji amepatikana',
+      startChat: 'Anza gumzo',
+      loading: 'Inapakia...',
+      enterUsername: 'Tafadhali weka jina la utumizi',
+      notFound: 'Mtumiaji hajapatikana',
+      ownUsername: 'Hilo ni jina lako mwenyewe',
+      notAvailable: 'Mtumiaji hapopatikani',
+      offline: 'Mtumiaji yuko nje ya mtandao',
+      beforeTitle: 'Kabla ya kuanza',
+      safety1: 'Gumzo ni la muda na linaweza kutoweka baada ya muda mdogo.',
+      safety2: 'Usishiriki nenosiri, nambari za siri, au maelezo ya pesa.',
+      safety3: 'Mtu akikushinikiza au kukutishia, tumia Ripoti au Zuia.',
+      safety4: 'Unaweza kuondoka au kufuta gumzo wakati wowote.',
+      caps: 'HAKUNA HUDUMA MTANDAONI INAYOHAKIKISHA USALAMA KAMILI. USISHIRIKI SIRI USIZOWEZA KUBEBWA KAMA ZIKIFICHULIWA.',
+      cancel: 'Ghairi',
+      understand: 'Nimeelewa — Anza',
+    },
+  }[lang]
+
   useEffect(() => {
     setLangState(getLang())
+
+    let channel: any = null
 
     const checkUser = async () => {
       const {
@@ -58,9 +105,28 @@ export default function SearchPage() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('id, username, username_claimed_at, is_permanent_username')
+        .select(
+          'id, username, username_claimed_at, is_permanent_username, status, suspended_until'
+        )
         .eq('id', user.id)
         .maybeSingle()
+
+      if (profile?.status === 'banned') {
+        await supabase.auth.signOut()
+        router.push('/auth')
+        return
+      }
+
+      if (profile?.status === 'suspended') {
+        const until = profile.suspended_until
+          ? new Date(profile.suspended_until).getTime()
+          : null
+        if (!(until && until <= Date.now())) {
+          await supabase.auth.signOut()
+          router.push('/auth')
+          return
+        }
+      }
 
       if (!isUsernameActive(profile || {})) {
         router.push('/username')
@@ -68,9 +134,43 @@ export default function SearchPage() {
       }
 
       setChecking(false)
+
+      channel = supabase
+        .channel(`search-profile-status-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'profiles',
+            filter: `id=eq.${user.id}`,
+          },
+          async (payload) => {
+            const row = payload.new as any
+            if (row?.status === 'banned') {
+              await supabase.auth.signOut()
+              router.push('/auth')
+              return
+            }
+            if (row?.status === 'suspended') {
+              const until = row.suspended_until
+                ? new Date(row.suspended_until).getTime()
+                : null
+              if (!(until && until <= Date.now())) {
+                await supabase.auth.signOut()
+                router.push('/auth')
+              }
+            }
+          }
+        )
+        .subscribe()
     }
 
     checkUser()
+
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+    }
   }, [])
 
   const changeLang = (next: Lang) => {
@@ -85,7 +185,7 @@ export default function SearchPage() {
 
     const q = searchText.trim()
     if (!q) {
-      setMessage('Please enter a username')
+      setMessage(copy.enterUsername)
       setLoading(false)
       return
     }
@@ -93,7 +193,6 @@ export default function SearchPage() {
     let found: any = null
     let error: any = null
 
-    // HARD PATH: always resolve LESTAT by admin id
     if (q.toLowerCase() === 'lestat') {
       const res = await supabase
         .from('profiles')
@@ -104,8 +203,6 @@ export default function SearchPage() {
         .maybeSingle()
       found = res.data
       error = res.error
-
-      // fallback by name if id row missing
       if (!found && !error) {
         const res2 = await supabase
           .from('profiles')
@@ -136,33 +233,31 @@ export default function SearchPage() {
     }
 
     if (!found) {
-      setMessage('User not found')
+      setMessage(copy.notFound)
       setLoading(false)
       return
     }
 
     if (found.id === currentUser?.id) {
-      setMessage('That is your own username')
+      setMessage(copy.ownUsername)
       setLoading(false)
       return
     }
 
     if (found.status === 'suspended' || found.status === 'banned') {
-      setMessage('User not available')
+      setMessage(copy.notAvailable)
       setLoading(false)
       return
     }
 
-    // LESTAT / permanent: ignore offline? No — only skip 24h rule.
-    // If you want LESTAT always visible even when offline, comment out this block for lestat:
     if (found.is_offline === true && found.username?.toLowerCase() !== 'lestat') {
-      setMessage('User is offline')
+      setMessage(copy.offline)
       setLoading(false)
       return
     }
 
     if (!isUsernameActive(found)) {
-      setMessage('User not found')
+      setMessage(copy.notFound)
       setLoading(false)
       return
     }
@@ -177,7 +272,7 @@ export default function SearchPage() {
         .limit(1)
 
       if (blocks && blocks.length > 0) {
-        setMessage('User not available')
+        setMessage(copy.notAvailable)
         setLoading(false)
         return
       }
@@ -187,10 +282,21 @@ export default function SearchPage() {
     setLoading(false)
   }
 
+  const openSafetyThenChat = () => {
+    if (!result?.username) return
+    setShowSafety(true)
+  }
+
+  const confirmStartChat = () => {
+    if (!result?.username) return
+    setShowSafety(false)
+    router.push(`/chat/${result.username}`)
+  }
+
   if (checking) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading...</p>
+        <p className="text-zinc-400">{copy.loading}</p>
       </div>
     )
   }
@@ -207,7 +313,7 @@ export default function SearchPage() {
             onClick={() => router.push('/home')}
             className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
           >
-            ← Back
+            {copy.back}
           </button>
           <div className="flex gap-1">
             <button
@@ -233,14 +339,14 @@ export default function SearchPage() {
           </div>
         </div>
 
-        <h1 className="text-3xl font-bold mb-2">{t.search || 'Search'}</h1>
-        <p className="text-zinc-500 text-sm mb-6">
-          Find someone by their exact username
-        </p>
+        <h1 className="text-3xl font-bold mb-2">
+          {t.search || copy.searchTitle}
+        </h1>
+        <p className="text-zinc-500 text-sm mb-6">{copy.searchHelp}</p>
 
         <input
           type="text"
-          placeholder="Enter username"
+          placeholder={copy.placeholder}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -252,7 +358,7 @@ export default function SearchPage() {
           disabled={loading}
           className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl transition disabled:opacity-50"
         >
-          {loading ? 'Searching...' : 'Search'}
+          {loading ? copy.searching : copy.searchBtn}
         </button>
 
         {message && (
@@ -262,25 +368,57 @@ export default function SearchPage() {
         {result && (
           <div className="mt-6 p-5 bg-zinc-900 rounded-2xl text-center border border-zinc-800">
             <div className="text-3xl mb-2">{result.avatar_icon || '🎭'}</div>
-            <p className="text-zinc-400 text-sm mb-1">Found user</p>
+            <p className="text-zinc-400 text-sm mb-1">{copy.foundUser}</p>
             <p className="text-cyan-400 text-xl font-medium mb-1">
               {result.username}
             </p>
-            <p className="text-[11px] text-zinc-500 mb-2">Permanent username</p>
             {result.bio ? (
               <p className="text-zinc-400 text-sm mb-4">{result.bio}</p>
             ) : (
               <div className="mb-4" />
             )}
             <button
-              onClick={() => router.push(`/chat/${result.username}`)}
+              onClick={openSafetyThenChat}
               className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl transition"
             >
-              Start Chat
+              {copy.startChat}
             </button>
           </div>
         )}
       </div>
+
+      {showSafety && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-3xl p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-white mb-3">
+              {copy.beforeTitle}
+            </h2>
+            <ul className="text-sm text-zinc-300 space-y-2 mb-4 list-disc pl-5">
+              <li>{copy.safety1}</li>
+              <li>{copy.safety2}</li>
+              <li>{copy.safety3}</li>
+              <li>{copy.safety4}</li>
+            </ul>
+            <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
+              {copy.caps}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowSafety(false)}
+                className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-3 rounded-xl"
+              >
+                {copy.cancel}
+              </button>
+              <button
+                onClick={confirmStartChat}
+                className="flex-1 bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl"
+              >
+                {copy.understand}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
