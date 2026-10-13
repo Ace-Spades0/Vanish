@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import Image from 'next/image'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
+// ONLY LESTAT is admin
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
 function getExpiryLabel(profile: any, lang: Lang): string | null {
@@ -14,14 +15,20 @@ function getExpiryLabel(profile: any, lang: Lang): string | null {
     return lang === 'sw' ? 'Ya kudumu' : 'Permanent'
   }
   if (!profile.username_claimed_at) return null
+
   const end =
     new Date(profile.username_claimed_at).getTime() + 24 * 60 * 60 * 1000
   const msLeft = end - Date.now()
+
   if (msLeft <= 0) {
-    return lang === 'sw' ? 'Imeisha — chagua jina jipya' : 'Expired — pick a new username'
+    return lang === 'sw'
+      ? 'Imeisha — chagua jina jipya'
+      : 'Expired — pick a new username'
   }
+
   const hours = Math.floor(msLeft / (1000 * 60 * 60))
   const mins = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60))
+
   if (lang === 'sw') {
     if (hours >= 1) return `Inaisha baada ya ${hours}s ${mins}d`
     return `Inaisha baada ya ${mins}d`
@@ -104,15 +111,18 @@ export default function HomePage() {
       .from('blocks')
       .select('blocked_id')
       .eq('blocker_id', userId)
+
     if (!blocks?.length) {
       setBlockedUsers([])
       return
     }
+
     const ids = blocks.map((b) => b.blocked_id)
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, username')
       .in('id', ids)
+
     setBlockedUsers(profiles || [])
   }
 
@@ -122,19 +132,23 @@ export default function HomePage() {
       .select('*', { count: 'exact', head: true })
       .eq('to_id', userId)
       .is('read_at', null)
+
     setLetterCount(count || 0)
   }
 
   useEffect(() => {
     setLangState(getLang())
+
     const loadData = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
+
       if (!user) {
         router.push('/auth')
         return
       }
+
       setUser(user)
 
       let { data: profileData } = await supabase
@@ -143,12 +157,14 @@ export default function HomePage() {
         .eq('id', user.id)
         .maybeSingle()
 
+      // Permanent LESTAT repair — only admin account
       if (user.id === ADMIN_ID) {
         const needsRepair =
           !profileData ||
           profileData.username !== 'LESTAT' ||
           profileData.is_permanent_username !== true ||
           profileData.is_offline === true
+
         if (needsRepair) {
           await supabase.from('profiles').upsert({
             id: user.id,
@@ -167,24 +183,50 @@ export default function HomePage() {
         }
       }
 
-      if (
-        profileData?.status === 'suspended' ||
-        profileData?.status === 'banned'
-      ) {
+      // Banned → always out
+      if (profileData?.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
         return
       }
 
+      // Suspended: timed may auto-clear; permanent stays out
+      if (profileData?.status === 'suspended') {
+        const until = profileData.suspended_until
+          ? new Date(profileData.suspended_until).getTime()
+          : null
+
+        if (until && until <= Date.now()) {
+          await supabase
+            .from('profiles')
+            .update({ status: 'active', suspended_until: null })
+            .eq('id', user.id)
+          profileData = {
+            ...profileData,
+            status: 'active',
+            suspended_until: null,
+          }
+        } else {
+          await supabase.auth.signOut()
+          router.push('/auth')
+          return
+        }
+      }
+
       if (profileData?.username) {
-        if (profileData.is_permanent_username) setProfile(profileData)
-        else if (profileData.username_claimed_at) {
+        if (profileData.is_permanent_username) {
+          setProfile(profileData)
+        } else if (profileData.username_claimed_at) {
           const hoursPassed =
             (Date.now() - new Date(profileData.username_claimed_at).getTime()) /
             3600000
           setProfile(hoursPassed < 24 ? profileData : null)
-        } else setProfile(null)
-      } else setProfile(null)
+        } else {
+          setProfile(null)
+        }
+      } else {
+        setProfile(null)
+      }
 
       const currentLang = getLang()
       setExpiryLabel(getExpiryLabel(profileData, currentLang))
@@ -192,6 +234,7 @@ export default function HomePage() {
       await loadLetterCount(user.id)
       setLoading(false)
     }
+
     loadData()
   }, [])
 
@@ -372,7 +415,9 @@ export default function HomePage() {
             <p className="text-sm text-zinc-400 mt-2">{expiryLabel}</p>
           )}
           {profile?.bio && (
-            <p className="text-sm text-zinc-500 mt-2 max-w-[240px]">{profile.bio}</p>
+            <p className="text-sm text-zinc-500 mt-2 max-w-[240px]">
+              {profile.bio}
+            </p>
           )}
           {profile?.is_offline && (
             <p className="text-xs text-amber-400 mt-2">{copy.offline}</p>
@@ -406,8 +451,12 @@ export default function HomePage() {
                     : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600'
                 }`}
               >
-                <p className="text-sm font-medium text-white">{copy.vanishLink}</p>
-                <p className="text-xs text-zinc-500 mt-1">{copy.vanishLinkHelp}</p>
+                <p className="text-sm font-medium text-white">
+                  {copy.vanishLink}
+                </p>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {copy.vanishLinkHelp}
+                </p>
               </button>
 
               <button
@@ -427,8 +476,12 @@ export default function HomePage() {
                 onClick={() => router.push('/profile')}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
               >
-                <p className="text-sm font-medium text-white">{copy.myAccount}</p>
-                <p className="text-xs text-zinc-500 mt-1">{copy.myAccountHelp}</p>
+                <p className="text-sm font-medium text-white">
+                  {copy.myAccount}
+                </p>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {copy.myAccountHelp}
+                </p>
               </button>
 
               <button
@@ -480,7 +533,9 @@ export default function HomePage() {
                 </div>
               )}
               {inviteMsg && (
-                <p className="text-xs text-cyan-400 mt-2 text-center">{inviteMsg}</p>
+                <p className="text-xs text-cyan-400 mt-2 text-center">
+                  {inviteMsg}
+                </p>
               )}
             </div>
           )}
@@ -495,10 +550,16 @@ export default function HomePage() {
               Admin
             </button>
           )}
-          <button onClick={() => router.push('/terms')} className="hover:text-zinc-400">
+          <button
+            onClick={() => router.push('/terms')}
+            className="hover:text-zinc-400"
+          >
             {t.termsShort || 'Terms'}
           </button>
-          <button onClick={() => router.push('/privacy')} className="hover:text-zinc-400">
+          <button
+            onClick={() => router.push('/privacy')}
+            className="hover:text-zinc-400"
+          >
             {t.privacyShort || 'Privacy'}
           </button>
         </div>
@@ -517,7 +578,9 @@ export default function HomePage() {
               </button>
             </div>
             {blockedUsers.length === 0 ? (
-              <p className="text-sm text-zinc-500 text-center py-6">{copy.none}</p>
+              <p className="text-sm text-zinc-500 text-center py-6">
+                {copy.none}
+              </p>
             ) : (
               <div className="space-y-2 max-h-56 overflow-y-auto">
                 {blockedUsers.map((u) => (
