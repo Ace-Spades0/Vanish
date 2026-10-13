@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-// ONLY LESTAT
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
 const SUSPEND_OPTIONS = [
@@ -28,6 +27,7 @@ export default function ReportsDashboard() {
   const [tab, setTab] = useState<'reports' | 'logs'>('reports')
   const [loading, setLoading] = useState(true)
   const [actionMessage, setActionMessage] = useState('')
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   const loadNames = async (ids: string[]) => {
     const unique = Array.from(new Set(ids.filter(Boolean)))
@@ -120,6 +120,73 @@ export default function ReportsDashboard() {
     init()
   }, [])
 
+  const getToken = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    return session?.access_token || null
+  }
+
+  const callSetStatus = async (
+    userId: string,
+    status: 'active' | 'suspended' | 'banned',
+    hours?: number
+  ) => {
+    setBusyId(userId)
+    setActionMessage('')
+    try {
+      const token = await getToken()
+      if (!token) {
+        setActionMessage('Please log in again as LESTAT')
+        return
+      }
+
+      const res = await fetch('/api/admin/set-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          status,
+          hours: hours ?? null,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setActionMessage(data.error || `Failed (${res.status})`)
+        return
+      }
+
+      setProfileInfo((prev) => ({
+        ...prev,
+        [userId]: {
+          ...prev[userId],
+          status: data.status,
+          suspended_until: data.suspended_until ?? null,
+        },
+      }))
+
+      if (status === 'active') {
+        setActionMessage('Unsuspended — user is active')
+      } else if (status === 'banned') {
+        setActionMessage('User banned and signed out of all sessions')
+      } else if (hours) {
+        setActionMessage(
+          `Suspended ${hours}h until ${new Date(data.suspended_until).toLocaleString()} — sessions revoked`
+        )
+      } else {
+        setActionMessage('Permanent suspend — sessions revoked')
+      }
+    } catch (e: any) {
+      setActionMessage(e?.message || 'Request failed')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const markReviewed = async (id: string) => {
     const { error } = await supabase
       .from('reports')
@@ -143,97 +210,6 @@ export default function ReportsDashboard() {
     }
     setReports((prev) => prev.filter((r) => r.id !== id))
     setActionMessage('Report deleted')
-  }
-
-  const suspendForHours = async (userId: string, hours: number) => {
-    const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status: 'suspended', suspended_until: until })
-      .eq('id', userId)
-
-    if (error) {
-      setActionMessage(error.message)
-      return
-    }
-
-    setProfileInfo((prev) => ({
-      ...prev,
-      [userId]: {
-        ...prev[userId],
-        status: 'suspended',
-        suspended_until: until,
-      },
-    }))
-    setActionMessage(
-      `Suspended ${hours}h until ${new Date(until).toLocaleString()}`
-    )
-  }
-
-  const suspendPermanent = async (userId: string) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status: 'suspended', suspended_until: null })
-      .eq('id', userId)
-
-    if (error) {
-      setActionMessage(error.message)
-      return
-    }
-
-    setProfileInfo((prev) => ({
-      ...prev,
-      [userId]: {
-        ...prev[userId],
-        status: 'suspended',
-        suspended_until: null,
-      },
-    }))
-    setActionMessage('Permanent suspend (until you unsuspend)')
-  }
-
-  const banUser = async (userId: string) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status: 'banned', suspended_until: null })
-      .eq('id', userId)
-
-    if (error) {
-      setActionMessage(error.message)
-      return
-    }
-
-    setProfileInfo((prev) => ({
-      ...prev,
-      [userId]: {
-        ...prev[userId],
-        status: 'banned',
-        suspended_until: null,
-      },
-    }))
-    setActionMessage('User banned permanently')
-  }
-
-  const unsuspendUser = async (userId: string) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status: 'active', suspended_until: null })
-      .eq('id', userId)
-
-    if (error) {
-      setActionMessage(error.message)
-      return
-    }
-
-    setProfileInfo((prev) => ({
-      ...prev,
-      [userId]: {
-        ...prev[userId],
-        status: 'active',
-        suspended_until: null,
-      },
-    }))
-    setActionMessage('Unsuspended — user is active')
   }
 
   if (loading) {
@@ -267,14 +243,6 @@ export default function ReportsDashboard() {
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[700px] h-[500px] bg-purple-600/15 blur-[130px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/10 blur-[120px] rounded-full" />
-        <div
-          className="absolute inset-0 opacity-[0.035]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle, rgba(168,85,247,0.9) 1px, transparent 1px)',
-            backgroundSize: '22px 22px',
-          }}
-        />
       </div>
 
       <div className="relative z-10 p-6 max-w-6xl mx-auto">
@@ -285,7 +253,7 @@ export default function ReportsDashboard() {
             </p>
             <h1 className="text-3xl font-bold mb-1">Admin Panel</h1>
             <p className="text-zinc-400 text-sm">
-              Timed suspend · Permanent suspend · Ban · Unsuspend · Report count
+              Suspend uses server API + signs user out of all sessions
             </p>
           </div>
           <button
@@ -333,6 +301,7 @@ export default function ReportsDashboard() {
                   const info = profileInfo[report.reported_id] || {}
                   const isBlocked =
                     info.status === 'suspended' || info.status === 'banned'
+                  const busy = busyId === report.reported_id
 
                   return (
                     <div
@@ -390,50 +359,60 @@ export default function ReportsDashboard() {
                       {!report.reviewed && (
                         <button
                           onClick={() => markReviewed(report.id)}
-                          className="w-full bg-green-600 hover:bg-green-500 text-black py-2 rounded-lg mb-2 text-sm font-medium"
+                          disabled={busy}
+                          className="w-full bg-green-600 hover:bg-green-500 text-black py-2 rounded-lg mb-2 text-sm font-medium disabled:opacity-50"
                         >
                           Mark Reviewed
                         </button>
                       )}
 
                       <p className="text-[11px] text-zinc-500 mb-1.5 uppercase tracking-wide">
-                        1. Suspend time
+                        Suspend time
                       </p>
                       <div className="grid grid-cols-3 gap-1.5 mb-2">
                         {SUSPEND_OPTIONS.map((opt) => (
                           <button
                             key={opt.hours}
+                            disabled={busy}
                             onClick={() =>
-                              suspendForHours(report.reported_id, opt.hours)
+                              callSetStatus(
+                                report.reported_id,
+                                'suspended',
+                                opt.hours
+                              )
                             }
-                            className="bg-yellow-600 hover:bg-yellow-500 text-black py-2 rounded-lg text-[11px] font-medium"
+                            className="bg-yellow-600 hover:bg-yellow-500 text-black py-2 rounded-lg text-[11px] font-medium disabled:opacity-50"
                           >
                             {opt.label}
                           </button>
                         ))}
                       </div>
 
-                      <p className="text-[11px] text-zinc-500 mb-1.5 uppercase tracking-wide">
-                        2. Permanent
-                      </p>
                       <button
-                        onClick={() => suspendPermanent(report.reported_id)}
-                        className="w-full bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-lg mb-2 text-sm font-medium"
+                        disabled={busy}
+                        onClick={() =>
+                          callSetStatus(report.reported_id, 'suspended')
+                        }
+                        className="w-full bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-lg mb-2 text-sm font-medium disabled:opacity-50"
                       >
                         Permanent suspend
                       </button>
+
                       <button
-                        onClick={() => banUser(report.reported_id)}
-                        className="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg mb-2 text-sm font-medium"
+                        disabled={busy}
+                        onClick={() => callSetStatus(report.reported_id, 'banned')}
+                        className="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg mb-2 text-sm font-medium disabled:opacity-50"
                       >
                         Permanent ban
                       </button>
 
-                      {/* 4. Unsuspend — timed or permanent */}
                       {isBlocked && (
                         <button
-                          onClick={() => unsuspendUser(report.reported_id)}
-                          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black py-2.5 rounded-lg mb-2 text-sm font-bold"
+                          disabled={busy}
+                          onClick={() =>
+                            callSetStatus(report.reported_id, 'active')
+                          }
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black py-2.5 rounded-lg mb-2 text-sm font-bold disabled:opacity-50"
                         >
                           Unsuspend / Set Active
                         </button>
@@ -441,7 +420,8 @@ export default function ReportsDashboard() {
 
                       <button
                         onClick={() => deleteReport(report.id)}
-                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg border border-zinc-700 text-sm"
+                        disabled={busy}
+                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg border border-zinc-700 text-sm disabled:opacity-50"
                       >
                         Delete Report
                       </button>
@@ -456,9 +436,7 @@ export default function ReportsDashboard() {
         {tab === 'logs' && (
           <>
             {logs.length === 0 ? (
-              <p className="text-zinc-500 text-center mt-20">
-                No safety logs yet.
-              </p>
+              <p className="text-zinc-500 text-center mt-20">No safety logs yet.</p>
             ) : (
               <div className="space-y-4">
                 {logs.map((log) => (
