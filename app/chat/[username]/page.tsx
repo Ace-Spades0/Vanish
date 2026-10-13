@@ -1,5 +1,5 @@
 'use client'
-//force vercel rebuild — Seal mode + large Seal button
+//force vercel rebuild — duration + quiet mode
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -12,6 +12,12 @@ const REPORT_TYPES = [
   'Sexual content',
   'Hate / abuse',
   'Other',
+]
+
+const DURATION_OPTIONS = [
+  { minutes: 30, label: '30 min' },
+  { minutes: 60, label: '1 hour' },
+  { minutes: 180, label: '3 hours' },
 ]
 
 function isUsernameActive(profile: {
@@ -64,15 +70,26 @@ export default function ChatPage() {
   const [sealedBy, setSealedBy] = useState<string | null>(null)
   const [savingSeal, setSavingSeal] = useState(false)
   const [sealConfirm, setSealConfirm] = useState<'on' | 'off' | null>(null)
+  const [durationMinutes, setDurationMinutes] = useState(180)
+  const [durationLocked, setDurationLocked] = useState(false)
+  const [savingDuration, setSavingDuration] = useState(false)
+  const [quietMode, setQuietMode] = useState(false)
+  const [savingQuiet, setSavingQuiet] = useState(false)
+  const [quietConfirm, setQuietConfirm] = useState<'on' | 'off' | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const getConversationEnd = (firstCreatedAt: string) => {
+  const getConversationEnd = (firstCreatedAt: string, minutes: number) => {
     return new Date(
-      new Date(firstCreatedAt).getTime() + 3 * 60 * 60 * 1000
+      new Date(firstCreatedAt).getTime() + minutes * 60 * 1000
     ).toISOString()
+  }
+
+  const durationLabel = () => {
+    const opt = DURATION_OPTIONS.find((o) => o.minutes === durationMinutes)
+    return opt?.label || '3 hours'
   }
 
   const recountMedia = (list: any[]) => {
@@ -151,9 +168,13 @@ export default function ChatPage() {
 
       const { data: settings } = await supabase
         .from('conversation_settings')
-        .select('sealed_by')
+        .select('sealed_by, duration_minutes, quiet_mode')
         .eq('conversation_id', convId)
         .maybeSingle()
+
+      const mins = settings?.duration_minutes || 180
+      setDurationMinutes(mins)
+      setQuietMode(!!settings?.quiet_mode)
 
       if (settings?.sealed_by) {
         setSealedBy(settings.sealed_by)
@@ -173,7 +194,8 @@ export default function ChatPage() {
 
       const firstCreatedAt = firstRows?.[0]?.created_at || null
       if (firstCreatedAt) {
-        const endsAt = getConversationEnd(firstCreatedAt)
+        setDurationLocked(true)
+        const endsAt = getConversationEnd(firstCreatedAt, mins)
         setChatEndsAt(endsAt)
         if (new Date(endsAt).getTime() <= Date.now()) {
           await supabase
@@ -188,6 +210,8 @@ export default function ChatPage() {
           setLoading(false)
           return
         }
+      } else {
+        setDurationLocked(false)
       }
 
       await supabase
@@ -207,7 +231,10 @@ export default function ChatPage() {
       if (existingMessages && isMounted) {
         setMessages(existingMessages)
         recountMedia(existingMessages)
-        if (existingMessages.length > 0) hadMessagesRef.current = true
+        if (existingMessages.length > 0) {
+          hadMessagesRef.current = true
+          setDurationLocked(true)
+        }
       }
 
       if (!isMounted) return
@@ -232,6 +259,7 @@ export default function ChatPage() {
         (payload) => {
           if (payload.new.deleted) return
           hadMessagesRef.current = true
+          setDurationLocked(true)
           setSealed(false)
           setChatExpired(false)
           setMessages((prev) => {
@@ -277,6 +305,36 @@ export default function ChatPage() {
     }
   }, [targetUsername])
 
+  const ensureSettingsRow = async (extra: Record<string, any>) => {
+    const { error } = await supabase.from('conversation_settings').upsert(
+      {
+        conversation_id: conversationId,
+        updated_at: new Date().toISOString(),
+        ...extra,
+      },
+      { onConflict: 'conversation_id' }
+    )
+    return error
+  }
+
+  const pickDuration = async (minutes: number) => {
+    if (!user || !conversationId || durationLocked || savingDuration) return
+    setSavingDuration(true)
+    const error = await ensureSettingsRow({
+      duration_minutes: minutes,
+      duration_set_by: user.id,
+      sealed_by: sealedBy,
+      quiet_mode: quietMode,
+    })
+    if (error) {
+      alert(error.message)
+      setSavingDuration(false)
+      return
+    }
+    setDurationMinutes(minutes)
+    setSavingDuration(false)
+  }
+
   const requestSealToggle = () => {
     if (!user || !conversationId || savingSeal) return
     if (sealedBy && sealedBy !== user.id) return
@@ -289,14 +347,11 @@ export default function ChatPage() {
     setSealConfirm(null)
 
     if (sealConfirm === 'on') {
-      const { error } = await supabase.from('conversation_settings').upsert(
-        {
-          conversation_id: conversationId,
-          sealed_by: user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'conversation_id' }
-      )
+      const error = await ensureSettingsRow({
+        sealed_by: user.id,
+        duration_minutes: durationMinutes,
+        quiet_mode: quietMode,
+      })
       if (error) {
         alert(error.message)
         setSavingSeal(false)
@@ -309,14 +364,11 @@ export default function ChatPage() {
         setSavingSeal(false)
         return
       }
-      const { error } = await supabase.from('conversation_settings').upsert(
-        {
-          conversation_id: conversationId,
-          sealed_by: null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'conversation_id' }
-      )
+      const error = await ensureSettingsRow({
+        sealed_by: null,
+        duration_minutes: durationMinutes,
+        quiet_mode: quietMode,
+      })
       if (error) {
         alert(error.message)
         setSavingSeal(false)
@@ -326,6 +378,30 @@ export default function ChatPage() {
       setSealedBy(null)
     }
     setSavingSeal(false)
+  }
+
+  const requestQuietToggle = () => {
+    if (!user || !conversationId || savingQuiet) return
+    setQuietConfirm(quietMode ? 'off' : 'on')
+  }
+
+  const confirmQuietToggle = async () => {
+    if (!user || !conversationId || !quietConfirm) return
+    setSavingQuiet(true)
+    setQuietConfirm(null)
+    const next = quietConfirm === 'on'
+    const error = await ensureSettingsRow({
+      quiet_mode: next,
+      sealed_by: sealedBy,
+      duration_minutes: durationMinutes,
+    })
+    if (error) {
+      alert(error.message)
+      setSavingQuiet(false)
+      return
+    }
+    setQuietMode(next)
+    setSavingQuiet(false)
   }
 
   const runStartNewChat = async () => {
@@ -358,6 +434,7 @@ export default function ChatPage() {
     setChatEndsAt(null)
     setChatExpired(false)
     setSealed(false)
+    setDurationLocked(false)
     setWarningLevel(0)
     setWarningText('')
     setNewMessage('')
@@ -392,11 +469,13 @@ export default function ChatPage() {
       .order('created_at', { ascending: true })
       .limit(1)
     if (firstRows?.[0]?.created_at) {
-      const endsAt = getConversationEnd(firstRows[0].created_at)
+      const endsAt = getConversationEnd(firstRows[0].created_at, durationMinutes)
       setChatEndsAt(endsAt)
       return endsAt
     }
-    const endsAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+    const endsAt = new Date(
+      Date.now() + durationMinutes * 60 * 1000
+    ).toISOString()
     setChatEndsAt(endsAt)
     return endsAt
   }
@@ -412,7 +491,10 @@ export default function ChatPage() {
     ).length
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
-    const interrogationDetected = isQuestion && totalQuestions >= 6
+
+    // Quiet: warn at 3 & 4 questions; normal: at 6+ with 2 warnings
+    const qThreshold = quietMode ? 3 : 6
+    const interrogationDetected = isQuestion && totalQuestions >= qThreshold
 
     let useShortExpiry = warningLevel >= 2
     if (interrogationDetected) {
@@ -420,9 +502,13 @@ export default function ChatPage() {
         const nextLevel = warningLevel + 1
         setWarningLevel(nextLevel)
         setWarningText(
-          nextLevel === 1
-            ? 'You are asking a lot of questions. Please slow down.'
-            : 'Final warning: continued questioning may shorten this chat.'
+          quietMode
+            ? nextLevel === 1
+              ? 'Quiet mode: you are asking a lot. Please slow down.'
+              : 'Quiet mode final warning: continued questioning may shorten this chat.'
+            : nextLevel === 1
+              ? 'You are asking a lot of questions. Please slow down.'
+              : 'Final warning: continued questioning may shorten this chat.'
         )
         useShortExpiry = false
       } else {
@@ -433,11 +519,21 @@ export default function ChatPage() {
       }
     }
 
+    // Persist duration on first message
+    if (!durationLocked) {
+      await ensureSettingsRow({
+        duration_minutes: durationMinutes,
+        duration_set_by: user.id,
+        sealed_by: sealedBy,
+        quiet_mode: quietMode,
+      })
+    }
+
     const expiresAt = await resolveExpiresAt(useShortExpiry)
     if (new Date(expiresAt).getTime() <= Date.now()) {
       setChatExpired(true)
       setSealed(true)
-      alert('This chat has ended (3 hours from the first message).')
+      alert(`This chat has ended (${durationLabel()} from the first message).`)
       return
     }
 
@@ -454,6 +550,7 @@ export default function ChatPage() {
     }
 
     hadMessagesRef.current = true
+    setDurationLocked(true)
     setSealed(false)
     setChatExpired(false)
 
@@ -512,11 +609,20 @@ export default function ChatPage() {
       }
     }
 
+    if (!durationLocked) {
+      await ensureSettingsRow({
+        duration_minutes: durationMinutes,
+        duration_set_by: user.id,
+        sealed_by: sealedBy,
+        quiet_mode: quietMode,
+      })
+    }
+
     const expiresAt = await resolveExpiresAt(false)
     if (new Date(expiresAt).getTime() <= Date.now()) {
       setChatExpired(true)
       setSealed(true)
-      alert('This chat has ended (3 hours from the first message).')
+      alert(`This chat has ended (${durationLabel()} from the first message).`)
       return
     }
 
@@ -538,6 +644,7 @@ export default function ChatPage() {
       expires_at: expiresAt,
     })
     hadMessagesRef.current = true
+    setDurationLocked(true)
     setSealed(false)
     setChatExpired(false)
     e.target.value = ''
@@ -742,7 +849,7 @@ export default function ChatPage() {
         <h1 className="text-2xl font-bold mb-2">This chat has vanished</h1>
         <p className="text-zinc-400 mb-8 text-sm max-w-xs">
           {chatExpired
-            ? 'This conversation ended 3 hours after the first message.'
+            ? `This conversation ended ${durationLabel()} after the first message.`
             : 'The conversation was cleared.'}
         </p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -810,78 +917,115 @@ export default function ChatPage() {
       </div>
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-3 border-b border-white/10 shrink-0">
-  {/* Row 1: username | counts */}
-  <div className="flex items-start justify-between gap-2 mb-2">
-    <div className="min-w-0 flex-1">
-      <p className="text-xs text-zinc-400">Chatting with</p>
-      <h1 className="text-lg sm:text-xl font-bold text-cyan-400 truncate leading-tight">
-        {targetUsername}
-      </h1>
-      <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-        No last seen · No read receipts
-      </p>
-    </div>
-    <div className="flex gap-1.5 shrink-0 pt-1">
-      <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-        {fileCount}/4
-      </span>
-      <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-        {videoCount}/1
-      </span>
-    </div>
-  </div>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-zinc-400">Chatting with</p>
+            <h1 className="text-lg sm:text-xl font-bold text-cyan-400 truncate leading-tight">
+              {targetUsername}
+            </h1>
+            <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
+              No last seen · No read receipts
+            </p>
+          </div>
+          <div className="flex gap-1.5 shrink-0 pt-1">
+            <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+              {fileCount}/4
+            </span>
+            <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
+              {videoCount}/1
+            </span>
+          </div>
+        </div>
 
-  {/* Row 2: SEAL (main) + Clear / Report / Block / Back */}
-  <div className="flex flex-wrap items-center gap-2">
-    <button
-      type="button"
-      onClick={requestSealToggle}
-      disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
-      className={`flex-1 min-w-[140px] py-2.5 px-3 rounded-xl text-sm font-bold tracking-wide border transition text-center ${
-        sealOn
-          ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.35)]'
-          : 'bg-zinc-800/90 text-cyan-300 border-cyan-500/40 hover:bg-zinc-700'
-      } disabled:opacity-50`}
-    >
-      {savingSeal
-        ? 'Please wait...'
-        : sealOn
-          ? 'SEAL ON'
-          : 'SEAL THIS CHAT'}
-    </button>
+        {/* Chat length — only before first message */}
+        {!durationLocked && (
+          <div className="mb-2">
+            <p className="text-[11px] text-zinc-400 mb-1.5">
+              Chat length (starts at first message)
+            </p>
+            <div className="flex gap-2">
+              {DURATION_OPTIONS.map((opt) => (
+                <button
+                  key={opt.minutes}
+                  type="button"
+                  disabled={savingDuration}
+                  onClick={() => pickDuration(opt.minutes)}
+                  className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition ${
+                    durationMinutes === opt.minutes
+                      ? 'bg-cyan-500 text-black border-cyan-300'
+                      : 'bg-zinc-800 text-zinc-300 border-zinc-600'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {durationLocked && (
+          <p className="text-[11px] text-zinc-500 mb-2">
+            Chat length: {durationLabel()}
+            {quietMode ? ' · Quiet on' : ''}
+          </p>
+        )}
 
-    <button
-      onClick={() => setModal('clear')}
-      className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-2.5 rounded-xl"
-    >
-      Clear chat
-    </button>
-    <button
-      onClick={() => {
-        setReportMessageId(null)
-        setReportMessagePreview('')
-        setReportType('')
-        setReportReason('')
-        setModal('report')
-      }}
-      className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-2.5 rounded-xl"
-    >
-      Report
-    </button>
-    <button
-      onClick={() => setModal('block')}
-      className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-2.5 rounded-xl"
-    >
-      Block
-    </button>
-    <button
-      onClick={() => router.push('/home')}
-      className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-2.5 rounded-xl"
-    >
-      Back
-    </button>
-  </div>
-</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={requestSealToggle}
+            disabled={savingSeal || (!!sealedBy && sealedBy !== user?.id)}
+            className={`flex-1 min-w-[100px] py-2.5 px-2 rounded-xl text-sm font-bold tracking-wide border transition text-center ${
+              sealOn
+                ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.35)]'
+                : 'bg-zinc-800/90 text-cyan-300 border-cyan-500/40 hover:bg-zinc-700'
+            } disabled:opacity-50`}
+          >
+            {savingSeal ? '…' : sealOn ? 'SEAL ON' : 'SEAL'}
+          </button>
+          <button
+            type="button"
+            onClick={requestQuietToggle}
+            disabled={savingQuiet}
+            className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition ${
+              quietMode
+                ? 'bg-violet-500 text-white border-violet-300'
+                : 'bg-zinc-800 text-violet-300 border-violet-500/40'
+            } disabled:opacity-50`}
+          >
+            {quietMode ? 'QUIET ON' : 'QUIET'}
+          </button>
+          <button
+            onClick={() => setModal('clear')}
+            className="text-xs font-medium bg-orange-600 hover:bg-orange-500 px-3 py-2.5 rounded-xl"
+          >
+            Clear chat
+          </button>
+          <button
+            onClick={() => {
+              setReportMessageId(null)
+              setReportMessagePreview('')
+              setReportType('')
+              setReportReason('')
+              setModal('report')
+            }}
+            className="text-xs font-medium bg-yellow-600 hover:bg-yellow-500 px-3 py-2.5 rounded-xl"
+          >
+            Report
+          </button>
+          <button
+            onClick={() => setModal('block')}
+            className="text-xs font-medium bg-red-600 hover:bg-red-500 px-3 py-2.5 rounded-xl"
+          >
+            Block
+          </button>
+          <button
+            onClick={() => router.push('/home')}
+            className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-2.5 rounded-xl"
+          >
+            Back
+          </button>
+        </div>
+      </div>
 
       {warningText && (
         <div className="relative z-10 bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-sm text-yellow-200 text-center">
@@ -895,7 +1039,7 @@ export default function ChatPage() {
             <div className="text-3xl mb-2 opacity-40">💬</div>
             <p className="text-zinc-400 text-sm">No messages yet</p>
             <p className="text-zinc-600 text-xs mt-1">
-              New chat — 3 hours starts at the first message
+              Timer starts at first message · {durationLabel()}
             </p>
           </div>
         ) : (
@@ -1032,7 +1176,7 @@ export default function ChatPage() {
             </h3>
             <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
               {sealConfirm === 'on'
-                ? 'When the chat ends (clear, 3 hours, or limits), only you can start a new chat. The other person will not see “Start new chat” and will not be told that Seal is on.'
+                ? 'When the chat ends, only you can start a new chat. The other person will not see “Start new chat” and will not be told.'
                 : 'After the chat ends, both of you can start a new chat again.'}
             </p>
             <div className="flex gap-2">
@@ -1051,6 +1195,39 @@ export default function ChatPage() {
                 }`}
               >
                 {sealConfirm === 'on' ? 'Turn Seal on' : 'Turn Seal off'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quietConfirm && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-violet-500/40 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              {quietConfirm === 'on' ? 'Turn Quiet mode on?' : 'Turn Quiet mode off?'}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
+              {quietConfirm === 'on'
+                ? 'Quiet mode protects against pressure: warnings come sooner when many questions are asked. The other person is not notified.'
+                : 'Anti-interrogation returns to the normal (less strict) level.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setQuietConfirm(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmQuietToggle}
+                className={`flex-1 py-2.5 rounded-xl font-semibold ${
+                  quietConfirm === 'on'
+                    ? 'bg-violet-500 text-white'
+                    : 'bg-zinc-500 text-white'
+                }`}
+              >
+                {quietConfirm === 'on' ? 'Turn Quiet on' : 'Turn Quiet off'}
               </button>
             </div>
           </div>
@@ -1146,8 +1323,8 @@ export default function ChatPage() {
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  Messages disappear for both of you. You can start a new chat after
-                  {sealOn ? ' (only you — Seal is on)' : ''}.
+                  Messages disappear for both of you.
+                  {sealOn ? ' Seal is on — only you can start a new chat after.' : ''}
                 </p>
                 <div className="flex gap-2">
                   <button
