@@ -1,11 +1,16 @@
 'use client'
+
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-const ADMIN_IDS = [
-  'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7',
-  '4fcf7cd5-700c-40f7-9277-109f5b3a2a33',
+// ONLY LESTAT
+const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
+
+const SUSPEND_OPTIONS = [
+  { label: '24 hours', hours: 24 },
+  { label: '7 days', hours: 24 * 7 },
+  { label: '30 days', hours: 24 * 30 },
 ]
 
 export default function ReportsDashboard() {
@@ -14,6 +19,12 @@ export default function ReportsDashboard() {
   const [reports, setReports] = useState<any[]>([])
   const [logs, setLogs] = useState<any[]>([])
   const [names, setNames] = useState<Record<string, string>>({})
+  const [profileInfo, setProfileInfo] = useState<
+    Record<
+      string,
+      { status?: string; report_count?: number; suspended_until?: string | null }
+    >
+  >({})
   const [tab, setTab] = useState<'reports' | 'logs'>('reports')
   const [loading, setLoading] = useState(true)
   const [actionMessage, setActionMessage] = useState('')
@@ -21,15 +32,29 @@ export default function ReportsDashboard() {
   const loadNames = async (ids: string[]) => {
     const unique = Array.from(new Set(ids.filter(Boolean)))
     if (unique.length === 0) return
+
     const { data } = await supabase
       .from('profiles')
-      .select('id, username')
+      .select('id, username, status, report_count, suspended_until')
       .in('id', unique)
+
     const map: Record<string, string> = {}
+    const info: Record<
+      string,
+      { status?: string; report_count?: number; suspended_until?: string | null }
+    > = {}
+
     ;(data || []).forEach((p) => {
       map[p.id] = p.username || 'No username'
+      info[p.id] = {
+        status: p.status || 'active',
+        report_count: p.report_count ?? 0,
+        suspended_until: p.suspended_until,
+      }
     })
+
     setNames((prev) => ({ ...prev, ...map }))
+    setProfileInfo((prev) => ({ ...prev, ...info }))
   }
 
   const displayUser = (id?: string) => {
@@ -37,6 +62,24 @@ export default function ReportsDashboard() {
     const username = names[id]
     if (!username) return id
     return `${username} (${id.slice(0, 8)}…)`
+  }
+
+  const statusLabel = (id?: string) => {
+    if (!id) return '—'
+    const p = profileInfo[id]
+    if (!p) return 'unknown'
+    if (p.status === 'banned') return 'BANNED (permanent)'
+    if (p.status === 'suspended') {
+      if (p.suspended_until) {
+        const t = new Date(p.suspended_until)
+        if (t.getTime() > Date.now()) {
+          return `Suspended until ${t.toLocaleString()}`
+        }
+        return 'Suspended (time ended)'
+      }
+      return 'Suspended (permanent)'
+    }
+    return 'Active'
   }
 
   useEffect(() => {
@@ -49,22 +92,27 @@ export default function ReportsDashboard() {
         return
       }
       setUser(user)
-      if (!ADMIN_IDS.includes(user.id)) {
+
+      if (user.id !== ADMIN_ID) {
         setLoading(false)
         return
       }
+
       const { data: reportData } = await supabase
         .from('reports')
         .select('*')
         .order('created_at', { ascending: false })
+
       const { data: logData } = await supabase
         .from('audit_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(50)
+
       const list = reportData || []
       setReports(list)
       setLogs(logData || [])
+
       const ids = list.flatMap((r) => [r.reporter_id, r.reported_id])
       await loadNames(ids)
       setLoading(false)
@@ -97,19 +145,95 @@ export default function ReportsDashboard() {
     setActionMessage('Report deleted')
   }
 
-  const setUserStatus = async (
-    userId: string,
-    status: 'suspended' | 'banned' | 'active'
-  ) => {
+  const suspendForHours = async (userId: string, hours: number) => {
+    const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
     const { error } = await supabase
       .from('profiles')
-      .update({ status })
+      .update({ status: 'suspended', suspended_until: until })
       .eq('id', userId)
+
     if (error) {
       setActionMessage(error.message)
       return
     }
-    setActionMessage(`User set to ${status}`)
+
+    setProfileInfo((prev) => ({
+      ...prev,
+      [userId]: {
+        ...prev[userId],
+        status: 'suspended',
+        suspended_until: until,
+      },
+    }))
+    setActionMessage(
+      `Suspended ${hours}h until ${new Date(until).toLocaleString()}`
+    )
+  }
+
+  const suspendPermanent = async (userId: string) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status: 'suspended', suspended_until: null })
+      .eq('id', userId)
+
+    if (error) {
+      setActionMessage(error.message)
+      return
+    }
+
+    setProfileInfo((prev) => ({
+      ...prev,
+      [userId]: {
+        ...prev[userId],
+        status: 'suspended',
+        suspended_until: null,
+      },
+    }))
+    setActionMessage('Permanent suspend (until you unsuspend)')
+  }
+
+  const banUser = async (userId: string) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status: 'banned', suspended_until: null })
+      .eq('id', userId)
+
+    if (error) {
+      setActionMessage(error.message)
+      return
+    }
+
+    setProfileInfo((prev) => ({
+      ...prev,
+      [userId]: {
+        ...prev[userId],
+        status: 'banned',
+        suspended_until: null,
+      },
+    }))
+    setActionMessage('User banned permanently')
+  }
+
+  const unsuspendUser = async (userId: string) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status: 'active', suspended_until: null })
+      .eq('id', userId)
+
+    if (error) {
+      setActionMessage(error.message)
+      return
+    }
+
+    setProfileInfo((prev) => ({
+      ...prev,
+      [userId]: {
+        ...prev[userId],
+        status: 'active',
+        suspended_until: null,
+      },
+    }))
+    setActionMessage('Unsuspended — user is active')
   }
 
   if (loading) {
@@ -120,7 +244,7 @@ export default function ReportsDashboard() {
     )
   }
 
-  if (!user || !ADMIN_IDS.includes(user.id)) {
+  if (user?.id !== ADMIN_ID) {
     return (
       <div className="min-h-screen bg-[#05070c] text-white flex flex-col items-center justify-center px-6 text-center">
         <div className="text-6xl mb-4">⛔</div>
@@ -140,7 +264,6 @@ export default function ReportsDashboard() {
 
   return (
     <div className="min-h-screen bg-[#05070c] text-white relative overflow-hidden">
-      {/* Platform atmosphere — purple + cyan for admin */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[700px] h-[500px] bg-purple-600/15 blur-[130px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/10 blur-[120px] rounded-full" />
@@ -153,15 +276,16 @@ export default function ReportsDashboard() {
           }}
         />
       </div>
+
       <div className="relative z-10 p-6 max-w-6xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div>
             <p className="text-[11px] uppercase tracking-[0.25em] text-purple-300/70 mb-2">
-              Go Vanish · Internal
+              Go Vanish · LESTAT only
             </p>
             <h1 className="text-3xl font-bold mb-1">Admin Panel</h1>
             <p className="text-zinc-400 text-sm">
-              Reports and safety events (cleared chats, flags)
+              Timed suspend · Permanent suspend · Ban · Unsuspend · Report count
             </p>
           </div>
           <button
@@ -171,13 +295,14 @@ export default function ReportsDashboard() {
             ← Back to Home
           </button>
         </div>
+
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setTab('reports')}
             className={`px-4 py-2 rounded-xl text-sm border transition ${
               tab === 'reports'
                 ? 'bg-cyan-500 text-black border-cyan-400'
-                : 'bg-zinc-900/80 text-white border-zinc-700 hover:border-zinc-500'
+                : 'bg-zinc-900/80 text-white border-zinc-700'
             }`}
           >
             Reports ({reports.length})
@@ -187,104 +312,159 @@ export default function ReportsDashboard() {
             className={`px-4 py-2 rounded-xl text-sm border transition ${
               tab === 'logs'
                 ? 'bg-cyan-500 text-black border-cyan-400'
-                : 'bg-zinc-900/80 text-white border-zinc-700 hover:border-zinc-500'
+                : 'bg-zinc-900/80 text-white border-zinc-700'
             }`}
           >
             Safety logs ({logs.length})
           </button>
         </div>
+
         {actionMessage && (
           <p className="mb-4 text-sm text-cyan-400">{actionMessage}</p>
         )}
+
         {tab === 'reports' && (
           <>
             {reports.length === 0 ? (
               <p className="text-zinc-500 text-center mt-20">No reports found.</p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {reports.map((report) => (
-                  <div
-                    key={report.id}
-                    className="bg-zinc-900/70 backdrop-blur-sm p-5 rounded-2xl border border-zinc-800/80 shadow-lg"
-                  >
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xl">⚠️</span>
-                      <h2 className="text-base font-bold text-cyan-400">Report</h2>
-                      {report.reviewed && (
-                        <span className="ml-auto text-[10px] text-green-400 border border-green-800 px-2 py-0.5 rounded-full">
-                          Reviewed
+                {reports.map((report) => {
+                  const info = profileInfo[report.reported_id] || {}
+                  const isBlocked =
+                    info.status === 'suspended' || info.status === 'banned'
+
+                  return (
+                    <div
+                      key={report.id}
+                      className="bg-zinc-900/70 backdrop-blur-sm p-5 rounded-2xl border border-zinc-800/80 shadow-lg"
+                    >
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-xl">⚠️</span>
+                        <h2 className="text-base font-bold text-cyan-400">Report</h2>
+                        {report.reviewed && (
+                          <span className="ml-auto text-[10px] text-green-400 border border-green-800 px-2 py-0.5 rounded-full">
+                            Reviewed
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-sm text-zinc-400 mb-2 break-all">
+                        <span className="text-zinc-200">Reporter:</span>{' '}
+                        {displayUser(report.reporter_id)}
+                      </p>
+                      <p className="text-sm text-zinc-400 mb-2 break-all">
+                        <span className="text-zinc-200">Reported:</span>{' '}
+                        {displayUser(report.reported_id)}
+                      </p>
+                      <p className="text-sm text-zinc-400 mb-1">
+                        <span className="text-zinc-200">Reports on account:</span>{' '}
+                        <span className="text-amber-300 font-semibold">
+                          {info.report_count ?? 0}
                         </span>
+                      </p>
+                      <p className="text-sm text-zinc-400 mb-1">
+                        <span className="text-zinc-200">Status:</span>{' '}
+                        <span
+                          className={
+                            info.status === 'banned'
+                              ? 'text-red-400'
+                              : info.status === 'suspended'
+                                ? 'text-yellow-400'
+                                : 'text-green-400'
+                          }
+                        >
+                          {statusLabel(report.reported_id)}
+                        </span>
+                      </p>
+                      <p className="text-sm text-zinc-400 mb-1">
+                        <span className="text-zinc-200">Reason:</span>{' '}
+                        {report.reason || '—'}
+                      </p>
+                      <p className="text-xs text-zinc-500 mb-4">
+                        {report.created_at
+                          ? new Date(report.created_at).toLocaleString()
+                          : '—'}
+                      </p>
+
+                      {!report.reviewed && (
+                        <button
+                          onClick={() => markReviewed(report.id)}
+                          className="w-full bg-green-600 hover:bg-green-500 text-black py-2 rounded-lg mb-2 text-sm font-medium"
+                        >
+                          Mark Reviewed
+                        </button>
                       )}
-                    </div>
-                    <p className="text-sm text-zinc-400 mb-2 break-all">
-                      <span className="text-zinc-200">Reporter:</span>{' '}
-                      {displayUser(report.reporter_id)}
-                    </p>
-                    <p className="text-sm text-zinc-400 mb-2 break-all">
-                      <span className="text-zinc-200">Reported:</span>{' '}
-                      {displayUser(report.reported_id)}
-                    </p>
-                    <p className="text-sm text-zinc-400 mb-1">
-                      <span className="text-zinc-200">Reason:</span>{' '}
-                      {report.reason || '—'}
-                    </p>
-                    <p className="text-xs text-zinc-500 mb-4">
-                      {report.created_at
-                        ? new Date(report.created_at).toLocaleString()
-                        : '—'}
-                    </p>
-                    {!report.reviewed && (
+
+                      <p className="text-[11px] text-zinc-500 mb-1.5 uppercase tracking-wide">
+                        1. Suspend time
+                      </p>
+                      <div className="grid grid-cols-3 gap-1.5 mb-2">
+                        {SUSPEND_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.hours}
+                            onClick={() =>
+                              suspendForHours(report.reported_id, opt.hours)
+                            }
+                            className="bg-yellow-600 hover:bg-yellow-500 text-black py-2 rounded-lg text-[11px] font-medium"
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <p className="text-[11px] text-zinc-500 mb-1.5 uppercase tracking-wide">
+                        2. Permanent
+                      </p>
                       <button
-                        onClick={() => markReviewed(report.id)}
-                        className="w-full bg-green-600 hover:bg-green-500 text-black py-2 rounded-lg mb-2 text-sm font-medium"
+                        onClick={() => suspendPermanent(report.reported_id)}
+                        className="w-full bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-lg mb-2 text-sm font-medium"
                       >
-                        Mark Reviewed
+                        Permanent suspend
                       </button>
-                    )}
-                    <button
-                      onClick={() =>
-                        setUserStatus(report.reported_id, 'suspended')
-                      }
-                      className="w-full bg-yellow-600 hover:bg-yellow-500 text-black py-2 rounded-lg mb-2 text-sm font-medium"
-                    >
-                      Suspend User
-                    </button>
-                    <button
-                      onClick={() => setUserStatus(report.reported_id, 'banned')}
-                      className="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg mb-2 text-sm font-medium"
-                    >
-                      Ban User
-                    </button>
-                    <button
-                      onClick={() => setUserStatus(report.reported_id, 'active')}
-                      className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2 rounded-lg mb-2 text-sm"
-                    >
-                      Set Active
-                    </button>
-                    <button
-                      onClick={() => deleteReport(report.id)}
-                      className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg border border-zinc-700 text-sm"
-                    >
-                      Delete Report
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        onClick={() => banUser(report.reported_id)}
+                        className="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg mb-2 text-sm font-medium"
+                      >
+                        Permanent ban
+                      </button>
+
+                      {/* 4. Unsuspend — timed or permanent */}
+                      {isBlocked && (
+                        <button
+                          onClick={() => unsuspendUser(report.reported_id)}
+                          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black py-2.5 rounded-lg mb-2 text-sm font-bold"
+                        >
+                          Unsuspend / Set Active
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => deleteReport(report.id)}
+                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg border border-zinc-700 text-sm"
+                      >
+                        Delete Report
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </>
         )}
+
         {tab === 'logs' && (
           <>
             {logs.length === 0 ? (
               <p className="text-zinc-500 text-center mt-20">
-                No safety logs yet. Cleared chats and flags appear here.
+                No safety logs yet.
               </p>
             ) : (
               <div className="space-y-4">
                 {logs.map((log) => (
                   <div
                     key={log.id}
-                    className="bg-zinc-900/70 backdrop-blur-sm border border-zinc-800/80 rounded-2xl p-5"
+                    className="bg-zinc-900/70 border border-zinc-800/80 rounded-2xl p-5"
                   >
                     <p className="text-cyan-400 font-medium mb-2">
                       {log.payload?.action || 'safety_event'}
