@@ -6,7 +6,6 @@ import { supabase } from '@/lib/supabase'
 import Image from 'next/image'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
-// ONLY LESTAT is admin
 const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
 
 function getExpiryLabel(profile: any, lang: Lang): string | null {
@@ -106,6 +105,24 @@ export default function HomePage() {
     },
   }[lang]
 
+  const kickIfBlocked = async (status?: string, suspended_until?: string | null) => {
+    if (status === 'banned') {
+      await supabase.auth.signOut()
+      router.push('/auth')
+      return true
+    }
+    if (status === 'suspended') {
+      const until = suspended_until ? new Date(suspended_until).getTime() : null
+      if (until && until <= Date.now()) {
+        return false
+      }
+      await supabase.auth.signOut()
+      router.push('/auth')
+      return true
+    }
+    return false
+  }
+
   const loadBlockedUsers = async (userId: string) => {
     const { data: blocks } = await supabase
       .from('blocks')
@@ -139,6 +156,8 @@ export default function HomePage() {
   useEffect(() => {
     setLangState(getLang())
 
+    let channel: any = null
+
     const loadData = async () => {
       const {
         data: { user },
@@ -157,7 +176,6 @@ export default function HomePage() {
         .eq('id', user.id)
         .maybeSingle()
 
-      // Permanent LESTAT repair — only admin account
       if (user.id === ADMIN_ID) {
         const needsRepair =
           !profileData ||
@@ -183,14 +201,12 @@ export default function HomePage() {
         }
       }
 
-      // Banned → always out
       if (profileData?.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
         return
       }
 
-      // Suspended: timed may auto-clear; permanent stays out
       if (profileData?.status === 'suspended') {
         const until = profileData.suspended_until
           ? new Date(profileData.suspended_until).getTime()
@@ -233,9 +249,31 @@ export default function HomePage() {
       await loadBlockedUsers(user.id)
       await loadLetterCount(user.id)
       setLoading(false)
+
+      // Realtime: kick as soon as admin suspends/bans
+      channel = supabase
+        .channel(`profile-status-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'profiles',
+            filter: `id=eq.${user.id}`,
+          },
+          async (payload) => {
+            const row = payload.new as any
+            await kickIfBlocked(row?.status, row?.suspended_until)
+          }
+        )
+        .subscribe()
     }
 
     loadData()
+
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+    }
   }, [])
 
   useEffect(() => {
