@@ -1,12 +1,14 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Image from 'next/image'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
-const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
+const ADMIN_IDS = [
+  'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7',
+  '4fcf7cd5-700c-40f7-9277-109f5b3a2a33',
+]
 
 function getExpiryLabel(profile: any, lang: Lang): string | null {
   if (!profile?.username) return null
@@ -47,7 +49,6 @@ export default function HomePage() {
   const [revoking, setRevoking] = useState(false)
   const router = useRouter()
   const t = translations[lang]
-
   const copy = {
     en: {
       startChat: 'Start a vanishing chat',
@@ -136,14 +137,13 @@ export default function HomePage() {
         return
       }
       setUser(user)
-
       let { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
-
-      if (user.id === ADMIN_ID) {
+      // Keep special LESTAT repair only for the original admin
+      if (user.id === 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7') {
         const needsRepair =
           !profileData ||
           profileData.username !== 'LESTAT' ||
@@ -166,7 +166,6 @@ export default function HomePage() {
           profileData = fixed
         }
       }
-
       if (
         profileData?.status === 'suspended' ||
         profileData?.status === 'banned'
@@ -175,7 +174,6 @@ export default function HomePage() {
         router.push('/auth')
         return
       }
-
       if (profileData?.username) {
         if (profileData.is_permanent_username) setProfile(profileData)
         else if (profileData.username_claimed_at) {
@@ -185,7 +183,6 @@ export default function HomePage() {
           setProfile(hoursPassed < 24 ? profileData : null)
         } else setProfile(null)
       } else setProfile(null)
-
       const currentLang = getLang()
       setExpiryLabel(getExpiryLabel(profileData, currentLang))
       await loadBlockedUsers(user.id)
@@ -318,7 +315,6 @@ export default function HomePage() {
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-cyan-500/10 blur-[120px] rounded-full" />
       </div>
-
       <div className="relative z-10 max-w-md mx-auto px-5 min-h-screen flex flex-col">
         <div className="flex items-center justify-between pt-5 pb-2">
           <div className="flex items-center gap-3">
@@ -359,7 +355,6 @@ export default function HomePage() {
             </button>
           </div>
         </div>
-
         <div className="flex-1 flex flex-col items-center justify-center text-center py-8">
           <div className="text-5xl mb-5">{profile?.avatar_icon || '🎭'}</div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
@@ -377,7 +372,6 @@ export default function HomePage() {
           {profile?.is_offline && (
             <p className="text-xs text-amber-400 mt-2">{copy.offline}</p>
           )}
-
           <div className="w-full mt-10">
             {!profile?.username ? (
               <button
@@ -395,7 +389,6 @@ export default function HomePage() {
               </button>
             )}
           </div>
-
           {profile?.username && (
             <div className="w-full grid grid-cols-2 gap-3 mt-6">
               <button
@@ -409,7 +402,6 @@ export default function HomePage() {
                 <p className="text-sm font-medium text-white">{copy.vanishLink}</p>
                 <p className="text-xs text-zinc-500 mt-1">{copy.vanishLinkHelp}</p>
               </button>
-
               <button
                 onClick={() => router.push('/letters')}
                 className="relative rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
@@ -422,7 +414,6 @@ export default function HomePage() {
                 <p className="text-sm font-medium text-white">{copy.letters}</p>
                 <p className="text-xs text-zinc-500 mt-1">{copy.lettersHelp}</p>
               </button>
-
               <button
                 onClick={() => router.push('/profile')}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
@@ -430,7 +421,6 @@ export default function HomePage() {
                 <p className="text-sm font-medium text-white">{copy.myAccount}</p>
                 <p className="text-xs text-zinc-500 mt-1">{copy.myAccountHelp}</p>
               </button>
-
               <button
                 onClick={() => setShowBlockedModal(true)}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
@@ -444,7 +434,6 @@ export default function HomePage() {
               </button>
             </div>
           )}
-
           {showInvite && profile?.username && (
             <div className="w-full mt-4 rounded-2xl border border-cyan-500/20 bg-zinc-900/80 p-4 text-left">
               <p className="text-sm font-medium mb-1">{copy.yourLink}</p>
@@ -485,9 +474,8 @@ export default function HomePage() {
             </div>
           )}
         </div>
-
         <div className="pb-8 pt-2 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-600">
-          {user?.id === ADMIN_ID && (
+          {user && ADMIN_IDS.includes(user.id) && (
             <button
               onClick={() => router.push('/admin/reports')}
               className="hover:text-purple-400"
@@ -503,7 +491,6 @@ export default function HomePage() {
           </button>
         </div>
       </div>
-
       {showBlockedModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-sm">

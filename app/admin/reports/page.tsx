@@ -1,10 +1,12 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
+const ADMIN_IDS = [
+  'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7',
+  '4fcf7cd5-700c-40f7-9277-109f5b3a2a33',
+]
 
 export default function ReportsDashboard() {
   const router = useRouter()
@@ -47,22 +49,19 @@ export default function ReportsDashboard() {
         return
       }
       setUser(user)
-      if (user.id !== ADMIN_ID) {
+      if (!ADMIN_IDS.includes(user.id)) {
         setLoading(false)
         return
       }
-
       const { data: reportData } = await supabase
         .from('reports')
         .select('*')
         .order('created_at', { ascending: false })
-
       const { data: logData } = await supabase
         .from('audit_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(50)
-
       const list = reportData || []
       setReports(list)
       setLogs(logData || [])
@@ -121,7 +120,7 @@ export default function ReportsDashboard() {
     )
   }
 
-  if (user?.id !== ADMIN_ID) {
+  if (!user || !ADMIN_IDS.includes(user.id)) {
     return (
       <div className="min-h-screen bg-[#05070c] text-white flex flex-col items-center justify-center px-6 text-center">
         <div className="text-6xl mb-4">⛔</div>
@@ -154,7 +153,6 @@ export default function ReportsDashboard() {
           }}
         />
       </div>
-
       <div className="relative z-10 p-6 max-w-6xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div>
@@ -173,7 +171,6 @@ export default function ReportsDashboard() {
             ← Back to Home
           </button>
         </div>
-
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setTab('reports')}
@@ -196,11 +193,9 @@ export default function ReportsDashboard() {
             Safety logs ({logs.length})
           </button>
         </div>
-
         {actionMessage && (
           <p className="mb-4 text-sm text-cyan-400">{actionMessage}</p>
         )}
-
         {tab === 'reports' && (
           <>
             {reports.length === 0 ? (
@@ -221,7 +216,6 @@ export default function ReportsDashboard() {
                         </span>
                       )}
                     </div>
-
                     <p className="text-sm text-zinc-400 mb-2 break-all">
                       <span className="text-zinc-200">Reporter:</span>{' '}
                       {displayUser(report.reporter_id)}
@@ -239,7 +233,6 @@ export default function ReportsDashboard() {
                         ? new Date(report.created_at).toLocaleString()
                         : '—'}
                     </p>
-
                     {!report.reviewed && (
                       <button
                         onClick={() => markReviewed(report.id)}
@@ -280,7 +273,6 @@ export default function ReportsDashboard() {
             )}
           </>
         )}
-
         {tab === 'logs' && (
           <>
             {logs.length === 0 ? (
