@@ -1,8 +1,9 @@
 'use client'
-//force vercel rebuild — independent Seal/Quiet + Ghost in header
+//force vercel rebuild — E2EE text + independent Seal/Quiet + Ghost
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { encryptText, decryptText, looksEncrypted } from '@/lib/e2ee'
 
 const REPORT_TYPES = [
   'Spam',
@@ -40,6 +41,17 @@ function asIdList(v: any): string[] {
   return []
 }
 
+async function decryptMessageRow(convId: string, row: any) {
+  if (!row || row.type !== 'text' || !row.content) return row
+  if (!looksEncrypted(row.content) && !row.is_encrypted) return row
+  try {
+    const plain = await decryptText(convId, row.content)
+    return { ...row, content: plain, _decrypted: true }
+  } catch {
+    return { ...row, content: '[Unable to decrypt]' }
+  }
+}
+
 export default function ChatPage() {
   const params = useParams()
   const targetUsername = params.username as string
@@ -73,7 +85,6 @@ export default function ChatPage() {
   const [ghostReply, setGhostReply] = useState(false)
   const [sealed, setSealed] = useState(false)
 
-  // Per-user lists (other user's choices never shown)
   const [sealUserIds, setSealUserIds] = useState<string[]>([])
   const [quietUserIds, setQuietUserIds] = useState<string[]>([])
   const [savingSeal, setSavingSeal] = useState(false)
@@ -87,8 +98,10 @@ export default function ChatPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
+  const profileChannelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const convIdRef = useRef('')
 
   const mySealOn = !!(user?.id && sealUserIds.includes(user.id))
   const myQuietOn = !!(user?.id && quietUserIds.includes(user.id))
@@ -109,11 +122,9 @@ export default function ChatPage() {
     setVideoCount(list.filter((m) => m.type === 'video').length)
   }
 
-  /** Can I start a new chat? Only blocked if the OTHER user sealed. */
   const canStartNewChat = () => {
     if (!user?.id || !targetUser?.id) return true
-    const otherSealed = sealUserIds.includes(targetUser.id)
-    return !otherSealed
+    return !sealUserIds.includes(targetUser.id)
   }
 
   useEffect(() => {
@@ -135,14 +146,26 @@ export default function ChatPage() {
 
       const { data: myProfile } = await supabase
         .from('profiles')
-        .select('username, username_claimed_at, is_permanent_username, status')
+        .select(
+          'username, username_claimed_at, is_permanent_username, status, suspended_until'
+        )
         .eq('id', user.id)
         .maybeSingle()
 
-      if (myProfile?.status === 'suspended' || myProfile?.status === 'banned') {
+      if (myProfile?.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
         return
+      }
+      if (myProfile?.status === 'suspended') {
+        const until = myProfile.suspended_until
+          ? new Date(myProfile.suspended_until).getTime()
+          : null
+        if (!(until && until <= Date.now())) {
+          await supabase.auth.signOut()
+          router.push('/auth')
+          return
+        }
       }
 
       if (!isUsernameActive(myProfile || {})) {
@@ -179,12 +202,11 @@ export default function ChatPage() {
       const myUsername = myProfile!.username
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
+      convIdRef.current = convId
 
       const { data: settings } = await supabase
         .from('conversation_settings')
-        .select(
-          'duration_minutes, seal_user_ids, quiet_user_ids, sealed_by'
-        )
+        .select('duration_minutes, seal_user_ids, quiet_user_ids, sealed_by')
         .eq('conversation_id', convId)
         .maybeSingle()
 
@@ -192,7 +214,6 @@ export default function ChatPage() {
       setDurationMinutes(mins)
 
       let seals = asIdList(settings?.seal_user_ids)
-      // legacy single sealed_by
       if (seals.length === 0 && settings?.sealed_by) {
         seals = [settings.sealed_by]
       }
@@ -244,9 +265,12 @@ export default function ChatPage() {
         .order('created_at', { ascending: true })
 
       if (existingMessages && isMounted) {
-        setMessages(existingMessages)
-        recountMedia(existingMessages)
-        if (existingMessages.length > 0) {
+        const decrypted = await Promise.all(
+          existingMessages.map((m) => decryptMessageRow(convId, m))
+        )
+        setMessages(decrypted)
+        recountMedia(decrypted)
+        if (decrypted.length > 0) {
           hadMessagesRef.current = true
           setDurationLocked(true)
         }
@@ -258,8 +282,9 @@ export default function ChatPage() {
       setSafetyNext('enter')
       setModal('safety')
 
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
+      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (profileChannelRef.current) {
+        supabase.removeChannel(profileChannelRef.current)
       }
 
       const channel = supabase.channel(`chat-${convId}`)
@@ -271,15 +296,16 @@ export default function ChatPage() {
           table: 'messages',
           filter: `conversation_id=eq.${convId}`,
         },
-        (payload) => {
+        async (payload) => {
           if (payload.new.deleted) return
           hadMessagesRef.current = true
           setDurationLocked(true)
           setSealed(false)
           setChatExpired(false)
+          const row = await decryptMessageRow(convId, payload.new)
           setMessages((prev) => {
-            if (prev.some((m) => m.id === payload.new.id)) return prev
-            const next = [...prev, payload.new]
+            if (prev.some((m) => m.id === row.id)) return prev
+            const next = [...prev, row]
             recountMedia(next)
             return next
           })
@@ -293,7 +319,7 @@ export default function ChatPage() {
           table: 'messages',
           filter: `conversation_id=eq.${convId}`,
         },
-        (payload) => {
+        async (payload) => {
           const row = payload.new as any
           if (row.deleted) {
             setMessages((prev) => {
@@ -304,18 +330,52 @@ export default function ChatPage() {
             })
             return
           }
+          const dec = await decryptMessageRow(convId, row)
           setMessages((prev) =>
-            prev.map((m) => (m.id === row.id ? { ...m, ...row } : m))
+            prev.map((m) => (m.id === dec.id ? { ...m, ...dec } : m))
           )
         }
       )
       channel.subscribe()
       channelRef.current = channel
+
+      profileChannelRef.current = supabase
+        .channel(`chat-profile-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'profiles',
+            filter: `id=eq.${user.id}`,
+          },
+          async (payload) => {
+            const row = payload.new as any
+            if (row?.status === 'banned') {
+              await supabase.auth.signOut()
+              router.push('/auth')
+              return
+            }
+            if (row?.status === 'suspended') {
+              const until = row.suspended_until
+                ? new Date(row.suspended_until).getTime()
+                : null
+              if (!(until && until <= Date.now())) {
+                await supabase.auth.signOut()
+                router.push('/auth')
+              }
+            }
+          }
+        )
+        .subscribe()
     }
     init()
     return () => {
       isMounted = false
       if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (profileChannelRef.current) {
+        supabase.removeChannel(profileChannelRef.current)
+      }
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
     }
   }, [targetUsername])
@@ -541,11 +601,20 @@ export default function ChatPage() {
       return
     }
 
+    let payload = content
+    try {
+      payload = await encryptText(conversationId, content)
+    } catch {
+      alert('Could not encrypt message')
+      return
+    }
+
     const { error } = await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
-      content,
+      content: payload,
       type: 'text',
+      is_encrypted: true,
       expires_at: expiresAt,
     })
     if (error) {
@@ -643,6 +712,7 @@ export default function ChatPage() {
       sender_id: user.id,
       content: data.publicUrl,
       type,
+      is_encrypted: false,
       expires_at: expiresAt,
     })
     hadMessagesRef.current = true
@@ -692,23 +762,23 @@ export default function ChatPage() {
       alert(error.message)
       return
     }
-    setMessages((prev) => {
-      const next = prev.filter((m) => m.id !== activeMsg.id)
-      recountMedia(next)
-      if (hadMessagesRef.current && next.length === 0) setSealed(true)
-      return next
-    })
-    setActiveMsg(null)
     setMsgMenu(null)
+    setActiveMsg(null)
   }
 
   const saveEditMessage = async () => {
-    if (!activeMsg || !editText.trim()) return
+    if (!activeMsg || !editText.trim() || !conversationId) return
+    let payload = editText.trim()
+    try {
+      payload = await encryptText(conversationId, editText.trim())
+    } catch {
+      alert('Could not encrypt')
+      return
+    }
     const { error } = await supabase
       .from('messages')
-      .update({ content: editText.trim() })
+      .update({ content: payload, is_encrypted: true })
       .eq('id', activeMsg.id)
-      .eq('sender_id', user.id)
     if (error) {
       alert(error.message)
       return
@@ -718,29 +788,22 @@ export default function ChatPage() {
         m.id === activeMsg.id ? { ...m, content: editText.trim() } : m
       )
     )
-    setActiveMsg(null)
     setMsgMenu(null)
-    setEditText('')
+    setActiveMsg(null)
   }
 
   const confirmClearChat = async () => {
-    if (!user || !conversationId) return
-    const { error } = await supabase
+    if (!conversationId || !user) return
+    await supabase
       .from('messages')
       .update({ deleted: true })
       .eq('conversation_id', conversationId)
-      .eq('deleted', false)
-    if (error) {
-      alert(error.message)
-      return
-    }
     await supabase.from('audit_logs').insert({
       conversation_id: conversationId,
       payload: {
         action: 'clear_chat',
-        cleared_by: user.id,
-        cleared_at: new Date().toISOString(),
-        target_username: targetUsername,
+        by: user.id,
+        at: new Date().toISOString(),
       },
     })
     setMessages([])
@@ -752,12 +815,21 @@ export default function ChatPage() {
 
   const confirmBlockUser = async () => {
     if (!user || !targetUser) return
-    const { error } = await supabase.from('blocks').insert({
-      blocker_id: user.id,
-      blocked_id: targetUser.id,
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) return
+    const res = await fetch('/api/block', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ blocked_id: targetUser.id }),
     })
-    if (error) {
-      alert(error.message)
+    const data = await res.json()
+    if (!res.ok) {
+      alert(data.error || 'Block failed')
       return
     }
     setModal(null)
@@ -765,63 +837,43 @@ export default function ChatPage() {
   }
 
   const confirmReportUser = async () => {
-    if (!user || !targetUser) {
-      alert('Cannot report right now')
+    if (!user || !targetUser || !reportType || !reportReason.trim()) {
+      alert('Choose a type and explain')
       return
     }
-    if (!reportType) {
-      alert('Please choose a report type')
-      return
-    }
-    if (!reportReason.trim()) {
-      alert('Please write a short explanation')
-      return
-    }
-
-    const parts = [
-      `type:${reportType}`,
-      `details:${reportReason.trim()}`,
-      `chat:${conversationId || 'unknown'}`,
-    ]
-    if (reportMessageId) {
-      parts.push(`message_id:${reportMessageId}`)
-      parts.push(`message_preview:${reportMessagePreview}`)
-    }
-
-    const { error } = await supabase.from('reports').insert({
-      reporter_id: user.id,
-      reported_id: targetUser.id,
-      reason: parts.join(' | '),
-      reviewed: false,
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) return
+    const res = await fetch('/api/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        reported_id: targetUser.id,
+        conversation_id: conversationId,
+        reason: `${reportType}: ${reportReason.trim()}`,
+        message_id: reportMessageId,
+      }),
     })
-
-    if (error) {
-      alert('Report failed: ' + error.message)
+    const data = await res.json()
+    if (!res.ok) {
+      alert(data.error || 'Report failed')
       return
     }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('report_count')
-      .eq('id', targetUser.id)
-      .maybeSingle()
-    const newCount = (profile?.report_count || 0) + 1
-    const updateData: any = { report_count: newCount }
-    if (newCount >= 5) updateData.status = 'suspended'
-    await supabase.from('profiles').update(updateData).eq('id', targetUser.id)
-
-    alert('Report submitted. Thank you.')
-    setReportReason('')
-    setReportType('')
-    setReportMessageId(null)
-    setReportMessagePreview('')
     setModal(null)
+    setReportMessageId(null)
+    setReportType('')
+    setReportReason('')
+    alert('Report submitted')
   }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading chat...</p>
+        <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
@@ -829,12 +881,10 @@ export default function ChatPage() {
   if (blocked) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
-        <div className="text-6xl mb-4">🚫</div>
-        <h1 className="text-2xl font-bold mb-2">Chat Unavailable</h1>
-        <p className="text-zinc-400 mb-6">You cannot chat with this user.</p>
+        <p className="text-zinc-400 mb-4">Chat unavailable</p>
         <button
           onClick={() => router.push('/search')}
-          className="bg-zinc-700 hover:bg-zinc-600 px-6 py-3 rounded-xl transition"
+          className="bg-cyan-500 text-black px-6 py-3 rounded-xl font-medium"
         >
           Back to Search
         </button>
@@ -842,80 +892,40 @@ export default function ChatPage() {
     )
   }
 
-  if (chatExpired || sealed) {
-    const showStart = canStartNewChat()
-
+  if (chatExpired || (sealed && messages.length === 0 && hadMessagesRef.current)) {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center relative">
-        <div className="text-5xl mb-4 text-cyan-400/80">◎</div>
-        <h1 className="text-2xl font-bold mb-2">This chat has vanished</h1>
-        <p className="text-zinc-400 mb-8 text-sm max-w-xs">
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
+        <p className="text-xl font-semibold mb-2">This chat has vanished</p>
+        <p className="text-zinc-500 text-sm mb-6">
           {chatExpired
-            ? `This conversation ended ${durationLabel()} after the first message.`
-            : 'The conversation was cleared.'}
+            ? `Time ended (${durationLabel()} from first message).`
+            : 'Chat was cleared.'}
         </p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
-          {showStart ? (
+          {canStartNewChat() && (
             <button
               onClick={requestNewChat}
               disabled={startingNew}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl transition"
+              className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl disabled:opacity-50"
             >
-              {startingNew ? 'Starting...' : 'Start new chat'}
+              {startingNew ? '…' : 'Start new chat'}
             </button>
-          ) : (
-            <p className="text-sm text-zinc-500 py-2">
-              This chat cannot be reopened from your side.
-            </p>
           )}
           <button
             onClick={() => router.push('/search')}
-            className="w-full bg-zinc-700 hover:bg-zinc-600 py-3 rounded-xl transition"
+            className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl"
           >
             Back to Search
           </button>
         </div>
-
-        {modal === 'safety' && showStart && (
-          <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm text-left">
-              <h3 className="text-lg font-semibold mb-2">Stay safe on Go Vanish</h3>
-              <ul className="text-sm text-zinc-400 space-y-2 mb-4 list-disc pl-4">
-                <li>Never share passwords, codes, or payment details.</li>
-                <li>You can Clear chat, Block, or leave anytime.</li>
-                <li>Hold a message to report it. Use Report for the person.</li>
-                <li>Chats vanish — still treat people with respect.</li>
-              </ul>
-              <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
-                NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
-                SECRETS YOU CANNOT AFFORD TO EXPOSE.
-              </p>
-              <button
-                onClick={acceptSafety}
-                className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
-              >
-                I understand — Start
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     )
   }
 
   return (
-    <div className="h-[100dvh] text-white flex flex-col overflow-hidden relative">
-      <div className="pointer-events-none absolute inset-0 bg-[#05070a]">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(34,211,238,0.12),_transparent_55%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_rgba(37,99,235,0.10),_transparent_50%)]" />
-        <div
-          className="absolute inset-0 opacity-[0.07]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle, rgba(34,211,238,0.9) 1px, transparent 1px)',
-            backgroundSize: '18px 18px',
-          }}
-        />
+    <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh] relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-cyan-500/10 blur-[100px] rounded-full" />
       </div>
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-3 border-b border-white/10 shrink-0">
@@ -926,7 +936,7 @@ export default function ChatPage() {
               {targetUsername}
             </h1>
             <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
-              No last seen · No read receipts
+              No last seen · No read receipts · Text encrypted
             </p>
           </div>
           <div className="flex gap-1.5 shrink-0 pt-1">
@@ -969,7 +979,6 @@ export default function ChatPage() {
           </p>
         )}
 
-        {/* Seal / Quiet / Ghost — each user independent; no disabled from other */}
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <button
             type="button"
@@ -1054,7 +1063,7 @@ export default function ChatPage() {
             <div className="text-3xl mb-2 opacity-40">💬</div>
             <p className="text-zinc-400 text-sm">No messages yet</p>
             <p className="text-zinc-600 text-xs mt-1">
-              Timer starts at first message · {durationLabel()}
+              Timer starts at first message · {durationLabel()} · Encrypted text
             </p>
           </div>
         ) : (
@@ -1308,7 +1317,7 @@ export default function ChatPage() {
                   <li>Never share passwords, codes, or payment details.</li>
                   <li>You can Clear chat, Block, or leave anytime.</li>
                   <li>Hold a message to report it. Use Report for the person.</li>
-                  <li>Chats vanish — still treat people with respect.</li>
+                  <li>Text is encrypted on device before storage. Still treat people with respect.</li>
                 </ul>
                 <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
                   NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
