@@ -1,5 +1,5 @@
 'use client'
-//force vercel rebuild — media UI + duration for all users
+//force vercel rebuild — duration both users + media UI
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -99,14 +99,12 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
   const profileChannelRef = useRef<any>(null)
+  const settingsChannelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const mySealOn = !!(user?.id && sealUserIds.includes(user.id))
   const myQuietOn = !!(user?.id && quietUserIds.includes(user.id))
-
-  // Show length picker to ANY user until first message exists
-  const showDurationPicker = !durationLocked && messages.length === 0 && !chatExpired
 
   const getConversationEnd = (firstCreatedAt: string, minutes: number) => {
     return new Date(
@@ -264,7 +262,6 @@ export default function ChatPage() {
           recountMedia(decrypted)
         }
       } else {
-        // Empty chat → ANY user can pick length
         setDurationLocked(false)
         setChatEndsAt(null)
         setMessages([])
@@ -279,9 +276,8 @@ export default function ChatPage() {
       setModal('safety')
 
       if (channelRef.current) supabase.removeChannel(channelRef.current)
-      if (profileChannelRef.current) {
-        supabase.removeChannel(profileChannelRef.current)
-      }
+      if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
+      if (settingsChannelRef.current) supabase.removeChannel(settingsChannelRef.current)
 
       const channel = supabase.channel(`chat-${convId}`)
       channel.on(
@@ -338,6 +334,28 @@ export default function ChatPage() {
       channel.subscribe()
       channelRef.current = channel
 
+      settingsChannelRef.current = supabase
+        .channel(`settings-${convId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'conversation_settings',
+            filter: `conversation_id=eq.${convId}`,
+          },
+          (payload) => {
+            const row = payload.new as any
+            if (!row) return
+            if (typeof row.duration_minutes === 'number') {
+              setDurationMinutes(row.duration_minutes)
+            }
+            if (row.seal_user_ids) setSealUserIds(asIdList(row.seal_user_ids))
+            if (row.quiet_user_ids) setQuietUserIds(asIdList(row.quiet_user_ids))
+          }
+        )
+        .subscribe()
+
       profileChannelRef.current = supabase
         .channel(`chat-profile-${user.id}`)
         .on(
@@ -372,9 +390,8 @@ export default function ChatPage() {
     return () => {
       isMounted = false
       if (channelRef.current) supabase.removeChannel(channelRef.current)
-      if (profileChannelRef.current) {
-        supabase.removeChannel(profileChannelRef.current)
-      }
+      if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
+      if (settingsChannelRef.current) supabase.removeChannel(settingsChannelRef.current)
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
     }
   }, [targetUsername])
@@ -627,25 +644,6 @@ export default function ChatPage() {
       setGhostReply(false)
       alert('Ghost reply on. You are now offline in Search.')
     }
-
-    if (useShortExpiry) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('anti_interrogation_count')
-        .eq('id', user.id)
-        .maybeSingle()
-      const newCount = (profile?.anti_interrogation_count || 0) + 1
-      const updateData: any = { anti_interrogation_count: newCount }
-      if (newCount > 10) updateData.status = 'suspended'
-      await supabase.from('profiles').update(updateData).eq('id', user.id)
-      if (newCount > 10) {
-        await supabase.auth.signOut()
-        alert(
-          'Your account has been suspended due to repeated anti-interrogation triggers.'
-        )
-        router.push('/auth')
-      }
-    }
   }
 
   const uploadFile = async (e: any) => {
@@ -665,7 +663,7 @@ export default function ChatPage() {
       }
     } else {
       if (fileCount >= 4) {
-        alert('Maximum 4 files / photos allowed in this chat')
+        alert('Maximum 4 files / photos allowed')
         return
       }
       if (file.size > 15 * 1024 * 1024) {
@@ -714,8 +712,7 @@ export default function ChatPage() {
     setChatExpired(false)
     e.target.value = ''
   }
-
-  const openMsgMenu = (msg: any) => {
+    const openMsgMenu = (msg: any) => {
     if (!user || msg.sender_id !== user.id) return
     if (msg.type !== 'text') return
     setActiveMsg(msg)
@@ -943,11 +940,12 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {showDurationPicker && (
-          <div className="mb-2 p-2 rounded-xl bg-zinc-900/80 border border-cyan-500/30">
-            <p className="text-[11px] text-cyan-300/90 mb-1.5 font-medium">
-              Chat length — pick before the first message (both of you can set this)
-            </p>
+        {/* Both users always see chat length */}
+        <div className="mb-2 p-2 rounded-xl bg-zinc-900/90 border border-zinc-700">
+          <p className="text-[11px] text-zinc-400 mb-1">
+            Chat length (from first message) · both of you can see this
+          </p>
+          {messages.length === 0 && !durationLocked ? (
             <div className="flex gap-2">
               {DURATION_OPTIONS.map((opt) => (
                 <button
@@ -965,13 +963,10 @@ export default function ChatPage() {
                 </button>
               ))}
             </div>
-          </div>
-        )}
-        {!showDurationPicker && durationLocked && (
-          <p className="text-[11px] text-zinc-500 mb-2">
-            Chat length: {durationLabel()}
-          </p>
-        )}
+          ) : (
+            <p className="text-sm font-medium text-cyan-300">{durationLabel()}</p>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <button
@@ -1089,63 +1084,63 @@ export default function ChatPage() {
                   onMouseDown={() => startLongPress(msg)}
                   onMouseUp={cancelLongPress}
                   onMouseLeave={cancelLongPress}
-                  className={`max-w-[82%] px-3 py-2 text-left transition relative select-none ${
+                  className={`max-w-[82%] text-left transition relative select-none ${
                     msg.type === 'text'
                       ? mine
-                        ? 'bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black rounded-2xl rounded-br-sm'
-                        : 'bg-zinc-900/80 text-zinc-100 rounded-2xl rounded-bl-sm'
-                      : 'bg-transparent p-0'
+                        ? 'px-3 py-2 bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black rounded-2xl rounded-br-sm'
+                        : 'px-3 py-2 bg-zinc-900/80 text-zinc-100 rounded-2xl rounded-bl-sm'
+                      : 'p-0 bg-transparent'
                   }`}
                 >
                   {msg.type === 'image' && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1 max-w-[240px]">
                       <img
                         src={msg.content}
-                        alt="photo"
-                        className="rounded-xl max-h-52 object-cover"
+                        alt=""
+                        className="rounded-lg max-h-52 w-auto object-cover block"
                       />
                       <a
                         href={msg.content}
                         download
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300 bg-zinc-900/90 px-3 py-1.5 rounded-lg"
+                        className="inline-block text-xs font-semibold text-cyan-300 underline"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        ↓ Download photo
+                        Download photo
                       </a>
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="space-y-1 max-w-[260px]" onClick={(e) => e.stopPropagation()}>
                       <video
                         src={msg.content}
                         controls
-                        className="rounded-xl max-h-52 w-full"
+                        className="rounded-lg max-h-52 w-full"
                       />
                       <a
                         href={msg.content}
                         download
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300 bg-zinc-900/90 px-3 py-1.5 rounded-lg"
+                        className="inline-block text-xs font-semibold text-cyan-300 underline"
                       >
-                        ↓ Download video
+                        Download video
                       </a>
                     </div>
                   )}
                   {msg.type === 'file' && (
-                    <div className="space-y-1.5 bg-zinc-900/90 rounded-xl px-3 py-2.5">
-                      <p className="text-sm text-zinc-200">📎 File attachment</p>
+                    <div className="space-y-1 px-1">
+                      <p className="text-sm text-zinc-200">📎 File</p>
                       <a
                         href={msg.content}
                         download
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-black bg-cyan-400 px-3 py-1.5 rounded-lg"
+                        className="inline-block text-xs font-semibold text-cyan-300 underline"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        ↓ Download file
+                        Download file
                       </a>
                     </div>
                   )}
@@ -1164,9 +1159,9 @@ export default function ChatPage() {
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-2 border-t border-white/10 shrink-0">
         <div className="flex gap-2 items-end">
-          <label className="cursor-pointer shrink-0 flex flex-col items-center justify-center bg-zinc-800 hover:bg-zinc-700 px-2.5 py-2 rounded-xl border border-zinc-600 min-w-[52px]">
-            <span className="text-lg leading-none">📎</span>
-            <span className="text-[9px] text-zinc-400 mt-0.5">File</span>
+          <label className="cursor-pointer shrink-0 h-[42px] px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 flex items-center gap-1.5">
+            <span className="text-cyan-400 text-lg font-bold leading-none">＋</span>
+            <span className="text-[10px] text-zinc-300 hidden sm:inline">File</span>
             <input
               type="file"
               accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip,.ppt,.pptx,.xls,.xlsx"
@@ -1189,7 +1184,7 @@ export default function ChatPage() {
           </button>
         </div>
         <p className="text-[10px] text-zinc-500 mt-1 px-1">
-          Attach photo, video, PDF, Word, ZIP, PowerPoint (limits: 4 files, 1 video)
+          Photo, video, PDF, Word, ZIP, PowerPoint · 4 files · 1 video
         </p>
       </div>
 
@@ -1201,8 +1196,8 @@ export default function ChatPage() {
             </h3>
             <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
               {sealConfirm === 'on'
-                ? 'When the chat ends, the other person will not be able to start a new chat with you here. They are not told that you turned Seal on.'
-                : 'You remove your Seal. Their Seal setting is separate.'}
+                ? 'When the chat ends, the other person cannot start a new chat with you here. They are not told you turned Seal on.'
+                : 'You remove your Seal. Their Seal is separate.'}
             </p>
             <div className="flex gap-2">
               <button
@@ -1233,7 +1228,7 @@ export default function ChatPage() {
             <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
               {quietConfirm === 'on'
                 ? 'Quiet applies only to you. The other person is not notified.'
-                : 'Your anti-interrogation returns to the normal level.'}
+                : 'Your anti-interrogation returns to normal.'}
             </p>
             <div className="flex gap-2">
               <button
