@@ -889,30 +889,48 @@ export default function ChatPage() {
   return (
     <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh]">
       <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-start gap-2 mb-1">
           <button
             type="button"
             onClick={() => router.push('/search')}
-            className="shrink-0 h-11 px-4 rounded-xl bg-zinc-800 border-2 border-cyan-400 text-cyan-300 font-bold text-base"
+            className="shrink-0 h-11 px-4 rounded-xl bg-zinc-800 border-2 border-cyan-400 text-cyan-300 font-bold text-base mt-0.5"
           >
             ← Back
           </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] text-zinc-500 leading-none">With</p>
+            <p className="text-[11px] text-zinc-500 leading-none mb-0.5">
+              Chatting with
+            </p>
             <p className="text-lg font-bold text-cyan-400 truncate leading-tight">
               {targetUsername}
             </p>
+            <p className="text-[11px] text-zinc-500 mt-0.5 leading-snug">
+              No last seen · No read receipts · Text encrypted
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setHeaderOpen((v) => !v)}
-            className="shrink-0 h-10 px-3 rounded-xl bg-zinc-800 border border-zinc-600 text-sm font-semibold text-zinc-200"
-          >
-            {headerOpen ? '▲ Less' : '▼ More'}
-          </button>
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            <div className="flex gap-1">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400">
+                {fileCount}/4 files
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400">
+                {videoCount}/1 video
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setHeaderOpen((v) => !v)}
+              className="h-9 px-3 rounded-xl bg-zinc-800 border border-zinc-600 text-sm font-semibold text-zinc-200"
+            >
+              {headerOpen ? '▲ Less' : '▼ More'}
+            </button>
+          </div>
         </div>
 
-        {/* LARGER: 30m 1h 3h + Clear Report Block — same line */}
+        <p className="text-[11px] text-zinc-500 mb-1.5 px-0.5">
+          Chat length (from first message)
+        </p>
+
         <div className="flex items-center gap-1.5 flex-wrap">
           {DURATION_OPTIONS.map((opt) => (
             <button
