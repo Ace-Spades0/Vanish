@@ -14,6 +14,13 @@ function fromBase64(b64: string): Uint8Array {
   return u8
 }
 
+/** Copy into a plain ArrayBuffer so TS accepts BufferSource */
+function asBufferSource(u8: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(u8.byteLength)
+  copy.set(u8)
+  return copy.buffer
+}
+
 async function deriveKey(conversationId: string): Promise<CryptoKey> {
   const enc = new TextEncoder()
   const material = await crypto.subtle.importKey(
@@ -45,11 +52,11 @@ export async function encryptText(
   const key = await deriveKey(conversationId)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const cipher = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv: asBufferSource(iv) },
     key,
     new TextEncoder().encode(plain)
   )
-  return `v1.${toBase64(iv.buffer)}.${toBase64(cipher)}`
+  return `v1.${toBase64(asBufferSource(iv))}.${toBase64(cipher)}`
 }
 
 export async function decryptText(
@@ -64,9 +71,9 @@ export async function decryptText(
     const iv = fromBase64(parts[1])
     const data = fromBase64(parts[2])
     const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: asBufferSource(iv) },
       key,
-      data
+      asBufferSource(data)
     )
     return new TextDecoder().decode(plain)
   } catch {
