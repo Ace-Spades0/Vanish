@@ -888,7 +888,7 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh]">
-      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
+            <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
         <div className="flex items-start gap-2 mb-1">
           <button
             type="button"
@@ -898,22 +898,22 @@ export default function ChatPage() {
             ← Back
           </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] text-zinc-500 leading-none mb-0.5">
+            <p className="text-sm text-zinc-400 leading-none mb-1">
               Chatting with
             </p>
-            <p className="text-lg font-bold text-cyan-400 truncate leading-tight">
-              {targetUsername}
+            <p className="text-xl font-bold text-cyan-400 truncate leading-tight">
+              {targetUser?.avatar_icon || '🎭'} {targetUsername}
             </p>
-            <p className="text-[11px] text-zinc-500 mt-0.5 leading-snug">
+            <p className="text-sm text-zinc-400 mt-1 leading-snug">
               No last seen · No read receipts · Text encrypted
             </p>
           </div>
           <div className="shrink-0 flex flex-col items-end gap-1">
             <div className="flex gap-1">
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
                 {fileCount}/4 files
               </span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
                 {videoCount}/1 video
               </span>
             </div>
@@ -927,7 +927,7 @@ export default function ChatPage() {
           </div>
         </div>
 
-        <p className="text-[11px] text-zinc-500 mb-1.5 px-0.5">
+        <p className="text-sm text-zinc-400 mb-1.5 px-0.5">
           Chat length (from first message)
         </p>
 
