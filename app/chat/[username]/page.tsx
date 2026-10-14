@@ -580,9 +580,7 @@ export default function ChatPage() {
       return
     const content = newMessage.trim()
     setNewMessage('')
-    if (textAreaRef.current) {
-      textAreaRef.current.style.height = 'auto'
-    }
+    if (textAreaRef.current) textAreaRef.current.style.height = 'auto'
 
     const myQuestions = messages.filter(
       (m) => m.sender_id === user.id && m.content?.trim().endsWith('?')
@@ -890,52 +888,51 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh]">
-      {/* COMPACT HEADER */}
-      <div className="bg-black/85 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-1.5">
-        <div className="flex items-center gap-1.5 mb-1">
+      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
+        <div className="flex items-center gap-2 mb-2">
           <button
             type="button"
             onClick={() => router.push('/search')}
-            className="shrink-0 h-9 px-3 rounded-lg bg-zinc-800 border border-cyan-400/70 text-cyan-300 font-bold text-sm"
+            className="shrink-0 h-11 px-4 rounded-xl bg-zinc-800 border-2 border-cyan-400 text-cyan-300 font-bold text-base"
           >
             ← Back
           </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[9px] text-zinc-500 leading-none">With</p>
-            <p className="text-sm font-bold text-cyan-400 truncate leading-tight">
+            <p className="text-[11px] text-zinc-500 leading-none">With</p>
+            <p className="text-lg font-bold text-cyan-400 truncate leading-tight">
               {targetUsername}
             </p>
           </div>
           <button
             type="button"
             onClick={() => setHeaderOpen((v) => !v)}
-            className="shrink-0 h-8 px-2.5 rounded-lg bg-zinc-800 border border-zinc-600 text-[11px] font-semibold text-zinc-300"
+            className="shrink-0 h-10 px-3 rounded-xl bg-zinc-800 border border-zinc-600 text-sm font-semibold text-zinc-200"
           >
             {headerOpen ? '▲ Less' : '▼ More'}
           </button>
         </div>
 
-        {/* SAME LINE: small timers + Clear Report Block */}
-        <div className="flex items-center gap-1 flex-nowrap overflow-x-auto">
+        {/* LARGER: 30m 1h 3h + Clear Report Block — same line */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           {DURATION_OPTIONS.map((opt) => (
             <button
               key={opt.minutes}
               type="button"
               disabled={savingDuration}
               onClick={() => pickMyDuration(opt.minutes)}
-              className={`h-6 px-1.5 rounded text-[10px] font-semibold border shrink-0 ${
+              className={`h-9 min-w-[2.75rem] px-2.5 rounded-lg text-sm font-bold border ${
                 myDuration === opt.minutes
                   ? 'bg-cyan-500 text-black border-cyan-300'
-                  : 'bg-zinc-900 text-zinc-400 border-zinc-700'
+                  : 'bg-zinc-900 text-zinc-300 border-zinc-600'
               }`}
             >
               {opt.label}
             </button>
           ))}
-          <span className="w-px h-3.5 bg-zinc-700 mx-0.5 shrink-0" />
+          <span className="w-px h-5 bg-zinc-600 mx-0.5" />
           <button
             onClick={() => setModal('clear')}
-            className="h-6 px-1.5 rounded text-[10px] font-medium bg-orange-600 shrink-0"
+            className="h-9 px-3 rounded-lg text-sm font-semibold bg-orange-600 text-white"
           >
             Clear
           </button>
@@ -947,25 +944,25 @@ export default function ChatPage() {
               setReportReason('')
               setModal('report')
             }}
-            className="h-6 px-1.5 rounded text-[10px] font-medium bg-yellow-600 shrink-0"
+            className="h-9 px-3 rounded-lg text-sm font-semibold bg-yellow-600 text-white"
           >
             Report
           </button>
           <button
             onClick={() => setModal('block')}
-            className="h-6 px-1.5 rounded text-[10px] font-medium bg-red-600 shrink-0"
+            className="h-9 px-3 rounded-lg text-sm font-semibold bg-red-600 text-white"
           >
             Block
           </button>
         </div>
 
         {headerOpen && (
-          <div className="flex gap-1.5 mt-1.5 pt-1.5 border-t border-white/5">
+          <div className="flex gap-2 mt-2 pt-2 border-t border-white/10">
             <button
               type="button"
               onClick={requestSealToggle}
               disabled={savingSeal}
-              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border ${
+              className={`flex-1 h-10 rounded-xl text-sm font-bold border ${
                 mySealOn
                   ? 'bg-cyan-500 text-black border-cyan-300'
                   : 'bg-zinc-800 text-cyan-300 border-cyan-500/40'
@@ -977,7 +974,7 @@ export default function ChatPage() {
               type="button"
               onClick={requestQuietToggle}
               disabled={savingQuiet}
-              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border ${
+              className={`flex-1 h-10 rounded-xl text-sm font-bold border ${
                 myQuietOn
                   ? 'bg-violet-500 text-white border-violet-300'
                   : 'bg-zinc-800 text-violet-300 border-violet-500/40'
@@ -988,7 +985,7 @@ export default function ChatPage() {
             <button
               type="button"
               onClick={() => setModal('ghost')}
-              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border ${
+              className={`flex-1 h-10 rounded-xl text-sm font-bold border ${
                 ghostReply
                   ? 'bg-emerald-500 text-black border-emerald-300'
                   : 'bg-zinc-800 text-emerald-300 border-emerald-500/40'
@@ -1001,7 +998,7 @@ export default function ChatPage() {
       </div>
 
       {warningText && (
-        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-1.5 text-xs text-yellow-200 text-center">
+        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-sm text-yellow-200 text-center">
           {warningText}
         </div>
       )}
@@ -1010,7 +1007,7 @@ export default function ChatPage() {
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center pt-8">
             <p className="text-zinc-500 text-sm">No messages yet</p>
-            <p className="text-zinc-600 text-[11px] mt-1">
+            <p className="text-zinc-600 text-xs mt-1">
               Your timer {durationLabel(myDuration)} · private
             </p>
           </div>
@@ -1117,13 +1114,12 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* INPUT: grows with paragraphs, overflow hidden (no scroll inside) */}
       <div className="bg-black/90 backdrop-blur-md px-2 py-2 border-t border-white/10 shrink-0">
         <div className="flex items-end gap-1.5">
           <button
             type="button"
             onClick={() => mediaInputRef.current?.click()}
-            className="shrink-0 w-11 h-11 rounded-full bg-zinc-800 border border-cyan-500/40 flex items-center justify-center text-xl"
+            className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 border border-cyan-500/40 flex items-center justify-center text-2xl"
             title="Photo or video"
           >
             📷
@@ -1138,7 +1134,7 @@ export default function ChatPage() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="shrink-0 w-11 h-11 rounded-full bg-zinc-800 border border-zinc-500 flex items-center justify-center text-xl"
+            className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 border border-zinc-500 flex items-center justify-center text-2xl"
             title="Attach file"
           >
             📎
@@ -1164,7 +1160,7 @@ export default function ChatPage() {
           />
           <button
             onClick={sendMessage}
-            className="shrink-0 h-11 px-4 rounded-full bg-cyan-500 text-black font-semibold text-sm"
+            className="shrink-0 h-12 px-4 rounded-full bg-cyan-500 text-black font-semibold text-sm"
           >
             Send
           </button>
