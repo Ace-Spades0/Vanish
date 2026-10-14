@@ -25,12 +25,6 @@ function isUsernameActive(profile: {
   return hoursPassed < 24
 }
 
-type ActiveChat = {
-  conversationId: string
-  otherUsername: string
-  lastAt: string
-}
-
 export default function SearchPage() {
   const [searchText, setSearchText] = useState('')
   const [result, setResult] = useState<any>(null)
@@ -40,10 +34,6 @@ export default function SearchPage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [lang, setLangState] = useState<Lang>('en')
   const [showSafety, setShowSafety] = useState(false)
-  const [showActive, setShowActive] = useState(false)
-  const [activeChats, setActiveChats] = useState<ActiveChat[]>([])
-  const [loadingActive, setLoadingActive] = useState(false)
-  const [endingId, setEndingId] = useState<string | null>(null)
   const router = useRouter()
   const t = translations[lang]
 
@@ -71,9 +61,6 @@ export default function SearchPage() {
       safety5:
         'Your vanish timer is private. The chat ends at the shorter of both timers.',
       activeChats: 'Active chats',
-      noActiveChat: 'No active chat',
-      end: 'End',
-      close: 'Close',
       caps: 'NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.',
       cancel: 'Cancel',
       understand: 'I understand — Start',
@@ -101,9 +88,6 @@ export default function SearchPage() {
       safety5:
         'Kipima muda chako ni siri. Gumzo linaisha kwa muda mfupi kati ya wawili.',
       activeChats: 'Gumzo zinazoendelea',
-      noActiveChat: 'Hakuna gumzo linaloendelea',
-      end: 'Maliza',
-      close: 'Funga',
       caps: 'HAKUNA HUDUMA MTANDAONI INAYOHAKIKISHA USALAMA KAMILI. USISHIRIKI SIRI USIZOWEZA KUBEBWA KAMA ZIKIFICHULIWA.',
       cancel: 'Ghairi',
       understand: 'Nimeelewa — Anza',
@@ -198,74 +182,6 @@ export default function SearchPage() {
   const changeLang = (next: Lang) => {
     setLang(next)
     setLangState(next)
-  }
-
-  const loadActiveChats = async () => {
-    if (!currentUser) return
-    setLoadingActive(true)
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', currentUser.id)
-      .maybeSingle()
-
-    if (!profile?.username) {
-      setActiveChats([])
-      setLoadingActive(false)
-      return
-    }
-
-    const me = profile.username.toLowerCase()
-    const nowIso = new Date().toISOString()
-
-    const { data: rows } = await supabase
-      .from('messages')
-      .select('conversation_id, created_at, expires_at, deleted')
-      .eq('deleted', false)
-      .gt('expires_at', nowIso)
-      .order('created_at', { ascending: false })
-      .limit(400)
-
-    const map = new Map<string, ActiveChat>()
-
-    for (const r of rows || []) {
-      const cid = r.conversation_id as string
-      if (!cid || map.has(cid)) continue
-      const parts = cid.split('_')
-      if (parts.length < 2) continue
-      const a = parts[0].toLowerCase()
-      const b = parts.slice(1).join('_').toLowerCase()
-      let other = ''
-      if (a === me) other = parts.slice(1).join('_')
-      else if (b === me) other = parts[0]
-      else continue
-      map.set(cid, {
-        conversationId: cid,
-        otherUsername: other,
-        lastAt: r.created_at,
-      })
-    }
-
-    setActiveChats(Array.from(map.values()))
-    setLoadingActive(false)
-  }
-
-  const openActivePanel = async () => {
-    setShowActive(true)
-    await loadActiveChats()
-  }
-
-  const endActiveChat = async (conversationId: string) => {
-    setEndingId(conversationId)
-    await supabase
-      .from('messages')
-      .update({ deleted: true })
-      .eq('conversation_id', conversationId)
-    setActiveChats((prev) =>
-      prev.filter((c) => c.conversationId !== conversationId)
-    )
-    setEndingId(null)
   }
 
   const handleSearch = async () => {
@@ -436,67 +352,11 @@ export default function SearchPage() {
 
         <button
           type="button"
-          onClick={openActivePanel}
+          onClick={() => router.push('/chats')}
           className="w-full mb-4 bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/30 text-cyan-300 font-medium py-3 rounded-xl transition"
         >
           {copy.activeChats}
         </button>
-
-        {showActive && (
-          <div className="mb-5 rounded-2xl border border-zinc-700 bg-zinc-900/90 p-4">
-            <div className="flex justify-between items-center mb-3">
-              <p className="text-sm font-semibold text-cyan-300">
-                {copy.activeChats}
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowActive(false)}
-                className="text-xs text-zinc-400 hover:text-white"
-              >
-                {copy.close}
-              </button>
-            </div>
-            {loadingActive ? (
-              <p className="text-zinc-500 text-sm text-center py-6">
-                {copy.loading}
-              </p>
-            ) : activeChats.length === 0 ? (
-              <p className="text-zinc-500 text-sm text-center py-8">
-                {copy.noActiveChat}
-              </p>
-            ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {activeChats.map((c) => (
-                  <div
-                    key={c.conversationId}
-                    className="flex items-center gap-2 p-3 rounded-xl bg-black/40 border border-zinc-800"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/chat/${c.otherUsername}`)}
-                      className="flex-1 text-left min-w-0"
-                    >
-                      <p className="text-cyan-400 font-medium truncate">
-                        {c.otherUsername}
-                      </p>
-                      <p className="text-[10px] text-zinc-500">
-                        {new Date(c.lastAt).toLocaleString()}
-                      </p>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={endingId === c.conversationId}
-                      onClick={() => endActiveChat(c.conversationId)}
-                      className="text-[11px] font-semibold bg-red-600 hover:bg-red-500 px-2.5 py-1.5 rounded-lg disabled:opacity-50"
-                    >
-                      {endingId === c.conversationId ? '…' : copy.end}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         <input
           type="text"
