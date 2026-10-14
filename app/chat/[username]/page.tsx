@@ -1,5 +1,5 @@
 'use client'
-//force vercel rebuild — duration both users + media UI
+//force vercel rebuild — duration always visible, media buttons
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -419,8 +419,8 @@ export default function ChatPage() {
   }
 
   const pickDuration = async (minutes: number) => {
-    if (!user || !conversationId || durationLocked || savingDuration) return
-    if (messages.length > 0) return
+    if (!user || !conversationId || savingDuration) return
+    if (messages.length > 0 || durationLocked) return
     setSavingDuration(true)
     const error = await saveSettings({
       duration_minutes: minutes,
@@ -646,33 +646,41 @@ export default function ChatPage() {
     }
   }
 
-  const uploadFile = async (e: any) => {
+  const uploadFile = async (
+    e: any,
+    kind: 'image' | 'video' | 'file'
+  ) => {
     const file = e.target.files?.[0]
     if (!file || !user || !conversationId || chatExpired || sealed) return
-    const isVideo = file.type.startsWith('video/')
-    const isImage = file.type.startsWith('image/')
 
-    if (isVideo) {
+    const isVideo = kind === 'video' || file.type.startsWith('video/')
+    const isImage = kind === 'image' || file.type.startsWith('image/')
+
+    if (kind === 'video' || isVideo) {
       if (videoCount >= 1) {
         alert('Only 1 video allowed in this chat')
+        e.target.value = ''
         return
       }
       if (file.size > 30 * 1024 * 1024) {
         alert('Video must be smaller than 30 MB')
+        e.target.value = ''
         return
       }
     } else {
       if (fileCount >= 4) {
         alert('Maximum 4 files / photos allowed')
+        e.target.value = ''
         return
       }
       if (file.size > 15 * 1024 * 1024) {
         alert('File must be smaller than 15 MB')
+        e.target.value = ''
         return
       }
     }
 
-    if (!durationLocked) {
+    if (messages.length === 0) {
       await saveSettings({
         duration_minutes: durationMinutes,
         duration_set_by: user.id,
@@ -684,6 +692,7 @@ export default function ChatPage() {
       setChatExpired(true)
       setSealed(true)
       alert(`This chat has ended (${durationLabel()} from the first message).`)
+      e.target.value = ''
       return
     }
 
@@ -694,6 +703,7 @@ export default function ChatPage() {
       .upload(fileName, file)
     if (error) {
       alert('Failed to upload file')
+      e.target.value = ''
       return
     }
     const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
@@ -913,6 +923,9 @@ export default function ChatPage() {
     )
   }
 
+  const durationCanChange =
+    messages.length === 0 && !durationLocked && !chatExpired
+
   return (
     <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh] relative overflow-hidden">
       <div className="pointer-events-none absolute inset-0">
@@ -940,32 +953,34 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Both users always see chat length */}
+        {/* Always show all 3; highlight chosen; lock after first message */}
         <div className="mb-2 p-2 rounded-xl bg-zinc-900/90 border border-zinc-700">
           <p className="text-[11px] text-zinc-400 mb-1">
             Chat length (from first message) · both of you can see this
+            {!durationCanChange && ' · locked'}
           </p>
-          {messages.length === 0 && !durationLocked ? (
-            <div className="flex gap-2">
-              {DURATION_OPTIONS.map((opt) => (
+          <div className="flex gap-2">
+            {DURATION_OPTIONS.map((opt) => {
+              const selected = durationMinutes === opt.minutes
+              return (
                 <button
                   key={opt.minutes}
                   type="button"
-                  disabled={savingDuration}
+                  disabled={!durationCanChange || savingDuration}
                   onClick={() => pickDuration(opt.minutes)}
                   className={`flex-1 py-2.5 rounded-xl text-xs font-semibold border transition ${
-                    durationMinutes === opt.minutes
+                    selected
                       ? 'bg-cyan-500 text-black border-cyan-300'
-                      : 'bg-zinc-800 text-zinc-300 border-zinc-600'
+                      : durationCanChange
+                        ? 'bg-zinc-800 text-zinc-300 border-zinc-600'
+                        : 'bg-zinc-900 text-zinc-600 border-zinc-800 opacity-60'
                   }`}
                 >
                   {opt.label}
                 </button>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm font-medium text-cyan-300">{durationLabel()}</p>
-          )}
+              )
+            })}
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -1112,7 +1127,10 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div className="space-y-1 max-w-[260px]" onClick={(e) => e.stopPropagation()}>
+                    <div
+                      className="space-y-1 max-w-[260px]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <video
                         src={msg.content}
                         controls
@@ -1159,16 +1177,38 @@ export default function ChatPage() {
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-2 border-t border-white/10 shrink-0">
         <div className="flex gap-2 items-end">
-          <label className="cursor-pointer shrink-0 h-[42px] px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 flex items-center gap-1.5">
-            <span className="text-cyan-400 text-lg font-bold leading-none">＋</span>
-            <span className="text-[10px] text-zinc-300 hidden sm:inline">File</span>
-            <input
-              type="file"
-              accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip,.ppt,.pptx,.xls,.xlsx"
-              onChange={uploadFile}
-              className="hidden"
-            />
-          </label>
+          <div className="flex gap-1 shrink-0">
+            <label className="cursor-pointer h-[42px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 flex flex-col items-center justify-center min-w-[48px]">
+              <span className="text-base leading-none">🖼️</span>
+              <span className="text-[9px] text-zinc-300 mt-0.5">Photo</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => uploadFile(e, 'image')}
+                className="hidden"
+              />
+            </label>
+            <label className="cursor-pointer h-[42px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 flex flex-col items-center justify-center min-w-[48px]">
+              <span className="text-base leading-none">🎬</span>
+              <span className="text-[9px] text-zinc-300 mt-0.5">Video</span>
+              <input
+                type="file"
+                accept="video/*"
+                onChange={(e) => uploadFile(e, 'video')}
+                className="hidden"
+              />
+            </label>
+            <label className="cursor-pointer h-[42px] px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 flex flex-col items-center justify-center min-w-[48px]">
+              <span className="text-base leading-none">📄</span>
+              <span className="text-[9px] text-zinc-300 mt-0.5">File</span>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.txt,.zip,.ppt,.pptx,.xls,.xlsx,application/pdf"
+                onChange={(e) => uploadFile(e, 'file')}
+                className="hidden"
+              />
+            </label>
+          </div>
           <textarea
             placeholder="Type a message..."
             value={newMessage}
@@ -1184,7 +1224,7 @@ export default function ChatPage() {
           </button>
         </div>
         <p className="text-[10px] text-zinc-500 mt-1 px-1">
-          Photo, video, PDF, Word, ZIP, PowerPoint · 4 files · 1 video
+          Photo · Video · File · max 4 files · 1 video
         </p>
       </div>
 
@@ -1209,7 +1249,9 @@ export default function ChatPage() {
               <button
                 onClick={confirmSealToggle}
                 className={`flex-1 py-2.5 rounded-xl font-semibold ${
-                  sealConfirm === 'on' ? 'bg-cyan-500 text-black' : 'bg-zinc-500 text-white'
+                  sealConfirm === 'on'
+                    ? 'bg-cyan-500 text-black'
+                    : 'bg-zinc-500 text-white'
                 }`}
               >
                 {sealConfirm === 'on' ? 'Turn Seal on' : 'Turn Seal off'}
@@ -1240,7 +1282,9 @@ export default function ChatPage() {
               <button
                 onClick={confirmQuietToggle}
                 className={`flex-1 py-2.5 rounded-xl font-semibold ${
-                  quietConfirm === 'on' ? 'bg-violet-500 text-white' : 'bg-zinc-500 text-white'
+                  quietConfirm === 'on'
+                    ? 'bg-violet-500 text-white'
+                    : 'bg-zinc-500 text-white'
                 }`}
               >
                 {quietConfirm === 'on' ? 'Turn Quiet on' : 'Turn Quiet off'}
