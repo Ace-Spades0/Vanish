@@ -22,6 +22,7 @@ export default function LettersPage() {
   const [toInput, setToInput] = useState('')
   const [body, setBody] = useState('')
   const [message, setMessage] = useState('')
+  const [messageOk, setMessageOk] = useState(false)
   const [safetyAlert, setSafetyAlert] = useState(false)
   const [loading, setLoading] = useState(true)
   const [acceptedSafety, setAcceptedSafety] = useState(false)
@@ -123,10 +124,10 @@ export default function LettersPage() {
 
   const sendLetter = async () => {
     setMessage('')
+    setMessageOk(false)
     setSafetyAlert(false)
     if (!user) return
 
-    // Same attention energy as REVOKE — not a soft cyan tip
     if (!acceptedSafety) {
       setSafetyAlert(true)
       setMessage('Please confirm the safety note first')
@@ -166,9 +167,14 @@ export default function LettersPage() {
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     })
 
-    if (error) setMessage(error.message)
-    else {
-      setMessage('Letter sent (they can read it once).')
+    if (error) {
+      setMessage(error.message)
+      setMessageOk(false)
+    } else {
+      setMessage(
+        '✓ One-time letter sent. They can read it once, then it vanishes.'
+      )
+      setMessageOk(true)
       setBody('')
       setToInput('')
       setSafetyAlert(false)
@@ -240,6 +246,7 @@ export default function LettersPage() {
             onClick={() => {
               setTab('send')
               setMessage('')
+              setMessageOk(false)
               setSafetyAlert(false)
             }}
             className={`flex-1 py-2.5 rounded-xl text-sm font-medium ${
@@ -254,7 +261,6 @@ export default function LettersPage() {
 
         {tab === 'send' ? (
           <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
-            {/* Safety box — turns red like Revoke attention when not confirmed */}
             <div
               className={`rounded-xl border p-3 transition ${
                 safetyAlert
@@ -272,7 +278,9 @@ export default function LettersPage() {
               <ul className="text-[11px] text-zinc-400 space-y-1.5 list-disc pl-4 mb-3">
                 <li>Do not share passwords, codes, or payment details.</li>
                 <li>Letters are read once, then gone.</li>
-                <li>If something feels wrong, do not engage — report when you can.</li>
+                <li>
+                  If something feels wrong, do not engage — report when you can.
+                </li>
               </ul>
               <p className="text-[11px] font-semibold text-cyan-300/95 leading-relaxed uppercase tracking-wide mb-3">
                 NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
@@ -287,6 +295,7 @@ export default function LettersPage() {
                     if (e.target.checked) {
                       setSafetyAlert(false)
                       setMessage('')
+                      setMessageOk(false)
                     }
                   }}
                   className="mt-0.5 accent-cyan-500"
@@ -297,7 +306,6 @@ export default function LettersPage() {
               </label>
             </div>
 
-            {/* REVOKE-style attention banner */}
             {safetyAlert && (
               <div className="rounded-xl border-2 border-red-500 bg-red-600 px-4 py-3.5 text-center shadow-[0_0_24px_rgba(220,38,38,0.35)] animate-pulse">
                 <p className="text-sm sm:text-base font-bold text-white tracking-wide">
@@ -316,7 +324,7 @@ export default function LettersPage() {
               className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
             />
             <p className="text-[11px] text-zinc-500">
-              Example: shadow_42 or https://yoursite.com/i/x7k2m9
+              Example: shadow_42 or your vanish link
             </p>
             <textarea
               value={body}
@@ -332,8 +340,17 @@ export default function LettersPage() {
             >
               Send letter
             </button>
+
             {message && !safetyAlert && (
-              <p className="text-center text-sm text-cyan-400">{message}</p>
+              <div
+                className={`rounded-xl px-4 py-3 text-center text-sm font-medium border ${
+                  messageOk
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                    : 'bg-red-500/10 border-red-500/30 text-red-300'
+                }`}
+              >
+                {message}
+              </div>
             )}
           </div>
         ) : (
@@ -358,30 +375,45 @@ export default function LettersPage() {
         )}
       </div>
 
-      {/* Letter bubble popup */}
+      {/* One-time letter bubble — clear MESSAGE vs CAPS */}
       {reading && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm">
-            <div className="relative bg-gradient-to-br from-zinc-900 via-zinc-900 to-black border border-cyan-500/30 rounded-[1.75rem] rounded-bl-md p-5 shadow-[0_0_40px_rgba(34,211,238,0.15)]">
-              <p className="text-[11px] text-cyan-400/90 mb-2 uppercase tracking-wider">
-                One-time letter
-              </p>
-              <p className="text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap break-words mb-4">
-                {reading.body}
-              </p>
-              <p className="text-[10px] font-semibold text-cyan-300/80 uppercase tracking-wide mb-4">
-                NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
-                SECRETS YOU CANNOT AFFORD TO EXPOSE.
-              </p>
-              <p className="text-[11px] text-zinc-500 mb-4">
-                Closing removes this letter forever.
-              </p>
-              <button
-                onClick={finishReading}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl"
-              >
-                Done — vanish letter
-              </button>
+            <div className="rounded-3xl border-2 border-cyan-400/70 bg-zinc-950 shadow-[0_0_48px_rgba(34,211,238,0.22)] overflow-hidden">
+              <div className="bg-cyan-500/20 border-b border-cyan-400/40 px-4 py-3">
+                <p className="text-[11px] font-bold text-cyan-300 uppercase tracking-[0.2em] text-center">
+                  One-time letter
+                </p>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="rounded-2xl bg-zinc-900 border border-zinc-600 px-4 py-3.5">
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-2 font-medium">
+                    Message
+                  </p>
+                  <p className="text-[15px] leading-relaxed text-zinc-50 whitespace-pre-wrap break-words">
+                    {reading.body}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-amber-500/45 bg-amber-500/10 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold text-amber-200/95 leading-relaxed uppercase tracking-wide">
+                    NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT
+                    SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-zinc-500 text-center">
+                  Closing removes this letter forever.
+                </p>
+
+                <button
+                  onClick={finishReading}
+                  className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl"
+                >
+                  Done — vanish letter
+                </button>
+              </div>
             </div>
           </div>
         </div>
