@@ -58,6 +58,9 @@ export default function SearchPage() {
       safety2: 'Do not share passwords, codes, or money details.',
       safety3: 'If someone pressures or threatens you, use Report or Block.',
       safety4: 'You can leave or clear the chat at any time.',
+      safety5:
+        'Your vanish timer is private. The chat ends at the shorter of both timers.',
+      activeChats: 'Active chats',
       caps: 'NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.',
       cancel: 'Cancel',
       understand: 'I understand — Start',
@@ -82,6 +85,9 @@ export default function SearchPage() {
       safety2: 'Usishiriki nenosiri, nambari za siri, au maelezo ya pesa.',
       safety3: 'Mtu akikushinikiza au kukutishia, tumia Ripoti au Zuia.',
       safety4: 'Unaweza kuondoka au kufuta gumzo wakati wowote.',
+      safety5:
+        'Kipima muda chako ni siri. Gumzo linaisha kwa muda mfupi kati ya wawili.',
+      activeChats: 'Gumzo zinazoendelea',
       caps: 'HAKUNA HUDUMA MTANDAONI INAYOHAKIKISHA USALAMA KAMILI. USISHIRIKI SIRI USIZOWEZA KUBEBWA KAMA ZIKIFICHULIWA.',
       cancel: 'Ghairi',
       understand: 'Nimeelewa — Anza',
@@ -344,6 +350,14 @@ export default function SearchPage() {
         </h1>
         <p className="text-zinc-500 text-sm mb-6">{copy.searchHelp}</p>
 
+        <button
+          type="button"
+          onClick={() => router.push('/chats')}
+          className="w-full mb-4 bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/30 text-cyan-300 font-medium py-3 rounded-xl transition"
+        >
+          {copy.activeChats}
+        </button>
+
         <input
           type="text"
           placeholder={copy.placeholder}
@@ -398,6 +412,7 @@ export default function SearchPage() {
               <li>{copy.safety2}</li>
               <li>{copy.safety3}</li>
               <li>{copy.safety4}</li>
+              <li>{copy.safety5}</li>
             </ul>
             <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
               {copy.caps}
