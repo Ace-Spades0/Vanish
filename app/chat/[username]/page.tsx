@@ -113,6 +113,7 @@ export default function ChatPage() {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textAreaRef = useRef<HTMLTextAreaElement>(null)
 
   const mySealOn = !!(user?.id && sealUserIds.includes(user.id))
   const myQuietOn = !!(user?.id && quietUserIds.includes(user.id))
@@ -140,10 +141,7 @@ export default function ChatPage() {
     return !sealUserIds.includes(targetUser.id)
   }
 
-  const recomputeEnd = (
-    firstAt: string | null,
-    map: Record<string, number>
-  ) => {
+  const recomputeEnd = (firstAt: string | null, map: Record<string, number>) => {
     if (!firstAt || !user?.id || !targetUser?.id) {
       setChatEndsAt(null)
       return
@@ -155,6 +153,14 @@ export default function ChatPage() {
       setChatExpired(true)
       setSealed(true)
     }
+  }
+
+  const growTextarea = () => {
+    const el = textAreaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.overflow = 'hidden'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }
 
   useEffect(() => {
@@ -227,9 +233,7 @@ export default function ChatPage() {
         return
       }
 
-      const convId = [myProfile!.username, targetProfile.username]
-        .sort()
-        .join('_')
+      const convId = [myProfile!.username, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
       const { data: settings } = await supabase
@@ -273,10 +277,7 @@ export default function ChatPage() {
       if (list.length > 0) {
         const firstCreatedAt = list[0].created_at
         setFirstMsgAt(firstCreatedAt)
-        const mins = Math.min(
-          map[user.id] || 180,
-          map[targetProfile.id] || 180
-        )
+        const mins = Math.min(map[user.id] || 180, map[targetProfile.id] || 180)
         const endsAt = getConversationEnd(firstCreatedAt, mins)
         setChatEndsAt(endsAt)
         if (new Date(endsAt).getTime() <= Date.now()) {
@@ -311,10 +312,8 @@ export default function ChatPage() {
       setModal('safety')
 
       if (channelRef.current) supabase.removeChannel(channelRef.current)
-      if (profileChannelRef.current)
-        supabase.removeChannel(profileChannelRef.current)
-      if (settingsChannelRef.current)
-        supabase.removeChannel(settingsChannelRef.current)
+      if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
+      if (settingsChannelRef.current) supabase.removeChannel(settingsChannelRef.current)
 
       const channel = supabase.channel(`chat-${convId}`)
       channel.on(
@@ -384,8 +383,7 @@ export default function ChatPage() {
             if (row.duration_by_user)
               setDurationByUser(asDurationMap(row.duration_by_user))
             if (row.seal_user_ids) setSealUserIds(asIdList(row.seal_user_ids))
-            if (row.quiet_user_ids)
-              setQuietUserIds(asIdList(row.quiet_user_ids))
+            if (row.quiet_user_ids) setQuietUserIds(asIdList(row.quiet_user_ids))
           }
         )
         .subscribe()
@@ -424,8 +422,7 @@ export default function ChatPage() {
     return () => {
       isMounted = false
       if (channelRef.current) supabase.removeChannel(channelRef.current)
-      if (profileChannelRef.current)
-        supabase.removeChannel(profileChannelRef.current)
+      if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
       if (settingsChannelRef.current)
         supabase.removeChannel(settingsChannelRef.current)
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
@@ -541,6 +538,7 @@ export default function ChatPage() {
     setNewMessage('')
     hadMessagesRef.current = false
     setStartingNew(false)
+    if (textAreaRef.current) textAreaRef.current.style.height = 'auto'
   }
 
   const acceptSafety = async () => {
@@ -556,8 +554,7 @@ export default function ChatPage() {
   }
 
   const resolveExpiresAt = async (forceShort: boolean) => {
-    if (forceShort)
-      return new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    if (forceShort) return new Date(Date.now() + 30 * 60 * 1000).toISOString()
     const mins = effectiveMinutes
     if (chatEndsAt) return chatEndsAt
     const { data: firstRows } = await supabase
@@ -583,6 +580,9 @@ export default function ChatPage() {
       return
     const content = newMessage.trim()
     setNewMessage('')
+    if (textAreaRef.current) {
+      textAreaRef.current.style.height = 'auto'
+    }
 
     const myQuestions = messages.filter(
       (m) => m.sender_id === user.id && m.content?.trim().endsWith('?')
@@ -604,7 +604,7 @@ export default function ChatPage() {
         useShortExpiry = false
       } else {
         useShortExpiry = true
-        setWarningText('Anti-interrogation: new messages may expire in 30 min.')
+        setWarningText('Anti-interrogation: messages may expire in 30 min.')
       }
     }
 
@@ -641,10 +641,7 @@ export default function ChatPage() {
     setSealed(false)
     setChatExpired(false)
     if (ghostReply) {
-      await supabase
-        .from('profiles')
-        .update({ is_offline: true })
-        .eq('id', user.id)
+      await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
       setGhostReply(false)
       alert('Ghost on. You are offline in Search.')
     }
@@ -745,11 +742,7 @@ export default function ChatPage() {
 
   const vanishOneMessage = async () => {
     if (!activeMsg) return
-    const { error } = await supabase
-      .from('messages')
-      .update({ deleted: true })
-      .eq('id', activeMsg.id)
-    if (error) alert(error.message)
+    await supabase.from('messages').update({ deleted: true }).eq('id', activeMsg.id)
     setMsgMenu(null)
     setActiveMsg(null)
   }
@@ -825,7 +818,7 @@ export default function ChatPage() {
       data: { session },
     } = await supabase.auth.getSession()
     if (!session) return
-    const res = await fetch('/api/report', {
+    await fetch('/api/report', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -838,11 +831,6 @@ export default function ChatPage() {
         message_id: reportMessageId,
       }),
     })
-    const data = await res.json()
-    if (!res.ok) {
-      alert(data.error || 'Report failed')
-      return
-    }
     setModal(null)
     setReportMessageId(null)
     setReportType('')
@@ -890,12 +878,6 @@ export default function ChatPage() {
             </button>
           )}
           <button
-            onClick={() => router.push('/chats')}
-            className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl"
-          >
-            Active chats
-          </button>
-          <button
             onClick={() => router.push('/search')}
             className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl"
           >
@@ -907,138 +889,129 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh] relative overflow-hidden">
-      <div className="relative z-10 bg-black/70 backdrop-blur-md border-b border-white/10 shrink-0">
-        <div className="flex items-center gap-2 px-2 py-2">
+    <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh]">
+      {/* COMPACT HEADER */}
+      <div className="bg-black/85 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-1.5">
+        <div className="flex items-center gap-1.5 mb-1">
           <button
             type="button"
-            onClick={() => router.push('/chats')}
-            className="shrink-0 h-12 px-5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border-2 border-cyan-400 text-cyan-300 font-bold text-base"
+            onClick={() => router.push('/search')}
+            className="shrink-0 h-9 px-3 rounded-lg bg-zinc-800 border border-cyan-400/70 text-cyan-300 font-bold text-sm"
           >
             ← Back
           </button>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-zinc-500">Chatting with</p>
-            <h1 className="text-base font-bold text-cyan-400 truncate">
+            <p className="text-[9px] text-zinc-500 leading-none">With</p>
+            <p className="text-sm font-bold text-cyan-400 truncate leading-tight">
               {targetUsername}
-            </h1>
+            </p>
           </div>
           <button
             type="button"
             onClick={() => setHeaderOpen((v) => !v)}
-            className="shrink-0 h-11 px-3 rounded-xl bg-zinc-800 border border-zinc-600 text-xs font-semibold"
+            className="shrink-0 h-8 px-2.5 rounded-lg bg-zinc-800 border border-zinc-600 text-[11px] font-semibold text-zinc-300"
           >
-            {headerOpen ? 'Less ▲' : 'More ▼'}
+            {headerOpen ? '▲ Less' : '▼ More'}
           </button>
         </div>
 
-        <div className="px-3 pb-2">
-          <p className="text-[10px] text-zinc-500 mb-1">
-            Your vanish timer (private only) · chat ends at shorter of both
-          </p>
-          <div className="flex gap-1.5">
-            {DURATION_OPTIONS.map((opt) => (
-              <button
-                key={opt.minutes}
-                type="button"
-                disabled={savingDuration}
-                onClick={() => pickMyDuration(opt.minutes)}
-                className={`flex-1 py-1.5 rounded-lg text-[11px] font-semibold border ${
-                  myDuration === opt.minutes
-                    ? 'bg-cyan-500 text-black border-cyan-300'
-                    : 'bg-zinc-900 text-zinc-400 border-zinc-700'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+        {/* SAME LINE: small timers + Clear Report Block */}
+        <div className="flex items-center gap-1 flex-nowrap overflow-x-auto">
+          {DURATION_OPTIONS.map((opt) => (
+            <button
+              key={opt.minutes}
+              type="button"
+              disabled={savingDuration}
+              onClick={() => pickMyDuration(opt.minutes)}
+              className={`h-6 px-1.5 rounded text-[10px] font-semibold border shrink-0 ${
+                myDuration === opt.minutes
+                  ? 'bg-cyan-500 text-black border-cyan-300'
+                  : 'bg-zinc-900 text-zinc-400 border-zinc-700'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+          <span className="w-px h-3.5 bg-zinc-700 mx-0.5 shrink-0" />
+          <button
+            onClick={() => setModal('clear')}
+            className="h-6 px-1.5 rounded text-[10px] font-medium bg-orange-600 shrink-0"
+          >
+            Clear
+          </button>
+          <button
+            onClick={() => {
+              setReportMessageId(null)
+              setReportMessagePreview('')
+              setReportType('')
+              setReportReason('')
+              setModal('report')
+            }}
+            className="h-6 px-1.5 rounded text-[10px] font-medium bg-yellow-600 shrink-0"
+          >
+            Report
+          </button>
+          <button
+            onClick={() => setModal('block')}
+            className="h-6 px-1.5 rounded text-[10px] font-medium bg-red-600 shrink-0"
+          >
+            Block
+          </button>
         </div>
 
         {headerOpen && (
-          <div className="px-3 pb-3 space-y-2 border-t border-white/5 pt-2">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={requestSealToggle}
-                disabled={savingSeal}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold border ${
-                  mySealOn
-                    ? 'bg-cyan-500 text-black border-cyan-300'
-                    : 'bg-zinc-800 text-cyan-300 border-cyan-500/40'
-                }`}
-              >
-                {mySealOn ? 'SEAL ON' : 'SEAL'}
-              </button>
-              <button
-                type="button"
-                onClick={requestQuietToggle}
-                disabled={savingQuiet}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold border ${
-                  myQuietOn
-                    ? 'bg-violet-500 text-white border-violet-300'
-                    : 'bg-zinc-800 text-violet-300 border-violet-500/40'
-                }`}
-              >
-                {myQuietOn ? 'QUIET ON' : 'QUIET'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setModal('ghost')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold border ${
-                  ghostReply
-                    ? 'bg-emerald-500 text-black border-emerald-300'
-                    : 'bg-zinc-800 text-emerald-300 border-emerald-500/40'
-                }`}
-              >
-                {ghostReply ? 'GHOST ON' : 'GHOST'}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setModal('clear')}
-                className="text-xs font-medium bg-orange-600 px-3 py-2 rounded-xl"
-              >
-                Clear chat
-              </button>
-              <button
-                onClick={() => {
-                  setReportMessageId(null)
-                  setReportMessagePreview('')
-                  setReportType('')
-                  setReportReason('')
-                  setModal('report')
-                }}
-                className="text-xs font-medium bg-yellow-600 px-3 py-2 rounded-xl"
-              >
-                Report
-              </button>
-              <button
-                onClick={() => setModal('block')}
-                className="text-xs font-medium bg-red-600 px-3 py-2 rounded-xl"
-              >
-                Block
-              </button>
-            </div>
-            <p className="text-[10px] text-zinc-600">
-              Encrypted · {fileCount}/4 files · {videoCount}/1 video
-            </p>
+          <div className="flex gap-1.5 mt-1.5 pt-1.5 border-t border-white/5">
+            <button
+              type="button"
+              onClick={requestSealToggle}
+              disabled={savingSeal}
+              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border ${
+                mySealOn
+                  ? 'bg-cyan-500 text-black border-cyan-300'
+                  : 'bg-zinc-800 text-cyan-300 border-cyan-500/40'
+              }`}
+            >
+              {mySealOn ? 'SEAL ON' : 'SEAL'}
+            </button>
+            <button
+              type="button"
+              onClick={requestQuietToggle}
+              disabled={savingQuiet}
+              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border ${
+                myQuietOn
+                  ? 'bg-violet-500 text-white border-violet-300'
+                  : 'bg-zinc-800 text-violet-300 border-violet-500/40'
+              }`}
+            >
+              {myQuietOn ? 'QUIET ON' : 'QUIET'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModal('ghost')}
+              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border ${
+                ghostReply
+                  ? 'bg-emerald-500 text-black border-emerald-300'
+                  : 'bg-zinc-800 text-emerald-300 border-emerald-500/40'
+              }`}
+            >
+              {ghostReply ? 'GHOST ON' : 'GHOST'}
+            </button>
           </div>
         )}
       </div>
 
       {warningText && (
-        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-sm text-yellow-200 text-center">
+        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-1.5 text-xs text-yellow-200 text-center">
           {warningText}
         </div>
       )}
 
-      <div className="relative z-10 flex-1 overflow-y-auto px-3 py-3 space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center pt-10">
-            <p className="text-zinc-400 text-sm">No messages yet</p>
-            <p className="text-zinc-600 text-xs mt-1">
-              Your timer: {durationLabel(myDuration)} (private)
+          <div className="flex flex-col items-center justify-center h-full text-center pt-8">
+            <p className="text-zinc-500 text-sm">No messages yet</p>
+            <p className="text-zinc-600 text-[11px] mt-1">
+              Your timer {durationLabel(myDuration)} · private
             </p>
           </div>
         ) : (
@@ -1096,8 +1069,15 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div className="space-y-1 max-w-[260px]" onClick={(e) => e.stopPropagation()}>
-                      <video src={msg.content} controls className="rounded-lg max-h-52 w-full" />
+                    <div
+                      className="space-y-1 max-w-[260px]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <video
+                        src={msg.content}
+                        controls
+                        className="rounded-lg max-h-52 w-full"
+                      />
                       <a
                         href={msg.content}
                         download
@@ -1125,7 +1105,7 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.type === 'text' && (
-                    <p className="text-[16px] leading-relaxed whitespace-pre-wrap break-words">
+                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                       {msg.content}
                     </p>
                   )}
@@ -1137,12 +1117,13 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="relative z-10 bg-black/80 backdrop-blur-md px-2 py-2 border-t border-white/10 shrink-0">
+      {/* INPUT: grows with paragraphs, overflow hidden (no scroll inside) */}
+      <div className="bg-black/90 backdrop-blur-md px-2 py-2 border-t border-white/10 shrink-0">
         <div className="flex items-end gap-1.5">
           <button
             type="button"
             onClick={() => mediaInputRef.current?.click()}
-            className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 hover:bg-zinc-700 border-2 border-cyan-500/50 flex items-center justify-center text-2xl"
+            className="shrink-0 w-11 h-11 rounded-full bg-zinc-800 border border-cyan-500/40 flex items-center justify-center text-xl"
             title="Photo or video"
           >
             📷
@@ -1157,10 +1138,10 @@ export default function ChatPage() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 hover:bg-zinc-700 border-2 border-zinc-500 flex items-center justify-center text-2xl"
-            title="File"
+            className="shrink-0 w-11 h-11 rounded-full bg-zinc-800 border border-zinc-500 flex items-center justify-center text-xl"
+            title="Attach file"
           >
-            📌
+            📎
           </button>
           <input
             ref={fileInputRef}
@@ -1170,15 +1151,20 @@ export default function ChatPage() {
             onChange={(e) => uploadMedia(e, 'file')}
           />
           <textarea
+            ref={textAreaRef}
             placeholder="Message"
             value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            onChange={(e) => {
+              setNewMessage(e.target.value)
+              requestAnimationFrame(growTextarea)
+            }}
             rows={1}
-            className="flex-1 min-w-0 px-3 py-2.5 rounded-3xl bg-zinc-900 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none max-h-28"
+            className="flex-1 min-w-0 px-3 py-2.5 rounded-3xl bg-zinc-900 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none overflow-hidden leading-relaxed"
+            style={{ maxHeight: 160 }}
           />
           <button
             onClick={sendMessage}
-            className="shrink-0 h-12 px-4 rounded-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold text-sm"
+            className="shrink-0 h-11 px-4 rounded-full bg-cyan-500 text-black font-semibold text-sm"
           >
             Send
           </button>
@@ -1195,10 +1181,16 @@ export default function ChatPage() {
                 : 'Remove your Seal only.'}
             </p>
             <div className="flex gap-2">
-              <button onClick={() => setSealConfirm(null)} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">
+              <button
+                onClick={() => setSealConfirm(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
                 Cancel
               </button>
-              <button onClick={confirmSealToggle} className="flex-1 bg-cyan-500 text-black py-2.5 rounded-xl font-semibold">
+              <button
+                onClick={confirmSealToggle}
+                className="flex-1 bg-cyan-500 text-black py-2.5 rounded-xl font-semibold"
+              >
                 Confirm
               </button>
             </div>
@@ -1212,14 +1204,20 @@ export default function ChatPage() {
             <h3 className="text-lg font-semibold mb-2">Quiet</h3>
             <p className="text-sm text-zinc-400 mb-5">
               {quietConfirm === 'on'
-                ? 'Stricter anti-interrogation for you only. Other person not notified.'
+                ? 'Stricter anti-interrogation for you only.'
                 : 'Quiet off for you only.'}
             </p>
             <div className="flex gap-2">
-              <button onClick={() => setQuietConfirm(null)} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">
+              <button
+                onClick={() => setQuietConfirm(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
                 Cancel
               </button>
-              <button onClick={confirmQuietToggle} className="flex-1 bg-violet-500 text-white py-2.5 rounded-xl font-semibold">
+              <button
+                onClick={confirmQuietToggle}
+                className="flex-1 bg-violet-500 text-white py-2.5 rounded-xl font-semibold"
+              >
                 Confirm
               </button>
             </div>
@@ -1229,14 +1227,20 @@ export default function ChatPage() {
 
       {msgMenu && activeMsg && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
-            {msgMenu === 'menu' && (
-              <div className="space-y-2">
-                <button onClick={() => setMsgMenu('edit')} className="w-full bg-cyan-600 py-2.5 rounded-xl">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm space-y-2">
+            {msgMenu === 'menu' ? (
+              <>
+                <button
+                  onClick={() => setMsgMenu('edit')}
+                  className="w-full bg-cyan-600 py-2.5 rounded-xl"
+                >
                   Edit
                 </button>
-                <button onClick={vanishOneMessage} className="w-full bg-red-600 py-2.5 rounded-xl">
-                  Vanish this message
+                <button
+                  onClick={vanishOneMessage}
+                  className="w-full bg-red-600 py-2.5 rounded-xl"
+                >
+                  Vanish message
                 </button>
                 <button
                   onClick={() => {
@@ -1247,21 +1251,26 @@ export default function ChatPage() {
                 >
                   Cancel
                 </button>
-              </div>
-            )}
-            {msgMenu === 'edit' && (
+              </>
+            ) : (
               <>
                 <textarea
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   rows={3}
-                  className="w-full p-3 mb-4 rounded-xl bg-zinc-800 border border-zinc-700"
+                  className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700"
                 />
                 <div className="flex gap-2">
-                  <button onClick={() => setMsgMenu('menu')} className="flex-1 bg-zinc-700 py-2 rounded-xl">
+                  <button
+                    onClick={() => setMsgMenu('menu')}
+                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                  >
                     Back
                   </button>
-                  <button onClick={saveEditMessage} className="flex-1 bg-cyan-500 text-black py-2 rounded-xl">
+                  <button
+                    onClick={saveEditMessage}
+                    className="flex-1 bg-cyan-500 text-black py-2 rounded-xl"
+                  >
                     Save
                   </button>
                 </div>
@@ -1277,13 +1286,15 @@ export default function ChatPage() {
             {modal === 'ghost' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Ghost mode</h3>
-                <p className="text-sm text-zinc-400 mb-4 leading-relaxed">
-                  After your <strong className="text-zinc-200">next message</strong> is
-                  sent, you go <strong className="text-zinc-200">offline</strong>. Others
-                  cannot find you in Search until you turn offline off in Profile.
+                <p className="text-sm text-zinc-400 mb-4">
+                  After your next message is sent, you go offline. Others cannot
+                  find you in Search until you turn offline off in Profile.
                 </p>
                 <div className="flex gap-2">
-                  <button onClick={() => setModal(null)} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                  >
                     Cancel
                   </button>
                   <button
@@ -1296,17 +1307,6 @@ export default function ChatPage() {
                     Enable Ghost
                   </button>
                 </div>
-                {ghostReply && (
-                  <button
-                    onClick={() => {
-                      setGhostReply(false)
-                      setModal(null)
-                    }}
-                    className="w-full mt-2 bg-zinc-800 border border-zinc-600 py-2.5 rounded-xl text-sm"
-                  >
-                    Turn Ghost off
-                  </button>
-                )}
               </>
             )}
             {modal === 'safety' && (
@@ -1315,7 +1315,6 @@ export default function ChatPage() {
                 <ul className="text-sm text-zinc-400 space-y-2 mb-4 list-disc pl-4">
                   <li>Never share passwords or payment details.</li>
                   <li>Your timer is private. Chat ends at the shorter of both.</li>
-                  <li>Hold a message to report it.</li>
                 </ul>
                 <p className="text-xs font-semibold text-cyan-300 mb-5 uppercase">
                   NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
@@ -1331,12 +1330,18 @@ export default function ChatPage() {
             )}
             {modal === 'clear' && (
               <>
-                <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
-                <div className="flex gap-2 mt-4">
-                  <button onClick={() => setModal(null)} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">
+                <h3 className="text-lg font-semibold mb-3">Clear chat?</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                  >
                     Cancel
                   </button>
-                  <button onClick={confirmClearChat} className="flex-1 bg-orange-600 py-2.5 rounded-xl">
+                  <button
+                    onClick={confirmClearChat}
+                    className="flex-1 bg-orange-600 py-2.5 rounded-xl"
+                  >
                     Clear
                   </button>
                 </div>
@@ -1344,12 +1349,20 @@ export default function ChatPage() {
             )}
             {modal === 'block' && (
               <>
-                <h3 className="text-lg font-semibold mb-2">Block {targetUsername}?</h3>
-                <div className="flex gap-2 mt-4">
-                  <button onClick={() => setModal(null)} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">
+                <h3 className="text-lg font-semibold mb-3">
+                  Block {targetUsername}?
+                </h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                  >
                     Cancel
                   </button>
-                  <button onClick={confirmBlockUser} className="flex-1 bg-red-600 py-2.5 rounded-xl">
+                  <button
+                    onClick={confirmBlockUser}
+                    className="flex-1 bg-red-600 py-2.5 rounded-xl"
+                  >
                     Block
                   </button>
                 </div>
@@ -1357,7 +1370,9 @@ export default function ChatPage() {
             )}
             {modal === 'report' && (
               <>
-                <h3 className="text-lg font-semibold mb-2">Report {targetUsername}</h3>
+                <h3 className="text-lg font-semibold mb-2">
+                  Report {targetUsername}
+                </h3>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {REPORT_TYPES.map((type) => (
                     <button
@@ -1382,10 +1397,16 @@ export default function ChatPage() {
                   className="w-full p-3 mb-3 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
                 />
                 <div className="flex gap-2">
-                  <button onClick={() => setModal(null)} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">
+                  <button
+                    onClick={() => setModal(null)}
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                  >
                     Cancel
                   </button>
-                  <button onClick={confirmReportUser} className="flex-1 bg-yellow-600 py-2.5 rounded-xl">
+                  <button
+                    onClick={confirmReportUser}
+                    className="flex-1 bg-yellow-600 py-2.5 rounded-xl"
+                  >
                     Submit
                   </button>
                 </div>
