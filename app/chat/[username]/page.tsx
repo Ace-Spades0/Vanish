@@ -1,5 +1,5 @@
 'use client'
-//force vercel rebuild — E2EE text + independent Seal/Quiet + Ghost
+//force vercel rebuild — media UI + duration for all users
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -101,10 +101,12 @@ export default function ChatPage() {
   const profileChannelRef = useRef<any>(null)
   const hadMessagesRef = useRef(false)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const convIdRef = useRef('')
 
   const mySealOn = !!(user?.id && sealUserIds.includes(user.id))
   const myQuietOn = !!(user?.id && quietUserIds.includes(user.id))
+
+  // Show length picker to ANY user until first message exists
+  const showDurationPicker = !durationLocked && messages.length === 0 && !chatExpired
 
   const getConversationEnd = (firstCreatedAt: string, minutes: number) => {
     return new Date(
@@ -202,7 +204,6 @@ export default function ChatPage() {
       const myUsername = myProfile!.username
       const convId = [myUsername, targetProfile.username].sort().join('_')
       setConversationId(convId)
-      convIdRef.current = convId
 
       const { data: settings } = await supabase
         .from('conversation_settings')
@@ -220,16 +221,24 @@ export default function ChatPage() {
       setSealUserIds(seals)
       setQuietUserIds(asIdList(settings?.quiet_user_ids))
 
-      const { data: firstRows } = await supabase
+      await supabase
         .from('messages')
-        .select('created_at')
+        .delete()
+        .eq('conversation_id', convId)
+        .lt('expires_at', new Date().toISOString())
+
+      const { data: existingMessages } = await supabase
+        .from('messages')
+        .select('*')
         .eq('conversation_id', convId)
         .eq('deleted', false)
+        .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: true })
-        .limit(1)
 
-      const firstCreatedAt = firstRows?.[0]?.created_at || null
-      if (firstCreatedAt) {
+      const list = existingMessages || []
+
+      if (list.length > 0) {
+        const firstCreatedAt = list[0].created_at
         setDurationLocked(true)
         const endsAt = getConversationEnd(firstCreatedAt, mins)
         setChatEndsAt(endsAt)
@@ -246,39 +255,26 @@ export default function ChatPage() {
           setLoading(false)
           return
         }
-      } else {
-        setDurationLocked(false)
-      }
-
-      await supabase
-        .from('messages')
-        .delete()
-        .eq('conversation_id', convId)
-        .lt('expires_at', new Date().toISOString())
-
-      const { data: existingMessages } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('conversation_id', convId)
-        .eq('deleted', false)
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: true })
-
-      if (existingMessages && isMounted) {
+        hadMessagesRef.current = true
         const decrypted = await Promise.all(
-          existingMessages.map((m) => decryptMessageRow(convId, m))
+          list.map((m) => decryptMessageRow(convId, m))
         )
-        setMessages(decrypted)
-        recountMedia(decrypted)
-        if (decrypted.length > 0) {
-          hadMessagesRef.current = true
-          setDurationLocked(true)
+        if (isMounted) {
+          setMessages(decrypted)
+          recountMedia(decrypted)
         }
+      } else {
+        // Empty chat → ANY user can pick length
+        setDurationLocked(false)
+        setChatEndsAt(null)
+        setMessages([])
+        setFileCount(0)
+        setVideoCount(0)
+        hadMessagesRef.current = false
       }
 
       if (!isMounted) return
       setLoading(false)
-
       setSafetyNext('enter')
       setModal('safety')
 
@@ -325,7 +321,10 @@ export default function ChatPage() {
             setMessages((prev) => {
               const next = prev.filter((m) => m.id !== row.id)
               recountMedia(next)
-              if (hadMessagesRef.current && next.length === 0) setSealed(true)
+              if (hadMessagesRef.current && next.length === 0) {
+                setSealed(true)
+                setDurationLocked(false)
+              }
               return next
             })
             return
@@ -404,6 +403,7 @@ export default function ChatPage() {
 
   const pickDuration = async (minutes: number) => {
     if (!user || !conversationId || durationLocked || savingDuration) return
+    if (messages.length > 0) return
     setSavingDuration(true)
     const error = await saveSettings({
       duration_minutes: minutes,
@@ -427,14 +427,12 @@ export default function ChatPage() {
     if (!user || !conversationId || !sealConfirm) return
     setSavingSeal(true)
     setSealConfirm(null)
-
     let next = [...sealUserIds]
     if (sealConfirm === 'on') {
       if (!next.includes(user.id)) next.push(user.id)
     } else {
       next = next.filter((id) => id !== user.id)
     }
-
     const error = await saveSettings({ seal_user_ids: next })
     if (error) {
       alert(error.message)
@@ -454,14 +452,12 @@ export default function ChatPage() {
     if (!user || !conversationId || !quietConfirm) return
     setSavingQuiet(true)
     setQuietConfirm(null)
-
     let next = [...quietUserIds]
     if (quietConfirm === 'on') {
       if (!next.includes(user.id)) next.push(user.id)
     } else {
       next = next.filter((id) => id !== user.id)
     }
-
     const error = await saveSettings({ quiet_user_ids: next })
     if (error) {
       alert(error.message)
@@ -475,7 +471,6 @@ export default function ChatPage() {
   const runStartNewChat = async () => {
     if (!conversationId || startingNew) return
     if (!canStartNewChat()) return
-
     setStartingNew(true)
     const { error } = await supabase
       .from('messages')
@@ -512,9 +507,7 @@ export default function ChatPage() {
 
   const acceptSafety = async () => {
     setModal(null)
-    if (safetyNext === 'newchat') {
-      await runStartNewChat()
-    }
+    if (safetyNext === 'newchat') await runStartNewChat()
     setSafetyNext('enter')
   }
 
@@ -559,7 +552,6 @@ export default function ChatPage() {
     ).length
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
-
     const qThreshold = myQuietOn ? 3 : 6
     const interrogationDetected = isQuestion && totalQuestions >= qThreshold
 
@@ -673,11 +665,11 @@ export default function ChatPage() {
       }
     } else {
       if (fileCount >= 4) {
-        alert('Maximum 4 files allowed in this chat')
+        alert('Maximum 4 files / photos allowed in this chat')
         return
       }
-      if (file.size > 10 * 1024 * 1024) {
-        alert('File must be smaller than 10 MB')
+      if (file.size > 15 * 1024 * 1024) {
+        alert('File must be smaller than 15 MB')
         return
       }
     }
@@ -697,7 +689,8 @@ export default function ChatPage() {
       return
     }
 
-    const fileName = `${conversationId}/${Date.now()}-${file.name}`
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const fileName = `${conversationId}/${Date.now()}-${safeName}`
     const { error } = await supabase.storage
       .from('chat-photos')
       .upload(fileName, file)
@@ -810,6 +803,7 @@ export default function ChatPage() {
     setFileCount(0)
     setVideoCount(0)
     setSealed(true)
+    setDurationLocked(false)
     setModal(null)
   }
 
@@ -941,18 +935,18 @@ export default function ChatPage() {
           </div>
           <div className="flex gap-1.5 shrink-0 pt-1">
             <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-              {fileCount}/4
+              {fileCount}/4 files
             </span>
             <span className="text-[11px] text-zinc-300 bg-zinc-800 px-2 py-1 rounded-lg">
-              {videoCount}/1
+              {videoCount}/1 video
             </span>
           </div>
         </div>
 
-        {!durationLocked && (
-          <div className="mb-2">
-            <p className="text-[11px] text-zinc-400 mb-1.5">
-              Chat length (starts at first message)
+        {showDurationPicker && (
+          <div className="mb-2 p-2 rounded-xl bg-zinc-900/80 border border-cyan-500/30">
+            <p className="text-[11px] text-cyan-300/90 mb-1.5 font-medium">
+              Chat length — pick before the first message (both of you can set this)
             </p>
             <div className="flex gap-2">
               {DURATION_OPTIONS.map((opt) => (
@@ -961,7 +955,7 @@ export default function ChatPage() {
                   type="button"
                   disabled={savingDuration}
                   onClick={() => pickDuration(opt.minutes)}
-                  className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition ${
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-semibold border transition ${
                     durationMinutes === opt.minutes
                       ? 'bg-cyan-500 text-black border-cyan-300'
                       : 'bg-zinc-800 text-zinc-300 border-zinc-600'
@@ -973,7 +967,7 @@ export default function ChatPage() {
             </div>
           </div>
         )}
-        {durationLocked && (
+        {!showDurationPicker && durationLocked && (
           <p className="text-[11px] text-zinc-500 mb-2">
             Chat length: {durationLabel()}
           </p>
@@ -986,7 +980,7 @@ export default function ChatPage() {
             disabled={savingSeal}
             className={`flex-1 min-w-[90px] py-2.5 px-2 rounded-xl text-sm font-bold border transition text-center ${
               mySealOn
-                ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_16px_rgba(34,211,238,0.3)]'
+                ? 'bg-cyan-500 text-black border-cyan-300'
                 : 'bg-zinc-800/90 text-cyan-300 border-cyan-500/40'
             }`}
           >
@@ -1063,7 +1057,7 @@ export default function ChatPage() {
             <div className="text-3xl mb-2 opacity-40">💬</div>
             <p className="text-zinc-400 text-sm">No messages yet</p>
             <p className="text-zinc-600 text-xs mt-1">
-              Timer starts at first message · {durationLabel()} · Encrypted text
+              Timer starts at first message · {durationLabel()}
             </p>
           </div>
         ) : (
@@ -1095,51 +1089,65 @@ export default function ChatPage() {
                   onMouseDown={() => startLongPress(msg)}
                   onMouseUp={cancelLongPress}
                   onMouseLeave={cancelLongPress}
-                  className={`max-w-[82%] px-4 py-2.5 text-left transition relative select-none ${
-                    mine
-                      ? 'bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black rounded-2xl rounded-br-sm shadow-[0_0_24px_rgba(34,211,238,0.22)] border border-cyan-200/40'
-                      : 'bg-zinc-900/70 text-zinc-100 backdrop-blur-md rounded-2xl rounded-bl-sm border border-cyan-500/20'
+                  className={`max-w-[82%] px-3 py-2 text-left transition relative select-none ${
+                    msg.type === 'text'
+                      ? mine
+                        ? 'bg-gradient-to-br from-cyan-300 via-cyan-400 to-cyan-600 text-black rounded-2xl rounded-br-sm'
+                        : 'bg-zinc-900/80 text-zinc-100 rounded-2xl rounded-bl-sm'
+                      : 'bg-transparent p-0'
                   }`}
                 >
                   {msg.type === 'image' && (
-                    <div className="relative">
+                    <div className="space-y-1.5">
                       <img
                         src={msg.content}
                         alt="photo"
-                        className="rounded-xl max-h-44 object-cover"
+                        className="rounded-xl max-h-52 object-cover"
                       />
                       <a
                         href={msg.content}
                         download
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded-lg"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300 bg-zinc-900/90 px-3 py-1.5 rounded-lg"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        Download
+                        ↓ Download photo
                       </a>
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
                       <video
                         src={msg.content}
                         controls
-                        className="rounded-xl max-h-44"
+                        className="rounded-xl max-h-52 w-full"
                       />
+                      <a
+                        href={msg.content}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-cyan-300 bg-zinc-900/90 px-3 py-1.5 rounded-lg"
+                      >
+                        ↓ Download video
+                      </a>
                     </div>
                   )}
                   {msg.type === 'file' && (
-                    <a
-                      href={msg.content}
-                      download
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline text-sm"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      📄 Download file
-                    </a>
+                    <div className="space-y-1.5 bg-zinc-900/90 rounded-xl px-3 py-2.5">
+                      <p className="text-sm text-zinc-200">📎 File attachment</p>
+                      <a
+                        href={msg.content}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-black bg-cyan-400 px-3 py-1.5 rounded-lg"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        ↓ Download file
+                      </a>
+                    </div>
                   )}
                   {msg.type === 'text' && (
                     <p className="text-[16px] sm:text-[17px] leading-relaxed whitespace-pre-wrap break-words">
@@ -1156,11 +1164,12 @@ export default function ChatPage() {
 
       <div className="relative z-10 bg-black/55 backdrop-blur-md px-3 py-2 border-t border-white/10 shrink-0">
         <div className="flex gap-2 items-end">
-          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-xl">
-            📎
+          <label className="cursor-pointer shrink-0 flex flex-col items-center justify-center bg-zinc-800 hover:bg-zinc-700 px-2.5 py-2 rounded-xl border border-zinc-600 min-w-[52px]">
+            <span className="text-lg leading-none">📎</span>
+            <span className="text-[9px] text-zinc-400 mt-0.5">File</span>
             <input
               type="file"
-              accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip"
+              accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip,.ppt,.pptx,.xls,.xlsx"
               onChange={uploadFile}
               className="hidden"
             />
@@ -1179,6 +1188,9 @@ export default function ChatPage() {
             Send
           </button>
         </div>
+        <p className="text-[10px] text-zinc-500 mt-1 px-1">
+          Attach photo, video, PDF, Word, ZIP, PowerPoint (limits: 4 files, 1 video)
+        </p>
       </div>
 
       {sealConfirm && (
@@ -1189,8 +1201,8 @@ export default function ChatPage() {
             </h3>
             <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
               {sealConfirm === 'on'
-                ? 'When the chat ends, the other person will not be able to start a new chat with you here. They are not told that you turned Seal on. You can still start a new chat unless they also sealed on their side.'
-                : 'You remove your Seal. Whether they can reopen still depends only on their own Seal — you will not see that.'}
+                ? 'When the chat ends, the other person will not be able to start a new chat with you here. They are not told that you turned Seal on.'
+                : 'You remove your Seal. Their Seal setting is separate.'}
             </p>
             <div className="flex gap-2">
               <button
@@ -1202,9 +1214,7 @@ export default function ChatPage() {
               <button
                 onClick={confirmSealToggle}
                 className={`flex-1 py-2.5 rounded-xl font-semibold ${
-                  sealConfirm === 'on'
-                    ? 'bg-cyan-500 text-black'
-                    : 'bg-zinc-500 text-white'
+                  sealConfirm === 'on' ? 'bg-cyan-500 text-black' : 'bg-zinc-500 text-white'
                 }`}
               >
                 {sealConfirm === 'on' ? 'Turn Seal on' : 'Turn Seal off'}
@@ -1222,8 +1232,8 @@ export default function ChatPage() {
             </h3>
             <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
               {quietConfirm === 'on'
-                ? 'Quiet applies only to you: if you ask many questions, warnings come sooner. The other person is not notified and has their own Quiet setting.'
-                : 'Your anti-interrogation returns to the normal level. Their setting does not change.'}
+                ? 'Quiet applies only to you. The other person is not notified.'
+                : 'Your anti-interrogation returns to the normal level.'}
             </p>
             <div className="flex gap-2">
               <button
@@ -1235,9 +1245,7 @@ export default function ChatPage() {
               <button
                 onClick={confirmQuietToggle}
                 className={`flex-1 py-2.5 rounded-xl font-semibold ${
-                  quietConfirm === 'on'
-                    ? 'bg-violet-500 text-white'
-                    : 'bg-zinc-500 text-white'
+                  quietConfirm === 'on' ? 'bg-violet-500 text-white' : 'bg-zinc-500 text-white'
                 }`}
               >
                 {quietConfirm === 'on' ? 'Turn Quiet on' : 'Turn Quiet off'}
@@ -1316,8 +1324,8 @@ export default function ChatPage() {
                 <ul className="text-sm text-zinc-400 space-y-2 mb-4 list-disc pl-4">
                   <li>Never share passwords, codes, or payment details.</li>
                   <li>You can Clear chat, Block, or leave anytime.</li>
-                  <li>Hold a message to report it. Use Report for the person.</li>
-                  <li>Text is encrypted on device before storage. Still treat people with respect.</li>
+                  <li>Hold a message to report it.</li>
+                  <li>Text is encrypted on device before storage.</li>
                 </ul>
                 <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
                   NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
@@ -1331,7 +1339,6 @@ export default function ChatPage() {
                 </button>
               </>
             )}
-
             {modal === 'clear' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
@@ -1354,14 +1361,13 @@ export default function ChatPage() {
                 </div>
               </>
             )}
-
             {modal === 'block' && (
               <>
                 <h3 className="text-lg font-semibold mb-2">
                   Block {targetUsername}?
                 </h3>
                 <p className="text-zinc-400 text-sm mb-5">
-                  Blocks the account (not only the username). No chat or letters either way.
+                  Blocks the account. No chat or letters either way.
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -1379,7 +1385,6 @@ export default function ChatPage() {
                 </div>
               </>
             )}
-
             {modal === 'report' && (
               <>
                 <h3 className="text-lg font-semibold mb-1">

@@ -59,6 +59,10 @@ const ICON_CATEGORIES: { id: string; label: string; icons: string[] }[] = [
   },
 ]
 
+function catKey(cat: string, icon: string) {
+  return `${cat}-${icon}`
+}
+
 export default function ProfilePage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
@@ -73,6 +77,8 @@ export default function ProfilePage() {
   const [sendingPassword, setSendingPassword] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const [iconTab, setIconTab] = useState(ICON_CATEGORIES[0].id)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const t = translations[lang]
 
   useEffect(() => {
@@ -144,6 +150,38 @@ export default function ProfilePage() {
     setSendingPassword(false)
   }
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.push('/auth')
+  }
+
+  const deleteAccount = async () => {
+    if (!user) return
+    setDeleting(true)
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      setDeleting(false)
+      return
+    }
+    const res = await fetch('/api/delete-account', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    })
+    const data = await res.json().catch(() => ({}))
+    setDeleting(false)
+    if (!res.ok) {
+      alert(data.error || 'Could not delete account')
+      return
+    }
+    await supabase.auth.signOut()
+    router.push('/auth')
+  }
+
   const activeCategory =
     ICON_CATEGORIES.find((c) => c.id === iconTab) || ICON_CATEGORIES[0]
 
@@ -209,9 +247,7 @@ export default function ProfilePage() {
               </div>
               <p className="text-sm text-zinc-400">Pick a category, then an icon</p>
             </div>
-
-            {/* Category tabs — keyboard style */}
-            <div className="flex gap-1 overflow-x-auto pb-2 mb-2 scrollbar-thin">
+            <div className="flex gap-1 overflow-x-auto pb-2 mb-2">
               {ICON_CATEGORIES.map((cat) => (
                 <button
                   key={cat.id}
@@ -222,14 +258,11 @@ export default function ProfilePage() {
                       ? 'bg-cyan-500/20 border-cyan-400 text-white'
                       : 'bg-zinc-800/80 border-zinc-700 text-zinc-400'
                   }`}
-                  title={cat.id}
                 >
                   {cat.label}
                 </button>
               ))}
             </div>
-
-            {/* Icon grid for active category */}
             <div className="grid grid-cols-6 gap-1.5 max-h-44 overflow-y-auto p-2 rounded-2xl bg-black/40 border border-zinc-800">
               {activeCategory.icons.map((icon) => (
                 <button
@@ -325,11 +358,52 @@ export default function ProfilePage() {
             </p>
           )}
         </div>
+
+        {/* Logout + Delete — always visible */}
+        <div className="mt-6 space-y-3">
+          <button
+            onClick={handleLogout}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl border border-zinc-700 transition"
+          >
+            {t.logout || 'Logout'}
+          </button>
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="w-full bg-red-600/90 hover:bg-red-500 text-white font-medium py-3.5 rounded-2xl transition"
+          >
+            {t.deleteAccount || 'Delete account'}
+          </button>
+        </div>
       </div>
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
+            <h3 className="text-lg font-semibold mb-2">
+              {t.deleteAccountTitle || 'Delete account?'}
+            </h3>
+            <p className="text-zinc-400 text-sm mb-5">
+              {t.deleteAccountDesc ||
+                'This permanently deletes your account. This cannot be undone.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl transition"
+              >
+                {t.cancel || 'Cancel'}
+              </button>
+              <button
+                onClick={deleteAccount}
+                disabled={deleting}
+                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition"
+              >
+                {deleting ? t.deleting || 'Deleting...' : t.delete || 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
-}
-
-function catKey(cat: string, icon: string) {
-  return `${cat}-${icon}`
 }
