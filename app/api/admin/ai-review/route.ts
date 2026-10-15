@@ -1,14 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-const ADMIN_IDS = [
-  'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7', // LESTAT
-]
+const ADMIN_IDS = ['a78d8a8e-de03-4159-a3c2-b5788e7cf5b7']
 
-function localReview(reason: string, snapshot: any[]): {
-  risk: string
-  summary: string
-} {
+function localReview(reason: string, snapshot: any[]) {
   const text = [
     reason || '',
     ...(snapshot || []).map((m) =>
@@ -18,36 +13,23 @@ function localReview(reason: string, snapshot: any[]): {
     .join(' ')
     .toLowerCase()
 
-  const high = [
-    'kill',
-    'rape',
-    'bomb',
-    'terror',
-    'suicide',
-    'child porn',
-    'csam',
-    'only fan minor',
-  ]
+  const high = ['kill', 'rape', 'bomb', 'terror', 'suicide', 'child porn', 'csam']
   const medium = [
     'threat',
     'hurt you',
     'find you',
-    'address',
     'password',
     'send money',
     'crypto',
     'gift card',
     'nude',
-    'sex',
     'harass',
     'scam',
-    'wire',
   ]
-  const spam = ['buy now', 'click here', 'telegram.me', 'whatsapp', 'promo', 'free money']
+  const spam = ['buy now', 'click here', 'telegram.me', 'free money']
 
   let score = 0
   const hits: string[] = []
-
   for (const w of high) {
     if (text.includes(w)) {
       score += 5
@@ -66,45 +48,27 @@ function localReview(reason: string, snapshot: any[]): {
       hits.push(w)
     }
   }
-
-  if (/report|spam|harass|threat|scam|abuse/i.test(reason || '')) {
-    score += 1
-  }
+  if (/report|spam|harass|threat|scam|abuse/i.test(reason || '')) score += 1
 
   const risk = score >= 5 ? 'high' : score >= 2 ? 'medium' : 'low'
   const summary =
     hits.length > 0
-      ? `Local review (${risk}). Signals: ${[...new Set(hits)].slice(0, 8).join(', ')}. Messages in snapshot: ${(snapshot || []).length}. Reason: ${(reason || '').slice(0, 120)}`
-      : `Local review (${risk}). No strong keyword signals. Messages in snapshot: ${(snapshot || []).length}. Reason: ${(reason || '').slice(0, 120)}`
+      ? `Re-review (${risk}). Signals: ${[...new Set(hits)].slice(0, 8).join(', ')}. Msgs: ${(snapshot || []).length}`
+      : `Re-review (${risk}). No strong signals. Msgs: ${(snapshot || []).length}`
 
   return { risk, summary }
 }
 
-async function openAiReview(
-  reason: string,
-  snapshot: any[]
-): Promise<{ risk: string; summary: string } | null> {
+async function openAiReview(reason: string, snapshot: any[]) {
   const key = process.env.OPENAI_API_KEY
   if (!key) return null
-
   const lines = (snapshot || [])
     .map((m, i) => {
       const body =
-        m.type === 'text'
-          ? String(m.content || '').slice(0, 500)
-          : `[${m.type}]`
+        m.type === 'text' ? String(m.content || '').slice(0, 500) : `[${m.type}]`
       return `${i + 1}. (${m.type}) ${body}`
     })
     .join('\n')
-
-  const prompt = `You moderate a private ephemeral chat app. Given a user report and message snapshot, reply with ONLY JSON:
-{"risk":"low"|"medium"|"high","summary":"one short paragraph"}
-Do not invent messages. Snapshot may include encrypted ciphertext — say if unreadable.
-
-Report reason: ${reason}
-
-Messages:
-${lines || '(none)'}`
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -119,9 +83,12 @@ ${lines || '(none)'}`
         messages: [
           {
             role: 'system',
-            content: 'You are a careful trust & safety assistant. Output JSON only.',
+            content: 'Trust & safety assistant. Output JSON only: {"risk":"low"|"medium"|"high","summary":"..."}',
           },
-          { role: 'user', content: prompt },
+          {
+            role: 'user',
+            content: `Reason: ${reason}\n\nMessages:\n${lines || '(none)'}`,
+          },
         ],
       }),
     })
@@ -131,12 +98,9 @@ ${lines || '(none)'}`
     const match = raw.match(/\{[\s\S]*\}/)
     if (!match) return null
     const parsed = JSON.parse(match[0])
-    const risk = ['low', 'medium', 'high'].includes(parsed.risk)
-      ? parsed.risk
-      : 'medium'
     return {
-      risk,
-      summary: String(parsed.summary || 'AI review completed').slice(0, 1000),
+      risk: ['low', 'medium', 'high'].includes(parsed.risk) ? parsed.risk : 'medium',
+      summary: String(parsed.summary || 'Done').slice(0, 1000),
     }
   } catch {
     return null
@@ -145,13 +109,10 @@ ${lines || '(none)'}`
 
 export async function POST(req: Request) {
   const authHeader = req.headers.get('Authorization')
-
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      global: { headers: { Authorization: authHeader || '' } },
-    }
+    { global: { headers: { Authorization: authHeader || '' } } }
   )
 
   const {
@@ -190,7 +151,12 @@ export async function POST(req: Request) {
     engine = 'local'
   }
 
-  const { error: upErr } = await supabase
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const db = serviceKey
+    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey)
+    : supabase
+
+  await db
     .from('reports')
     .update({
       ai_status: 'done',
@@ -200,8 +166,14 @@ export async function POST(req: Request) {
     })
     .eq('id', report_id)
 
-  if (upErr) {
-    return NextResponse.json({ error: upErr.message }, { status: 500 })
+  if (result.risk === 'high' && report.reported_id) {
+    const suspended_until = new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    ).toISOString()
+    await db
+      .from('profiles')
+      .update({ status: 'suspended', suspended_until })
+      .eq('id', report.reported_id)
   }
 
   return NextResponse.json({
