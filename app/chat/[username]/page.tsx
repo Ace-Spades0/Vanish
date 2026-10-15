@@ -998,94 +998,99 @@ export default function ChatPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
+      {/* MESSAGE WALL — empty text centered */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col">
         {messages.length === 0 ? (
-          <p className="text-center text-zinc-500 text-sm py-16">
-            {chatExpired || sealed
-              ? 'This chat has ended.'
-              : 'Nothing here yet. When you speak, it can vanish.'}
-          </p>
+          <div className="flex-1 flex items-center justify-center px-4">
+            <p className="text-center text-zinc-500 text-sm leading-relaxed max-w-xs">
+              {chatExpired || sealed
+                ? 'This chat has ended.'
+                : 'Nothing here yet. When you speak, it can vanish.'}
+            </p>
+          </div>
         ) : (
-          messages.map((msg) => {
-            const mine = msg.sender_id === user?.id
-            return (
-              <div
-                key={msg.id}
-                className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
-                onTouchStart={() => startLongPress(msg)}
-                onTouchEnd={endLongPress}
-                onMouseDown={() => startLongPress(msg)}
-                onMouseUp={endLongPress}
-                onMouseLeave={endLongPress}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  openMsgMenu(msg)
-                }}
-              >
+          <div className="space-y-3">
+            {messages.map((msg) => {
+              const mine = msg.sender_id === user?.id
+              return (
                 <div
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
-                    mine
-                      ? 'bg-cyan-600 text-white rounded-br-md'
-                      : 'bg-zinc-800 text-zinc-100 rounded-bl-md'
-                  }`}
+                  key={msg.id}
+                  className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+                  onTouchStart={() => startLongPress(msg)}
+                  onTouchEnd={endLongPress}
+                  onMouseDown={() => startLongPress(msg)}
+                  onMouseUp={endLongPress}
+                  onMouseLeave={endLongPress}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    openMsgMenu(msg)
+                  }}
                 >
-                  {msg.type === 'image' && (
-                    <div>
-                      <img
-                        src={msg.content}
-                        alt=""
-                        className="max-w-full rounded-lg mb-1"
-                      />
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                      mine
+                        ? 'bg-cyan-600 text-white rounded-br-md'
+                        : 'bg-zinc-800 text-zinc-100 rounded-bl-md'
+                    }`}
+                  >
+                    {msg.type === 'image' && (
+                      <div>
+                        <img
+                          src={msg.content}
+                          alt=""
+                          className="max-w-full rounded-lg mb-1"
+                        />
+                        <a
+                          href={msg.content}
+                          download
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline opacity-90"
+                        >
+                          Download
+                        </a>
+                      </div>
+                    )}
+                    {msg.type === 'video' && (
+                      <div>
+                        <video
+                          src={msg.content}
+                          controls
+                          className="max-w-full rounded-lg mb-1"
+                        />
+                        <a
+                          href={msg.content}
+                          download
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline opacity-90"
+                        >
+                          Download
+                        </a>
+                      </div>
+                    )}
+                    {msg.type === 'file' && (
                       <a
                         href={msg.content}
-                        download
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs underline opacity-90"
+                        className="text-sm underline break-all"
                       >
-                        Download
+                        📎 File — open / download
                       </a>
-                    </div>
-                  )}
-                  {msg.type === 'video' && (
-                    <div>
-                      <video
-                        src={msg.content}
-                        controls
-                        className="max-w-full rounded-lg mb-1"
-                      />
-                      <a
-                        href={msg.content}
-                        download
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs underline opacity-90"
-                      >
-                        Download
-                      </a>
-                    </div>
-                  )}
-                  {msg.type === 'file' && (
-                    <a
-                      href={msg.content}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm underline break-all"
-                    >
-                      📎 File — open / download
-                    </a>
-                  )}
-                  {msg.type === 'text' && (
-                    <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">
-                      {msg.content}
-                    </p>
-                  )}
+                    )}
+                    {msg.type === 'text' && (
+                      <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">
+                        {msg.content}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )
-          })
+              )
+            })}
+            <div ref={messagesEndRef} />
+          </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {(chatExpired || sealed) && messages.length === 0 && (
