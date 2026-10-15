@@ -4,12 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-const ADMIN_ID = 'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7'
-
-const SUSPEND_OPTIONS = [
-  { label: '24 hours', hours: 24 },
-  { label: '7 days', hours: 24 * 7 },
-  { label: '30 days', hours: 24 * 30 },
+const ADMIN_IDS = [
+  'a78d8a8e-de03-4159-a3c2-b5788e7cf5b7',
 ]
 
 export default function ReportsDashboard() {
@@ -18,43 +14,24 @@ export default function ReportsDashboard() {
   const [reports, setReports] = useState<any[]>([])
   const [logs, setLogs] = useState<any[]>([])
   const [names, setNames] = useState<Record<string, string>>({})
-  const [profileInfo, setProfileInfo] = useState<
-    Record<
-      string,
-      { status?: string; report_count?: number; suspended_until?: string | null }
-    >
-  >({})
   const [tab, setTab] = useState<'reports' | 'logs'>('reports')
   const [loading, setLoading] = useState(true)
   const [actionMessage, setActionMessage] = useState('')
-  const [busyId, setBusyId] = useState<string | null>(null)
+  const [reviewingId, setReviewingId] = useState<string | null>(null)
+  const [openSnapshotId, setOpenSnapshotId] = useState<string | null>(null)
 
   const loadNames = async (ids: string[]) => {
     const unique = Array.from(new Set(ids.filter(Boolean)))
     if (unique.length === 0) return
-
     const { data } = await supabase
       .from('profiles')
-      .select('id, username, status, report_count, suspended_until')
+      .select('id, username')
       .in('id', unique)
-
     const map: Record<string, string> = {}
-    const info: Record<
-      string,
-      { status?: string; report_count?: number; suspended_until?: string | null }
-    > = {}
-
     ;(data || []).forEach((p) => {
       map[p.id] = p.username || 'No username'
-      info[p.id] = {
-        status: p.status || 'active',
-        report_count: p.report_count ?? 0,
-        suspended_until: p.suspended_until,
-      }
     })
-
     setNames((prev) => ({ ...prev, ...map }))
-    setProfileInfo((prev) => ({ ...prev, ...info }))
   }
 
   const displayUser = (id?: string) => {
@@ -64,22 +41,37 @@ export default function ReportsDashboard() {
     return `${username} (${id.slice(0, 8)}…)`
   }
 
-  const statusLabel = (id?: string) => {
-    if (!id) return '—'
-    const p = profileInfo[id]
-    if (!p) return 'unknown'
-    if (p.status === 'banned') return 'BANNED (permanent)'
-    if (p.status === 'suspended') {
-      if (p.suspended_until) {
-        const t = new Date(p.suspended_until)
-        if (t.getTime() > Date.now()) {
-          return `Suspended until ${t.toLocaleString()}`
-        }
-        return 'Suspended (time ended)'
-      }
-      return 'Suspended (permanent)'
-    }
-    return 'Active'
+  const riskColor = (risk?: string) => {
+    if (risk === 'high') return 'text-red-400'
+    if (risk === 'medium') return 'text-yellow-400'
+    if (risk === 'low') return 'text-emerald-400'
+    return 'text-zinc-400'
+  }
+
+  const loadReports = async () => {
+    const { data } = await supabase
+      .from('reports')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    const list = data || []
+    setReports(list)
+    const ids: string[] = []
+    list.forEach((r) => {
+      if (r.reporter_id) ids.push(r.reporter_id)
+      if (r.reported_id) ids.push(r.reported_id)
+    })
+    await loadNames(ids)
+  }
+
+  const loadLogs = async () => {
+    const { data } = await supabase
+      .from('safety_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setLogs(data || [])
   }
 
   useEffect(() => {
@@ -91,199 +83,114 @@ export default function ReportsDashboard() {
         router.push('/auth')
         return
       }
-      setUser(user)
-
-      if (user.id !== ADMIN_ID) {
-        setLoading(false)
+      if (!ADMIN_IDS.includes(user.id)) {
+        router.push('/home')
         return
       }
-
-      const { data: reportData } = await supabase
-        .from('reports')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      const { data: logData } = await supabase
-        .from('audit_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50)
-
-      const list = reportData || []
-      setReports(list)
-      setLogs(logData || [])
-
-      const ids = list.flatMap((r) => [r.reporter_id, r.reported_id])
-      await loadNames(ids)
+      setUser(user)
+      await loadReports()
+      await loadLogs()
       setLoading(false)
     }
     init()
   }, [])
 
-  const getToken = async () => {
+  const runAiReview = async (reportId: string) => {
+    setReviewingId(reportId)
+    setActionMessage('')
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    return session?.access_token || null
+    const res = await fetch('/api/admin/ai-review', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session?.access_token || ''}`,
+      },
+      body: JSON.stringify({ report_id: reportId }),
+    })
+    const data = await res.json()
+    if (data.error) {
+      setActionMessage(data.error)
+    } else {
+      setActionMessage(
+        `AI review done (${data.engine}): ${data.risk} — ${data.summary?.slice(0, 80)}…`
+      )
+      await loadReports()
+    }
+    setReviewingId(null)
   }
 
-  const callSetStatus = async (
-    userId: string,
-    status: 'active' | 'suspended' | 'banned',
+  const setSuspension = async (
+    profileId: string,
+    mode: 'timed' | 'permanent' | 'clear',
     hours?: number
   ) => {
-    setBusyId(userId)
     setActionMessage('')
-    try {
-      const token = await getToken()
-      if (!token) {
-        setActionMessage('Please log in again as LESTAT')
-        return
-      }
-
-      const res = await fetch('/api/admin/set-status', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          user_id: userId,
-          status,
-          hours: hours ?? null,
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        setActionMessage(data.error || `Failed (${res.status})`)
-        return
-      }
-
-      setProfileInfo((prev) => ({
-        ...prev,
-        [userId]: {
-          ...prev[userId],
-          status: data.status,
-          suspended_until: data.suspended_until ?? null,
-        },
-      }))
-
-      if (status === 'active') {
-        setActionMessage('Unsuspended — user is active')
-      } else if (status === 'banned') {
-        setActionMessage('User banned and signed out of all sessions')
-      } else if (hours) {
-        setActionMessage(
-          `Suspended ${hours}h until ${new Date(data.suspended_until).toLocaleString()} — sessions revoked`
-        )
-      } else {
-        setActionMessage('Permanent suspend — sessions revoked')
-      }
-    } catch (e: any) {
-      setActionMessage(e?.message || 'Request failed')
-    } finally {
-      setBusyId(null)
+    let status = 'active'
+    let suspended_until: string | null = null
+    if (mode === 'permanent') {
+      status = 'banned'
+    } else if (mode === 'timed') {
+      status = 'suspended'
+      suspended_until = new Date(
+        Date.now() + (hours || 24) * 60 * 60 * 1000
+      ).toISOString()
     }
-  }
 
-  const markReviewed = async (id: string) => {
     const { error } = await supabase
-      .from('reports')
-      .update({ reviewed: true })
-      .eq('id', id)
-    if (error) {
-      setActionMessage(error.message)
-      return
-    }
-    setReports((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, reviewed: true } : r))
-    )
-    setActionMessage('Report marked as reviewed')
-  }
+      .from('profiles')
+      .update({ status, suspended_until })
+      .eq('id', profileId)
 
-  const deleteReport = async (id: string) => {
-    const { error } = await supabase.from('reports').delete().eq('id', id)
-    if (error) {
-      setActionMessage(error.message)
-      return
-    }
-    setReports((prev) => prev.filter((r) => r.id !== id))
-    setActionMessage('Report deleted')
+    if (error) setActionMessage(error.message)
+    else
+      setActionMessage(
+        mode === 'clear'
+          ? 'User unsuspended'
+          : mode === 'permanent'
+            ? 'User permanently suspended'
+            : `User suspended for ${hours}h`
+      )
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#05070c] text-white flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
-  if (user?.id !== ADMIN_ID) {
-    return (
-      <div className="min-h-screen bg-[#05070c] text-white flex flex-col items-center justify-center px-6 text-center">
-        <div className="text-6xl mb-4">⛔</div>
-        <h1 className="text-3xl font-bold mb-2">Access Denied</h1>
-        <p className="text-zinc-400 mb-6">
-          You do not have permission to view this page.
-        </p>
-        <button
-          onClick={() => router.push('/home')}
-          className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-3 rounded-xl border border-zinc-700"
-        >
-          Back Home
-        </button>
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <p className="text-zinc-400">Loading admin…</p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-[#05070c] text-white relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[700px] h-[500px] bg-purple-600/15 blur-[130px] rounded-full" />
-        <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-cyan-500/10 blur-[120px] rounded-full" />
-      </div>
-
-      <div className="relative z-10 p-6 max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.25em] text-purple-300/70 mb-2">
-              Go Vanish · LESTAT only
-            </p>
-            <h1 className="text-3xl font-bold mb-1">Admin Panel</h1>
-            <p className="text-zinc-400 text-sm">
-              Suspend uses server API + signs user out of all sessions
-            </p>
-          </div>
+    <div className="min-h-screen bg-black text-white px-4 py-8">
+      <div className="max-w-3xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Admin · Reports</h1>
           <button
             onClick={() => router.push('/home')}
-            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition self-start"
+            className="text-sm text-cyan-400"
           >
-            ← Back to Home
+            ← Home
           </button>
         </div>
 
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setTab('reports')}
-            className={`px-4 py-2 rounded-xl text-sm border transition ${
-              tab === 'reports'
-                ? 'bg-cyan-500 text-black border-cyan-400'
-                : 'bg-zinc-900/80 text-white border-zinc-700'
+            className={`px-4 py-2 rounded-xl text-sm font-medium ${
+              tab === 'reports' ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
             }`}
           >
-            Reports ({reports.length})
+            Reports
           </button>
           <button
             onClick={() => setTab('logs')}
-            className={`px-4 py-2 rounded-xl text-sm border transition ${
-              tab === 'logs'
-                ? 'bg-cyan-500 text-black border-cyan-400'
-                : 'bg-zinc-900/80 text-white border-zinc-700'
+            className={`px-4 py-2 rounded-xl text-sm font-medium ${
+              tab === 'logs' ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
             }`}
           >
-            Safety logs ({logs.length})
+            Safety logs
           </button>
         </div>
 
@@ -294,140 +201,120 @@ export default function ReportsDashboard() {
         {tab === 'reports' && (
           <>
             {reports.length === 0 ? (
-              <p className="text-zinc-500 text-center mt-20">No reports found.</p>
+              <p className="text-zinc-500 text-center mt-16">No reports yet.</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {reports.map((report) => {
-                  const info = profileInfo[report.reported_id] || {}
-                  const isBlocked =
-                    info.status === 'suspended' || info.status === 'banned'
-                  const busy = busyId === report.reported_id
+              <div className="space-y-4">
+                {reports.map((r) => (
+                  <div
+                    key={r.id}
+                    className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"
+                  >
+                    <p className="text-sm text-zinc-400 mb-1">
+                      {r.created_at
+                        ? new Date(r.created_at).toLocaleString()
+                        : '—'}
+                    </p>
+                    <p className="text-sm mb-1">
+                      <span className="text-zinc-500">Reporter: </span>
+                      <span className="text-cyan-400">
+                        {displayUser(r.reporter_id)}
+                      </span>
+                    </p>
+                    <p className="text-sm mb-2">
+                      <span className="text-zinc-500">Reported: </span>
+                      <span className="text-yellow-400">
+                        {displayUser(r.reported_id)}
+                      </span>
+                    </p>
+                    <p className="text-sm text-zinc-200 mb-2 whitespace-pre-wrap">
+                      {r.reason}
+                    </p>
+                    <p className="text-xs text-zinc-500 mb-2">
+                      Conversation: {r.conversation_id || '—'}
+                    </p>
 
-                  return (
-                    <div
-                      key={report.id}
-                      className="bg-zinc-900/70 backdrop-blur-sm p-5 rounded-2xl border border-zinc-800/80 shadow-lg"
-                    >
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-xl">⚠️</span>
-                        <h2 className="text-base font-bold text-cyan-400">Report</h2>
-                        {report.reviewed && (
-                          <span className="ml-auto text-[10px] text-green-400 border border-green-800 px-2 py-0.5 rounded-full">
-                            Reviewed
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="text-sm text-zinc-400 mb-2 break-all">
-                        <span className="text-zinc-200">Reporter:</span>{' '}
-                        {displayUser(report.reporter_id)}
+                    {/* AI status */}
+                    <div className="mb-3 p-3 rounded-xl bg-black/40 border border-zinc-800">
+                      <p className="text-xs text-zinc-500 mb-1">AI review</p>
+                      <p className={`text-sm font-medium ${riskColor(r.ai_risk)}`}>
+                        {r.ai_status === 'done'
+                          ? `Risk: ${r.ai_risk || '—'}`
+                          : r.ai_status || 'pending'}
                       </p>
-                      <p className="text-sm text-zinc-400 mb-2 break-all">
-                        <span className="text-zinc-200">Reported:</span>{' '}
-                        {displayUser(report.reported_id)}
-                      </p>
-                      <p className="text-sm text-zinc-400 mb-1">
-                        <span className="text-zinc-200">Reports on account:</span>{' '}
-                        <span className="text-amber-300 font-semibold">
-                          {info.report_count ?? 0}
-                        </span>
-                      </p>
-                      <p className="text-sm text-zinc-400 mb-1">
-                        <span className="text-zinc-200">Status:</span>{' '}
-                        <span
-                          className={
-                            info.status === 'banned'
-                              ? 'text-red-400'
-                              : info.status === 'suspended'
-                                ? 'text-yellow-400'
-                                : 'text-green-400'
-                          }
-                        >
-                          {statusLabel(report.reported_id)}
-                        </span>
-                      </p>
-                      <p className="text-sm text-zinc-400 mb-1">
-                        <span className="text-zinc-200">Reason:</span>{' '}
-                        {report.reason || '—'}
-                      </p>
-                      <p className="text-xs text-zinc-500 mb-4">
-                        {report.created_at
-                          ? new Date(report.created_at).toLocaleString()
-                          : '—'}
-                      </p>
-
-                      {!report.reviewed && (
-                        <button
-                          onClick={() => markReviewed(report.id)}
-                          disabled={busy}
-                          className="w-full bg-green-600 hover:bg-green-500 text-black py-2 rounded-lg mb-2 text-sm font-medium disabled:opacity-50"
-                        >
-                          Mark Reviewed
-                        </button>
+                      {r.ai_summary && (
+                        <p className="text-xs text-zinc-400 mt-1 whitespace-pre-wrap">
+                          {r.ai_summary}
+                        </p>
                       )}
-
-                      <p className="text-[11px] text-zinc-500 mb-1.5 uppercase tracking-wide">
-                        Suspend time
-                      </p>
-                      <div className="grid grid-cols-3 gap-1.5 mb-2">
-                        {SUSPEND_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.hours}
-                            disabled={busy}
-                            onClick={() =>
-                              callSetStatus(
-                                report.reported_id,
-                                'suspended',
-                                opt.hours
-                              )
-                            }
-                            className="bg-yellow-600 hover:bg-yellow-500 text-black py-2 rounded-lg text-[11px] font-medium disabled:opacity-50"
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          callSetStatus(report.reported_id, 'suspended')
-                        }
-                        className="w-full bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-lg mb-2 text-sm font-medium disabled:opacity-50"
-                      >
-                        Permanent suspend
-                      </button>
-
-                      <button
-                        disabled={busy}
-                        onClick={() => callSetStatus(report.reported_id, 'banned')}
-                        className="w-full bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg mb-2 text-sm font-medium disabled:opacity-50"
-                      >
-                        Permanent ban
-                      </button>
-
-                      {isBlocked && (
+                      <div className="flex flex-wrap gap-2 mt-2">
                         <button
-                          disabled={busy}
+                          type="button"
+                          disabled={reviewingId === r.id}
+                          onClick={() => runAiReview(r.id)}
+                          className="text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 rounded-lg disabled:opacity-50"
+                        >
+                          {reviewingId === r.id ? 'Reviewing…' : 'Run AI review'}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() =>
-                            callSetStatus(report.reported_id, 'active')
+                            setOpenSnapshotId((id) =>
+                              id === r.id ? null : r.id
+                            )
                           }
-                          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black py-2.5 rounded-lg mb-2 text-sm font-bold disabled:opacity-50"
+                          className="text-xs font-semibold bg-zinc-700 px-3 py-1.5 rounded-lg"
                         >
-                          Unsuspend / Set Active
+                          {openSnapshotId === r.id
+                            ? 'Hide snapshot'
+                            : `Snapshot (${Array.isArray(r.message_snapshot) ? r.message_snapshot.length : 0})`}
                         </button>
+                      </div>
+                      {openSnapshotId === r.id && (
+                        <pre className="mt-2 text-[10px] text-zinc-400 overflow-x-auto max-h-48 bg-black/50 p-2 rounded-lg">
+                          {JSON.stringify(r.message_snapshot || [], null, 2)}
+                        </pre>
                       )}
+                    </div>
 
+                    {/* Quick suspend */}
+                    <div className="flex flex-wrap gap-2">
                       <button
-                        onClick={() => deleteReport(report.id)}
-                        disabled={busy}
-                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg border border-zinc-700 text-sm disabled:opacity-50"
+                        type="button"
+                        onClick={() =>
+                          setSuspension(r.reported_id, 'timed', 24)
+                        }
+                        className="text-xs bg-yellow-700 px-2 py-1 rounded-lg"
                       >
-                        Delete Report
+                        Suspend 24h
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSuspension(r.reported_id, 'timed', 168)
+                        }
+                        className="text-xs bg-orange-700 px-2 py-1 rounded-lg"
+                      >
+                        Suspend 7d
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSuspension(r.reported_id, 'permanent')
+                        }
+                        className="text-xs bg-red-700 px-2 py-1 rounded-lg"
+                      >
+                        Ban
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSuspension(r.reported_id, 'clear')}
+                        className="text-xs bg-emerald-700 px-2 py-1 rounded-lg"
+                      >
+                        Unsuspend
                       </button>
                     </div>
-                  )
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </>
@@ -436,13 +323,15 @@ export default function ReportsDashboard() {
         {tab === 'logs' && (
           <>
             {logs.length === 0 ? (
-              <p className="text-zinc-500 text-center mt-20">No safety logs yet.</p>
+              <p className="text-zinc-500 text-center mt-16">
+                No safety logs found.
+              </p>
             ) : (
               <div className="space-y-4">
                 {logs.map((log) => (
                   <div
                     key={log.id}
-                    className="bg-zinc-900/70 border border-zinc-800/80 rounded-2xl p-5"
+                    className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"
                   >
                     <p className="text-cyan-400 font-medium mb-2">
                       {log.payload?.action || 'safety_event'}
@@ -450,12 +339,13 @@ export default function ReportsDashboard() {
                     <p className="text-sm text-zinc-400 mb-1">
                       Conversation: {log.conversation_id || '—'}
                     </p>
-                    <p className="text-sm text-zinc-500 mb-1">
+                    <p className="text-sm text-zinc-400 mb-1">
+                      Time:{' '}
                       {log.created_at
                         ? new Date(log.created_at).toLocaleString()
                         : '—'}
                     </p>
-                    <pre className="mt-3 text-xs text-zinc-300 bg-black/50 p-3 rounded-xl overflow-x-auto border border-zinc-800">
+                    <pre className="mt-3 text-xs text-zinc-300 bg-black/40 p-3 rounded-xl overflow-x-auto">
                       {JSON.stringify(log.payload || {}, null, 2)}
                     </pre>
                   </div>
