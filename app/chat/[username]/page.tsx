@@ -866,28 +866,69 @@ export default function ChatPage() {
 
   return (
     <div className="h-[100dvh] bg-black text-white flex flex-col overflow-hidden">
-      {/* HEADER — only sizes + emoji changed */}
-      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
-        <div className="flex items-start gap-2 mb-1">
-          <button
-            type="button"
-            onClick={() => router.push('/search')}
-            className="shrink-0 h-11 px-4 rounded-xl bg-zinc-800 border-2 border-cyan-400 text-cyan-300 font-bold text-base mt-0.5"
-          >
-            ← Back
-          </button>
+      {/* HEADER — stack down + Back under More */}
+      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-3 py-2.5">
+        <div className="flex gap-3">
+          {/* LEFT: all text + timers stacked going down */}
           <div className="min-w-0 flex-1">
             <p className="text-sm text-zinc-400 leading-none mb-1">
               Chatting with
             </p>
-            <p className="text-xl font-bold text-cyan-400 truncate leading-tight">
+            <p className="text-xl font-bold text-cyan-400 truncate leading-tight mb-1">
               {targetUser?.avatar_icon || '🎭'} {targetUsername}
             </p>
-            <p className="text-sm text-zinc-400 mt-1 leading-snug">
+            <p className="text-sm text-zinc-400 leading-snug mb-2">
               No last seen · No read receipts · Text encrypted
             </p>
+            <p className="text-sm text-zinc-400 mb-1.5">
+              Chat length (from first message)
+            </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {DURATION_OPTIONS.map((opt) => (
+                <button
+                  key={opt.minutes}
+                  type="button"
+                  disabled={savingDuration}
+                  onClick={() => pickMyDuration(opt.minutes)}
+                  className={`h-9 min-w-[2.75rem] px-2.5 rounded-lg text-sm font-bold border ${
+                    myDuration === opt.minutes
+                      ? 'bg-cyan-500 text-black border-cyan-300'
+                      : 'bg-zinc-900 text-zinc-300 border-zinc-600'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+              <span className="w-px h-5 bg-zinc-600 mx-0.5" />
+              <button
+                onClick={() => setModal('clear')}
+                className="h-9 px-3 rounded-lg text-sm font-semibold bg-orange-600 text-white"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => {
+                  setReportMessageId(null)
+                  setReportMessagePreview('')
+                  setReportType('')
+                  setReportReason('')
+                  setModal('report')
+                }}
+                className="h-9 px-3 rounded-lg text-sm font-semibold bg-yellow-600 text-white"
+              >
+                Report
+              </button>
+              <button
+                onClick={() => setModal('block')}
+                className="h-9 px-3 rounded-lg text-sm font-semibold bg-red-600 text-white"
+              >
+                Block
+              </button>
+            </div>
           </div>
-          <div className="shrink-0 flex flex-col items-end gap-1">
+
+          {/* RIGHT: counters, More, then Back under More */}
+          <div className="shrink-0 flex flex-col items-end gap-1.5">
             <div className="flex gap-1">
               <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
                 {fileCount}/4 files
@@ -903,58 +944,18 @@ export default function ChatPage() {
             >
               {headerOpen ? '▲ Less' : '▼ More'}
             </button>
+            <button
+              type="button"
+              onClick={() => router.push('/search')}
+              className="h-10 px-4 rounded-xl bg-zinc-800 border-2 border-cyan-400 text-cyan-300 font-bold text-sm"
+            >
+              ← Back
+            </button>
           </div>
         </div>
 
-        <p className="text-sm text-zinc-400 mb-1.5 px-0.5">
-          Chat length (from first message)
-        </p>
-
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {DURATION_OPTIONS.map((opt) => (
-            <button
-              key={opt.minutes}
-              type="button"
-              disabled={savingDuration}
-              onClick={() => pickMyDuration(opt.minutes)}
-              className={`h-9 min-w-[2.75rem] px-2.5 rounded-lg text-sm font-bold border ${
-                myDuration === opt.minutes
-                  ? 'bg-cyan-500 text-black border-cyan-300'
-                  : 'bg-zinc-900 text-zinc-300 border-zinc-600'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-          <span className="w-px h-5 bg-zinc-600 mx-0.5" />
-          <button
-            onClick={() => setModal('clear')}
-            className="h-9 px-3 rounded-lg text-sm font-semibold bg-orange-600 text-white"
-          >
-            Clear
-          </button>
-          <button
-            onClick={() => {
-              setReportMessageId(null)
-              setReportMessagePreview('')
-              setReportType('')
-              setReportReason('')
-              setModal('report')
-            }}
-            className="h-9 px-3 rounded-lg text-sm font-semibold bg-yellow-600 text-white"
-          >
-            Report
-          </button>
-          <button
-            onClick={() => setModal('block')}
-            className="h-9 px-3 rounded-lg text-sm font-semibold bg-red-600 text-white"
-          >
-            Block
-          </button>
-        </div>
-
         {headerOpen && (
-          <div className="flex gap-2 mt-2 pt-2 border-t border-white/10">
+          <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-white/10">
             <button
               type="button"
               onClick={requestSealToggle}
@@ -1000,7 +1001,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
         {messages.length === 0 ? (
           <p className="text-center text-zinc-500 text-sm py-16">
@@ -1091,12 +1091,9 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* ENDED STATE */}
       {(chatExpired || sealed) && messages.length === 0 && (
         <div className="shrink-0 p-4 border-t border-zinc-800 bg-zinc-950">
-          <p className="text-center text-zinc-400 text-sm mb-3">
-            Chat ended.
-          </p>
+          <p className="text-center text-zinc-400 text-sm mb-3">Chat ended.</p>
           {canStartNewChat() ? (
             <button
               onClick={requestNewChat}
@@ -1113,7 +1110,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* INPUT */}
       {!chatExpired && !sealed && (
         <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 p-2">
           <div className="flex items-end gap-2">
@@ -1174,7 +1170,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* MODALS */}
       {modal === 'safety' && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-3xl p-6">
