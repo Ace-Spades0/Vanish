@@ -866,10 +866,8 @@ export default function ChatPage() {
 
   return (
     <div className="h-[100dvh] bg-black text-white flex flex-col overflow-hidden">
-      {/* HEADER — stack down + Back under More */}
       <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-3 py-2.5">
         <div className="flex gap-3">
-          {/* LEFT: all text + timers stacked going down */}
           <div className="min-w-0 flex-1">
             <p className="text-sm text-zinc-400 leading-none mb-1">
               Chatting with
@@ -927,7 +925,6 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {/* RIGHT: counters, More, then Back under More */}
           <div className="shrink-0 flex flex-col items-end gap-1.5">
             <div className="flex gap-1">
               <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
@@ -1006,7 +1003,7 @@ export default function ChatPage() {
           <p className="text-center text-zinc-500 text-sm py-16">
             {chatExpired || sealed
               ? 'This chat has ended.'
-              : 'No messages yet. Say something.'}
+              : 'Nothing here yet. When you speak, it can vanish.'}
           </p>
         ) : (
           messages.map((msg) => {
