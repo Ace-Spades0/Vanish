@@ -712,7 +712,6 @@ export default function ChatPage() {
     e.target.value = ''
   }
     const openMsgMenu = (msg: any) => {
-    if (!user || msg.sender_id !== user.id || msg.type !== 'text') return
     setActiveMsg(msg)
     setEditText(msg.content || '')
     setMsgMenu('menu')
@@ -720,36 +719,33 @@ export default function ChatPage() {
 
   const startLongPress = (msg: any) => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current)
-    longPressTimer.current = setTimeout(() => {
-      setReportMessageId(msg.id)
-      setReportMessagePreview(
-        msg.type === 'text' ? (msg.content || '').slice(0, 120) : `[${msg.type}]`
-      )
-      setReportType('')
-      setReportReason('')
-      setModal('report')
-    }, 550)
+    longPressTimer.current = setTimeout(() => openMsgMenu(msg), 500)
   }
 
-  const cancelLongPress = () => {
+  const endLongPress = () => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current)
       longPressTimer.current = null
     }
   }
 
-  const vanishOneMessage = async () => {
-    if (!activeMsg) return
-    await supabase.from('messages').update({ deleted: true }).eq('id', activeMsg.id)
+  const vanishOneMessage = async (msg: any) => {
+    if (!msg?.id || msg.sender_id !== user?.id) return
+    await supabase.from('messages').update({ deleted: true }).eq('id', msg.id)
+    setMessages((prev) => {
+      const next = prev.filter((m) => m.id !== msg.id)
+      recountMedia(next)
+      return next
+    })
     setMsgMenu(null)
     setActiveMsg(null)
   }
 
   const saveEditMessage = async () => {
-    if (!activeMsg || !editText.trim() || !conversationId) return
+    if (!activeMsg || activeMsg.sender_id !== user?.id || !editText.trim()) return
     let payload = editText.trim()
     try {
-      payload = await encryptText(conversationId, editText.trim())
+      payload = await encryptText(conversationId, payload)
     } catch {
       alert('Could not encrypt')
       return
@@ -771,8 +767,8 @@ export default function ChatPage() {
     setActiveMsg(null)
   }
 
-  const confirmClearChat = async () => {
-    if (!conversationId || !user) return
+  const clearChat = async () => {
+    if (!conversationId) return
     await supabase
       .from('messages')
       .update({ deleted: true })
@@ -780,8 +776,12 @@ export default function ChatPage() {
     setMessages([])
     setFileCount(0)
     setVideoCount(0)
+    setChatEndsAt(null)
+    setFirstMsgAt(null)
     setSealed(true)
     setModal(null)
+    setSafetyNext('enter')
+    setModal('safety')
   }
 
   const confirmBlockUser = async () => {
@@ -789,38 +789,36 @@ export default function ChatPage() {
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    if (!session) return
     const res = await fetch('/api/block', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${session?.access_token || ''}`,
       },
       body: JSON.stringify({ blocked_id: targetUser.id }),
     })
     const data = await res.json()
-    if (!res.ok) {
-      alert(data.error || 'Block failed')
+    if (data.error) {
+      alert(data.error)
       return
     }
-    setModal(null)
     setBlocked(true)
+    setModal(null)
   }
 
   const confirmReportUser = async () => {
     if (!user || !targetUser || !reportType || !reportReason.trim()) {
-      alert('Choose type and explain')
+      alert('Choose a type and explain')
       return
     }
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    if (!session) return
-    await fetch('/api/report', {
+    const res = await fetch('/api/report', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${session?.access_token || ''}`,
       },
       body: JSON.stringify({
         reported_id: targetUser.id,
@@ -829,8 +827,14 @@ export default function ChatPage() {
         message_id: reportMessageId,
       }),
     })
+    const data = await res.json()
+    if (data.error) {
+      alert(data.error)
+      return
+    }
     setModal(null)
     setReportMessageId(null)
+    setReportMessagePreview('')
     setReportType('')
     setReportReason('')
     alert('Report submitted')
@@ -839,47 +843,21 @@ export default function ChatPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+        <p className="text-zinc-400">Loading chat...</p>
       </div>
     )
   }
 
   if (blocked) {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6">
-        <p className="text-zinc-400 mb-4">Chat unavailable</p>
-        <button
-          onClick={() => router.push('/search')}
-          className="bg-cyan-500 text-black px-6 py-3 rounded-xl font-medium"
-        >
-          Back to Search
-        </button>
-      </div>
-    )
-  }
-
-  if (chatExpired || (sealed && messages.length === 0 && hadMessagesRef.current)) {
-    return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
-        <p className="text-xl font-semibold mb-2">This chat has vanished</p>
-        <p className="text-zinc-500 text-sm mb-6">
-          {chatExpired ? 'Time ended.' : 'Chat was cleared.'}
-        </p>
-        <div className="flex flex-col gap-3 w-full max-w-xs">
-          {canStartNewChat() && (
-            <button
-              onClick={requestNewChat}
-              disabled={startingNew}
-              className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
-            >
-              Start new chat
-            </button>
-          )}
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="text-center max-w-sm">
+          <p className="text-lg mb-4">Chat unavailable with this user.</p>
           <button
             onClick={() => router.push('/search')}
-            className="w-full bg-zinc-800 border border-zinc-700 py-3 rounded-xl"
+            className="bg-cyan-500 text-black font-medium px-6 py-3 rounded-xl"
           >
-            Search
+            Back to Search
           </button>
         </div>
       </div>
@@ -887,8 +865,9 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#05070c] text-white flex flex-col h-[100dvh]">
-            <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
+    <div className="h-[100dvh] bg-black text-white flex flex-col overflow-hidden">
+      {/* HEADER — only sizes + emoji changed */}
+      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-2 py-2">
         <div className="flex items-start gap-2 mb-1">
           <button
             type="button"
@@ -1016,19 +995,19 @@ export default function ChatPage() {
       </div>
 
       {warningText && (
-        <div className="bg-yellow-500/15 border-b border-yellow-600/40 px-3 py-2 text-sm text-yellow-200 text-center">
+        <div className="px-3 py-2 bg-amber-500/20 border-b border-amber-500/30 text-amber-200 text-sm shrink-0">
           {warningText}
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+      {/* MESSAGES */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center pt-8">
-            <p className="text-zinc-500 text-sm">No messages yet</p>
-            <p className="text-zinc-600 text-xs mt-1">
-              Your timer {durationLabel(myDuration)} · private
-            </p>
-          </div>
+          <p className="text-center text-zinc-500 text-sm py-16">
+            {chatExpired || sealed
+              ? 'This chat has ended.'
+              : 'No messages yet. Say something.'}
+          </p>
         ) : (
           messages.map((msg) => {
             const mine = msg.sender_id === user?.id
@@ -1036,95 +1015,75 @@ export default function ChatPage() {
               <div
                 key={msg.id}
                 className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+                onTouchStart={() => startLongPress(msg)}
+                onTouchEnd={endLongPress}
+                onMouseDown={() => startLongPress(msg)}
+                onMouseUp={endLongPress}
+                onMouseLeave={endLongPress}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  openMsgMenu(msg)
+                }}
               >
-                <button
-                  type="button"
-                  onClick={() => openMsgMenu(msg)}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    setReportMessageId(msg.id)
-                    setReportMessagePreview(
-                      msg.type === 'text'
-                        ? (msg.content || '').slice(0, 120)
-                        : `[${msg.type}]`
-                    )
-                    setModal('report')
-                  }}
-                  onTouchStart={() => startLongPress(msg)}
-                  onTouchEnd={cancelLongPress}
-                  onTouchMove={cancelLongPress}
-                  onMouseDown={() => startLongPress(msg)}
-                  onMouseUp={cancelLongPress}
-                  onMouseLeave={cancelLongPress}
-                  className={`max-w-[82%] text-left select-none ${
-                    msg.type === 'text'
-                      ? mine
-                        ? 'px-3 py-2 bg-gradient-to-br from-cyan-300 to-cyan-600 text-black rounded-2xl rounded-br-sm'
-                        : 'px-3 py-2 bg-zinc-900/80 text-zinc-100 rounded-2xl rounded-bl-sm'
-                      : 'p-0 bg-transparent'
+                <div
+                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                    mine
+                      ? 'bg-cyan-600 text-white rounded-br-md'
+                      : 'bg-zinc-800 text-zinc-100 rounded-bl-md'
                   }`}
                 >
                   {msg.type === 'image' && (
-                    <div className="space-y-1 max-w-[240px]">
+                    <div>
                       <img
                         src={msg.content}
                         alt=""
-                        className="rounded-lg max-h-52 w-auto object-cover block"
+                        className="max-w-full rounded-lg mb-1"
                       />
                       <a
                         href={msg.content}
                         download
                         target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-semibold text-cyan-300 underline"
-                        onClick={(e) => e.stopPropagation()}
+                        rel="noreferrer"
+                        className="text-xs underline opacity-90"
                       >
                         Download
                       </a>
                     </div>
                   )}
                   {msg.type === 'video' && (
-                    <div
-                      className="space-y-1 max-w-[260px]"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div>
                       <video
                         src={msg.content}
                         controls
-                        className="rounded-lg max-h-52 w-full"
+                        className="max-w-full rounded-lg mb-1"
                       />
                       <a
                         href={msg.content}
                         download
                         target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-semibold text-cyan-300 underline"
+                        rel="noreferrer"
+                        className="text-xs underline opacity-90"
                       >
                         Download
                       </a>
                     </div>
                   )}
                   {msg.type === 'file' && (
-                    <div className="space-y-1 px-1">
-                      <p className="text-sm">📎 File</p>
-                      <a
-                        href={msg.content}
-                        download
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-semibold text-cyan-300 underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Download
-                      </a>
-                    </div>
+                    <a
+                      href={msg.content}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm underline break-all"
+                    >
+                      📎 File — open / download
+                    </a>
                   )}
                   {msg.type === 'text' && (
-                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+                    <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">
                       {msg.content}
                     </p>
                   )}
-                </button>
+                </div>
               </div>
             )
           })
@@ -1132,67 +1091,267 @@ export default function ChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="bg-black/90 backdrop-blur-md px-2 py-2 border-t border-white/10 shrink-0">
-        <div className="flex items-end gap-1.5">
-          <button
-            type="button"
-            onClick={() => mediaInputRef.current?.click()}
-            className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 border border-cyan-500/40 flex items-center justify-center text-2xl"
-            title="Photo or video"
-          >
-            📷
-          </button>
-          <input
-            ref={mediaInputRef}
-            type="file"
-            accept="image/*,video/*"
-            className="hidden"
-            onChange={(e) => uploadMedia(e, 'media')}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="shrink-0 w-12 h-12 rounded-full bg-zinc-800 border border-zinc-500 flex items-center justify-center text-2xl"
-            title="Attach file"
-          >
-            📎
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.doc,.docx,.txt,.zip,.ppt,.pptx,.xls,.xlsx,application/pdf"
-            className="hidden"
-            onChange={(e) => uploadMedia(e, 'file')}
-          />
-          <textarea
-            ref={textAreaRef}
-            placeholder="Message"
-            value={newMessage}
-            onChange={(e) => {
-              setNewMessage(e.target.value)
-              requestAnimationFrame(growTextarea)
-            }}
-            rows={1}
-            className="flex-1 min-w-0 px-3 py-2.5 rounded-3xl bg-zinc-900 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none overflow-hidden leading-relaxed"
-            style={{ maxHeight: 160 }}
-          />
-          <button
-            onClick={sendMessage}
-            className="shrink-0 h-12 px-4 rounded-full bg-cyan-500 text-black font-semibold text-sm"
-          >
-            Send
-          </button>
+      {/* ENDED STATE */}
+      {(chatExpired || sealed) && messages.length === 0 && (
+        <div className="shrink-0 p-4 border-t border-zinc-800 bg-zinc-950">
+          <p className="text-center text-zinc-400 text-sm mb-3">
+            Chat ended.
+          </p>
+          {canStartNewChat() ? (
+            <button
+              onClick={requestNewChat}
+              disabled={startingNew}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50"
+            >
+              {startingNew ? 'Please wait...' : 'Start a new chat'}
+            </button>
+          ) : (
+            <p className="text-center text-zinc-500 text-sm">
+              This chat cannot be reopened.
+            </p>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* INPUT */}
+      {!chatExpired && !sealed && (
+        <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 p-2">
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={() => mediaInputRef.current?.click()}
+              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xl"
+              title="Photo / Video"
+            >
+              📷
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xl"
+              title="File"
+            >
+              📎
+            </button>
+            <input
+              ref={mediaInputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={(e) => uploadMedia(e, 'media')}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => uploadMedia(e, 'file')}
+            />
+            <textarea
+              ref={textAreaRef}
+              value={newMessage}
+              onChange={(e) => {
+                setNewMessage(e.target.value)
+                requestAnimationFrame(growTextarea)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendMessage()
+                }
+              }}
+              placeholder="Type a message..."
+              rows={1}
+              className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none overflow-hidden"
+              style={{ maxHeight: 160 }}
+            />
+            <button
+              onClick={sendMessage}
+              className="shrink-0 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold px-4 h-11 rounded-xl"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODALS */}
+      {modal === 'safety' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-3xl p-6">
+            <h2 className="text-xl font-semibold mb-3">Before you continue</h2>
+            <ul className="text-sm text-zinc-300 space-y-2 mb-4 list-disc pl-5">
+              <li>Chats are temporary and may disappear after a limited time.</li>
+              <li>Do not share passwords, codes, or money details.</li>
+              <li>If someone pressures or threatens you, use Report or Block.</li>
+              <li>You can leave or clear the chat at any time.</li>
+            </ul>
+            <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
+              NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
+              SECRETS YOU CANNOT AFFORD TO EXPOSE.
+            </p>
+            <button
+              onClick={acceptSafety}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl"
+            >
+              I understand — Continue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {modal === 'clear' && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">Clear this chat?</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              Messages vanish for both of you right away.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={clearChat}
+                className="flex-1 bg-orange-600 py-2.5 rounded-xl font-medium"
+              >
+                Clear chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'block' && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              Block {targetUsername}?
+            </h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              They will not find you in search or chat with you.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBlockUser}
+                className="flex-1 bg-red-600 py-2.5 rounded-xl font-medium"
+              >
+                Block
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'report' && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold mb-2">
+              Report {targetUsername}
+            </h3>
+            {reportMessagePreview && (
+              <p className="text-xs text-zinc-500 mb-2 line-clamp-2">
+                Message: {reportMessagePreview}
+              </p>
+            )}
+            <p className="text-xs text-zinc-400 mb-2">Type</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {REPORT_TYPES.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setReportType(type)}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border ${
+                    reportType === type
+                      ? 'bg-yellow-600 border-yellow-400 text-white'
+                      : 'bg-zinc-800 border-zinc-600 text-zinc-300'
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-zinc-400 mb-1">Explain (required)</p>
+            <textarea
+              placeholder="What happened?"
+              value={reportReason}
+              onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
+              rows={3}
+              className="w-full p-3 mb-2 rounded-xl bg-zinc-800 border border-zinc-700 text-sm resize-none"
+            />
+            <p className="text-[11px] text-zinc-500 mb-4">
+              {reportReason.length}/400
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setModal(null)
+                  setReportMessageId(null)
+                  setReportType('')
+                  setReportReason('')
+                }}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReportUser}
+                className="flex-1 bg-yellow-600 py-2.5 rounded-xl font-medium"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'ghost' && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">Ghost mode</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              After your next message is sent, you go offline. Others cannot find
+              you in Search until you turn offline off in Profile.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setGhostReply(true)
+                  setModal(null)
+                }}
+                className="flex-1 bg-emerald-600 py-2.5 rounded-xl font-medium"
+              >
+                Enable Ghost
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {sealConfirm && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-cyan-500/40 rounded-2xl p-5 w-full max-w-sm">
-            <h3 className="text-lg font-semibold mb-2">Seal</h3>
-            <p className="text-sm text-zinc-400 mb-5">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              {sealConfirm === 'on' ? 'Turn Seal on?' : 'Turn Seal off?'}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-4">
               {sealConfirm === 'on'
-                ? 'When chat ends, the other person cannot start a new chat with you. They are not told.'
-                : 'Remove your Seal only.'}
+                ? 'When this chat ends, the other person will not see “Start a new chat” on their side. They are not told that you used Seal.'
+                : 'You stop using Seal for this chat.'}
             </p>
             <div className="flex gap-2">
               <button
@@ -1203,7 +1362,7 @@ export default function ChatPage() {
               </button>
               <button
                 onClick={confirmSealToggle}
-                className="flex-1 bg-cyan-500 text-black py-2.5 rounded-xl font-semibold"
+                className="flex-1 bg-cyan-600 py-2.5 rounded-xl font-medium"
               >
                 Confirm
               </button>
@@ -1213,13 +1372,15 @@ export default function ChatPage() {
       )}
 
       {quietConfirm && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-violet-500/40 rounded-2xl p-5 w-full max-w-sm">
-            <h3 className="text-lg font-semibold mb-2">Quiet</h3>
-            <p className="text-sm text-zinc-400 mb-5">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              {quietConfirm === 'on' ? 'Turn Quiet on?' : 'Turn Quiet off?'}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-4">
               {quietConfirm === 'on'
-                ? 'Stricter anti-interrogation for you only.'
-                : 'Quiet off for you only.'}
+                ? 'Anti-interrogation becomes stricter for you. The other person is not notified.'
+                : 'Quiet mode off for you.'}
             </p>
             <div className="flex gap-2">
               <button
@@ -1230,7 +1391,7 @@ export default function ChatPage() {
               </button>
               <button
                 onClick={confirmQuietToggle}
-                className="flex-1 bg-violet-500 text-white py-2.5 rounded-xl font-semibold"
+                className="flex-1 bg-violet-600 py-2.5 rounded-xl font-medium"
               >
                 Confirm
               </button>
@@ -1240,188 +1401,79 @@ export default function ChatPage() {
       )}
 
       {msgMenu && activeMsg && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm space-y-2">
-            {msgMenu === 'menu' ? (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-4 w-full max-w-sm">
+            {msgMenu === 'menu' && (
               <>
+                <p className="text-sm text-zinc-400 mb-3 line-clamp-2">
+                  {activeMsg.type === 'text'
+                    ? activeMsg.content
+                    : `[${activeMsg.type}]`}
+                </p>
+                {activeMsg.sender_id === user?.id && activeMsg.type === 'text' && (
+                  <button
+                    onClick={() => setMsgMenu('edit')}
+                    className="w-full text-left py-3 border-b border-zinc-800"
+                  >
+                    Edit
+                  </button>
+                )}
+                {activeMsg.sender_id === user?.id && (
+                  <button
+                    onClick={() => vanishOneMessage(activeMsg)}
+                    className="w-full text-left py-3 border-b border-zinc-800 text-orange-400"
+                  >
+                    Vanish this message
+                  </button>
+                )}
                 <button
-                  onClick={() => setMsgMenu('edit')}
-                  className="w-full bg-cyan-600 py-2.5 rounded-xl"
+                  onClick={() => {
+                    setReportMessageId(activeMsg.id)
+                    setReportMessagePreview(
+                      activeMsg.type === 'text'
+                        ? activeMsg.content
+                        : `[${activeMsg.type}]`
+                    )
+                    setReportType('')
+                    setReportReason('')
+                    setMsgMenu(null)
+                    setModal('report')
+                  }}
+                  className="w-full text-left py-3 border-b border-zinc-800 text-yellow-400"
                 >
-                  Edit
-                </button>
-                <button
-                  onClick={vanishOneMessage}
-                  className="w-full bg-red-600 py-2.5 rounded-xl"
-                >
-                  Vanish message
+                  Report this message
                 </button>
                 <button
                   onClick={() => {
                     setMsgMenu(null)
                     setActiveMsg(null)
                   }}
-                  className="w-full bg-zinc-700 py-2.5 rounded-xl"
+                  className="w-full text-left py-3 text-zinc-400"
                 >
                   Cancel
                 </button>
               </>
-            ) : (
+            )}
+            {msgMenu === 'edit' && (
               <>
                 <textarea
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   rows={3}
-                  className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700"
+                  className="w-full p-3 mb-3 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
                 />
                 <div className="flex gap-2">
                   <button
                     onClick={() => setMsgMenu('menu')}
-                    className="flex-1 bg-zinc-700 py-2 rounded-xl"
+                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
                   >
                     Back
                   </button>
                   <button
                     onClick={saveEditMessage}
-                    className="flex-1 bg-cyan-500 text-black py-2 rounded-xl"
+                    className="flex-1 bg-cyan-500 text-black font-medium py-2.5 rounded-xl"
                   >
                     Save
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {modal && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
-            {modal === 'ghost' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Ghost mode</h3>
-                <p className="text-sm text-zinc-400 mb-4">
-                  After your next message is sent, you go offline. Others cannot
-                  find you in Search until you turn offline off in Profile.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      setGhostReply(true)
-                      setModal(null)
-                    }}
-                    className="flex-1 bg-emerald-500 text-black font-semibold py-2.5 rounded-xl"
-                  >
-                    Enable Ghost
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'safety' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Stay safe</h3>
-                <ul className="text-sm text-zinc-400 space-y-2 mb-4 list-disc pl-4">
-                  <li>Never share passwords or payment details.</li>
-                  <li>Your timer is private. Chat ends at the shorter of both.</li>
-                </ul>
-                <p className="text-xs font-semibold text-cyan-300 mb-5 uppercase">
-                  NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
-                  SECRETS YOU CANNOT AFFORD TO EXPOSE.
-                </p>
-                <button
-                  onClick={acceptSafety}
-                  className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
-                >
-                  I understand
-                </button>
-              </>
-            )}
-            {modal === 'clear' && (
-              <>
-                <h3 className="text-lg font-semibold mb-3">Clear chat?</h3>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmClearChat}
-                    className="flex-1 bg-orange-600 py-2.5 rounded-xl"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'block' && (
-              <>
-                <h3 className="text-lg font-semibold mb-3">
-                  Block {targetUsername}?
-                </h3>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmBlockUser}
-                    className="flex-1 bg-red-600 py-2.5 rounded-xl"
-                  >
-                    Block
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'report' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">
-                  Report {targetUsername}
-                </h3>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {REPORT_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setReportType(type)}
-                      className={`text-xs px-2.5 py-1.5 rounded-full border ${
-                        reportType === type
-                          ? 'bg-yellow-500 text-black'
-                          : 'border-zinc-600'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-                <textarea
-                  value={reportReason}
-                  onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
-                  rows={3}
-                  placeholder="What happened?"
-                  className="w-full p-3 mb-3 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmReportUser}
-                    className="flex-1 bg-yellow-600 py-2.5 rounded-xl"
-                  >
-                    Submit
                   </button>
                 </div>
               </>
