@@ -128,9 +128,6 @@ export default function ChatPage() {
       new Date(firstCreatedAt).getTime() + minutes * 60 * 1000
     ).toISOString()
 
-  const durationLabel = (m: number) =>
-    DURATION_OPTIONS.find((o) => o.minutes === m)?.label || '3h'
-
   const recountMedia = (list: any[]) => {
     setFileCount(list.filter((m) => m.type === 'file' || m.type === 'image').length)
     setVideoCount(list.filter((m) => m.type === 'video').length)
@@ -603,6 +600,21 @@ export default function ChatPage() {
       } else {
         useShortExpiry = true
         setWarningText('Anti-interrogation: messages may expire in 30 min.')
+        try {
+          const {
+            data: { session },
+          } = await supabase.auth.getSession()
+          await fetch('/api/interrogation-strike', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session?.access_token || ''}`,
+            },
+            body: JSON.stringify({ conversation_id: conversationId }),
+          })
+        } catch {
+          // non-blocking
+        }
       }
     }
 
@@ -998,7 +1010,6 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* MESSAGE WALL — empty text centered */}
       <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col">
         {messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center px-4">

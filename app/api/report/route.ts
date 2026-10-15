@@ -66,8 +66,8 @@ function localReview(reason: string, snapshot: any[]): {
   const risk = score >= 5 ? 'high' : score >= 2 ? 'medium' : 'low'
   const summary =
     hits.length > 0
-      ? `Auto review (${risk}). Signals: ${[...new Set(hits)].slice(0, 8).join(', ')}. Snapshot: ${(snapshot || []).length} msgs. Reason: ${(reason || '').slice(0, 120)}`
-      : `Auto review (${risk}). No strong keyword signals. Snapshot: ${(snapshot || []).length} msgs. Reason: ${(reason || '').slice(0, 120)}`
+      ? `Auto review (${risk}). Signals: ${[...new Set(hits)].slice(0, 8).join(', ')}. Snapshot: ${(snapshot || []).length} msgs.`
+      : `Auto review (${risk}). No strong signals. Snapshot: ${(snapshot || []).length} msgs.`
 
   return { risk, summary }
 }
@@ -103,11 +103,11 @@ async function openAiReview(
           {
             role: 'system',
             content:
-              'Trust & safety assistant. Output ONLY JSON: {"risk":"low"|"medium"|"high","summary":"short paragraph"}',
+              'Trust & safety. Output ONLY JSON: {"risk":"low"|"medium"|"high","summary":"short"}',
           },
           {
             role: 'user',
-            content: `Report reason: ${reason}\n\nMessages:\n${lines || '(none)'}`,
+            content: `Reason: ${reason}\n\nMessages:\n${lines || '(none)'}`,
           },
         ],
       }),
@@ -118,12 +118,11 @@ async function openAiReview(
     const match = raw.match(/\{[\s\S]*\}/)
     if (!match) return null
     const parsed = JSON.parse(match[0])
-    const risk = ['low', 'medium', 'high'].includes(parsed.risk)
-      ? parsed.risk
-      : 'medium'
     return {
-      risk,
-      summary: String(parsed.summary || 'AI review completed').slice(0, 1000),
+      risk: ['low', 'medium', 'high'].includes(parsed.risk)
+        ? parsed.risk
+        : 'medium',
+      summary: String(parsed.summary || 'Done').slice(0, 1000),
     }
   } catch {
     return null
@@ -158,13 +157,9 @@ export async function POST(req: Request) {
     )
   }
 
-  // reported_id MUST be a real user uuid — never "LESTAT_pointe6"
   if (!UUID_RE.test(String(reported_id))) {
     return NextResponse.json(
-      {
-        error:
-          'Invalid reported user id. Please close report and try again from the chat.',
-      },
+      { error: 'Invalid reported user id.' },
       { status: 400 }
     )
   }
@@ -176,7 +171,6 @@ export async function POST(req: Request) {
     )
   }
 
-  // conversation_id is text like "LESTAT_pointe6" — never put it in a uuid column
   const convId =
     typeof conversation_id === 'string' && conversation_id.length > 0
       ? conversation_id.slice(0, 120)
@@ -212,7 +206,7 @@ export async function POST(req: Request) {
 
   const insertRow: Record<string, any> = {
     reporter_id: user.id,
-    reported_id: reported_id,
+    reported_id,
     conversation_id: convId,
     reason: String(reason).trim().slice(0, 500),
     message_snapshot,
@@ -228,7 +222,6 @@ export async function POST(req: Request) {
     .select('id')
     .maybeSingle()
 
-  // If message_id column missing or wrong type, retry without it
   if (error && msgId) {
     delete insertRow.message_id
     const retry = await supabaseUser
@@ -240,7 +233,6 @@ export async function POST(req: Request) {
     error = retry.error
   }
 
-  // If conversation_id still fails (old uuid column), retry without it
   if (error && convId) {
     const withoutConv = { ...insertRow }
     delete withoutConv.conversation_id
@@ -261,7 +253,7 @@ export async function POST(req: Request) {
 
   reportId = report?.id || null
 
-  // ----- A: Auto AI on every report (no admin button needed) -----
+  // Auto AI
   let result = await openAiReview(String(reason).trim(), message_snapshot)
   let engine = 'openai'
   if (!result) {
@@ -286,36 +278,54 @@ export async function POST(req: Request) {
       .eq('id', reportId)
   }
 
-  // ----- B: Auto-suspend 24h if high -----
+  // Rule: 3 high-risk reports in 7 days → suspend 7 days
   let suspended = false
-  if (result.risk === 'high') {
-    const suspended_until = new Date(
-      Date.now() + 24 * 60 * 60 * 1000
-    ).toISOString()
-    const { error: suspErr } = await supabaseAdmin
-      .from('profiles')
-      .update({
-        status: 'suspended',
-        suspended_until,
-      })
-      .eq('id', reported_id)
-    suspended = !suspErr
+  let highCount = 0
 
-    try {
-      await supabaseAdmin.from('safety_logs').insert({
-        conversation_id: convId,
-        payload: {
-          action: 'auto_suspend_high_risk',
-          report_id: reportId,
-          reported_id,
-          reporter_id: user.id,
-          ai_risk: result.risk,
-          engine,
+  if (result.risk === 'high') {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+
+    const { data: highs } = await supabaseAdmin
+      .from('reports')
+      .select('id')
+      .eq('reported_id', reported_id)
+      .eq('ai_risk', 'high')
+      .gte('created_at', since)
+
+    highCount = (highs || []).length
+
+    if (highCount >= 3) {
+      const suspended_until = new Date(
+        Date.now() + 7 * 24 * 60 * 60 * 1000
+      ).toISOString()
+
+      const { error: suspErr } = await supabaseAdmin
+        .from('profiles')
+        .update({
+          status: 'suspended',
           suspended_until,
-        },
-      })
-    } catch {
-      // optional table
+        })
+        .eq('id', reported_id)
+
+      suspended = !suspErr
+
+      try {
+        await supabaseAdmin.from('safety_logs').insert({
+          conversation_id: convId,
+          payload: {
+            action: 'auto_suspend_3_high_reports_7d',
+            report_id: reportId,
+            reported_id,
+            reporter_id: user.id,
+            high_count: highCount,
+            ai_risk: result.risk,
+            engine,
+            suspended_until,
+          },
+        })
+      } catch {
+        // optional
+      }
     }
   }
 
@@ -325,6 +335,7 @@ export async function POST(req: Request) {
     ai_risk: result.risk,
     ai_status: 'done',
     engine,
+    high_reports_7d: highCount,
     auto_suspended: suspended,
   })
 }
