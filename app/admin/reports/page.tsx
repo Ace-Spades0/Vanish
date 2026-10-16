@@ -8,7 +8,6 @@ const ADMIN_IDS = ['a78d8a8e-de03-4159-a3c2-b5788e7cf5b7']
 
 export default function ReportsDashboard() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
   const [reports, setReports] = useState<any[]>([])
   const [logs, setLogs] = useState<any[]>([])
   const [appeals, setAppeals] = useState<any[]>([])
@@ -20,6 +19,7 @@ export default function ReportsDashboard() {
   const [reviewingId, setReviewingId] = useState<string | null>(null)
   const [openSnapshotId, setOpenSnapshotId] = useState<string | null>(null)
   const [appealBusy, setAppealBusy] = useState<string | null>(null)
+  const [suspendBusy, setSuspendBusy] = useState(false)
 
   const loadNames = async (ids: string[]) => {
     const unique = Array.from(new Set(ids.filter(Boolean)))
@@ -66,11 +66,15 @@ export default function ReportsDashboard() {
   }
 
   const loadLogs = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('safety_logs')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50)
+    if (error) {
+      setLogs([])
+      return
+    }
     setLogs(data || [])
   }
 
@@ -103,7 +107,6 @@ export default function ReportsDashboard() {
         router.push('/home')
         return
       }
-      setUser(user)
       await loadReports()
       await loadLogs()
       await loadAppeals()
@@ -135,37 +138,61 @@ export default function ReportsDashboard() {
     setReviewingId(null)
   }
 
+  /** ONLY via service-role API — never client profiles.update */
   const setSuspension = async (
     profileId: string,
     mode: 'timed' | 'permanent' | 'clear',
     hours?: number
   ) => {
-    setActionMessage('')
-    let status = 'active'
-    let suspended_until: string | null = null
-    if (mode === 'permanent') status = 'banned'
-    else if (mode === 'timed') {
-      status = 'suspended'
-      suspended_until = new Date(
-        Date.now() + (hours || 24) * 60 * 60 * 1000
-      ).toISOString()
+    if (!profileId) {
+      setActionMessage('No user id on this report')
+      return
     }
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status, suspended_until })
-      .eq('id', profileId)
-    if (error) setActionMessage(error.message)
-    else
-      setActionMessage(
-        mode === 'clear'
-          ? 'User unsuspended'
-          : mode === 'permanent'
-            ? 'User banned'
-            : `Suspended ${hours}h`
-      )
+    setSuspendBusy(true)
+    setActionMessage('Working…')
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        setActionMessage('Not logged in')
+        setSuspendBusy(false)
+        return
+      }
+      const res = await fetch('/api/admin/suspend', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          profile_id: profileId,
+          mode,
+          hours: hours || 24,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.error) {
+        setActionMessage(data.error || `Suspend failed (${res.status})`)
+      } else {
+        setActionMessage(
+          mode === 'clear'
+            ? 'User unsuspended'
+            : mode === 'permanent'
+              ? 'User banned'
+              : `Suspended ${hours || 24}h — check profiles in Supabase`
+        )
+      }
+    } catch (e: any) {
+      setActionMessage(e?.message || 'Network error calling /api/admin/suspend')
+    }
+    setSuspendBusy(false)
   }
 
-  const decideAppeal = async (appealId: string, action: 'approve' | 'reject') => {
+  const decideAppeal = async (
+    appealId: string,
+    action: 'approve' | 'reject'
+  ) => {
     setAppealBusy(appealId)
     setActionMessage('')
     const {
@@ -182,7 +209,11 @@ export default function ReportsDashboard() {
     const data = await res.json()
     if (data.error) setActionMessage(data.error)
     else {
-      setActionMessage(action === 'approve' ? 'Appeal approved — user unsuspended' : 'Appeal rejected')
+      setActionMessage(
+        action === 'approve'
+          ? 'Appeal approved — user unsuspended'
+          : 'Appeal rejected'
+      )
       await loadAppeals()
     }
     setAppealBusy(null)
@@ -201,7 +232,10 @@ export default function ReportsDashboard() {
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Admin</h1>
-          <button onClick={() => router.push('/home')} className="text-sm text-cyan-400">
+          <button
+            onClick={() => router.push('/home')}
+            className="text-sm text-cyan-400"
+          >
             ← Home
           </button>
         </div>
@@ -221,7 +255,9 @@ export default function ReportsDashboard() {
         </div>
 
         {actionMessage && (
-          <p className="mb-4 text-sm text-cyan-400">{actionMessage}</p>
+          <p className="mb-4 text-sm text-cyan-400 break-words">
+            {actionMessage}
+          </p>
         )}
 
         {tab === 'appeals' && (
@@ -250,9 +286,6 @@ export default function ReportsDashboard() {
                     <p className="text-sm text-zinc-200 whitespace-pre-wrap mb-3">
                       {a.message}
                     </p>
-                    {a.admin_note && (
-                      <p className="text-xs text-zinc-400 mb-2">Note: {a.admin_note}</p>
-                    )}
                     {a.status === 'pending' && (
                       <div className="flex gap-2">
                         <button
@@ -310,8 +343,13 @@ export default function ReportsDashboard() {
                       {r.reason}
                     </p>
                     <div className="mb-3 p-3 rounded-xl bg-black/40 border border-zinc-800">
-                      <p className={`text-sm font-medium ${riskColor(r.ai_risk)}`}>
-                        AI: {r.ai_status === 'done' ? r.ai_risk || '—' : r.ai_status || 'pending'}
+                      <p
+                        className={`text-sm font-medium ${riskColor(r.ai_risk)}`}
+                      >
+                        AI:{' '}
+                        {r.ai_status === 'done'
+                          ? r.ai_risk || '—'
+                          : r.ai_status || 'pending'}
                       </p>
                       {r.ai_summary && (
                         <p className="text-xs text-zinc-400 mt-1 whitespace-pre-wrap">
@@ -330,7 +368,9 @@ export default function ReportsDashboard() {
                         <button
                           type="button"
                           onClick={() =>
-                            setOpenSnapshotId((id) => (id === r.id ? null : r.id))
+                            setOpenSnapshotId((id) =>
+                              id === r.id ? null : r.id
+                            )
                           }
                           className="text-xs font-semibold bg-zinc-700 px-3 py-1.5 rounded-lg"
                         >
@@ -346,29 +386,39 @@ export default function ReportsDashboard() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => setSuspension(r.reported_id, 'timed', 24)}
-                        className="text-xs bg-yellow-700 px-2 py-1 rounded-lg"
+                        disabled={suspendBusy}
+                        onClick={() =>
+                          setSuspension(r.reported_id, 'timed', 24)
+                        }
+                        className="text-xs bg-yellow-700 px-2 py-1 rounded-lg disabled:opacity-50"
                       >
                         Suspend 24h
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSuspension(r.reported_id, 'timed', 168)}
-                        className="text-xs bg-orange-700 px-2 py-1 rounded-lg"
+                        disabled={suspendBusy}
+                        onClick={() =>
+                          setSuspension(r.reported_id, 'timed', 168)
+                        }
+                        className="text-xs bg-orange-700 px-2 py-1 rounded-lg disabled:opacity-50"
                       >
                         Suspend 7d
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSuspension(r.reported_id, 'permanent')}
-                        className="text-xs bg-red-700 px-2 py-1 rounded-lg"
+                        disabled={suspendBusy}
+                        onClick={() =>
+                          setSuspension(r.reported_id, 'permanent')
+                        }
+                        className="text-xs bg-red-700 px-2 py-1 rounded-lg disabled:opacity-50"
                       >
                         Ban
                       </button>
                       <button
                         type="button"
+                        disabled={suspendBusy}
                         onClick={() => setSuspension(r.reported_id, 'clear')}
-                        className="text-xs bg-emerald-700 px-2 py-1 rounded-lg"
+                        className="text-xs bg-emerald-700 px-2 py-1 rounded-lg disabled:opacity-50"
                       >
                         Unsuspend
                       </button>
