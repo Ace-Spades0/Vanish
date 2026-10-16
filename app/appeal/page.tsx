@@ -37,6 +37,19 @@ export default function AppealPage() {
         router.push('/home')
         return
       }
+
+      if (p.status === 'suspended' && p.suspended_until) {
+        const until = new Date(p.suspended_until).getTime()
+        if (until <= Date.now()) {
+          await supabase
+            .from('profiles')
+            .update({ status: 'active', suspended_until: null })
+            .eq('id', user.id)
+          router.push('/home')
+          return
+        }
+      }
+
       setProfile(p)
 
       const {
@@ -67,9 +80,10 @@ export default function AppealPage() {
       body: JSON.stringify({ message }),
     })
     const data = await res.json()
-    if (data.error) setStatusMsg(data.error)
-    else {
-      setStatusMsg(t.appealSent)
+    if (data.error) {
+      setStatusMsg(data.error)
+    } else {
+      setStatusMsg(t.appealSent || 'Appeal submitted. Please wait for a decision.')
       setMessage('')
       const res2 = await fetch('/api/appeal', {
         headers: { Authorization: `Bearer ${session?.access_token || ''}` },
@@ -88,7 +102,7 @@ export default function AppealPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">{t.loading}</p>
+        <p className="text-zinc-400">{t.loading || 'Loading...'}</p>
       </div>
     )
   }
@@ -100,14 +114,21 @@ export default function AppealPage() {
   return (
     <div className="min-h-screen bg-black text-white px-4 py-10">
       <div className="max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-2">{t.appealTitle}</h1>
-        <p className="text-sm text-zinc-400 mb-4">{t.appealHelp}</p>
+        <h1 className="text-2xl font-bold mb-2">
+          {t.appealTitle || 'Account suspended'}
+        </h1>
+        <p className="text-sm text-zinc-400 mb-4">
+          {t.appealHelp ||
+            'You can send one appeal. An admin will review it. AI may help sort urgency; a human decides.'}
+        </p>
 
         {profile?.status === 'banned' ? (
-          <p className="text-red-400 text-sm mb-6">{t.permanentBan}</p>
+          <p className="text-red-400 text-sm mb-6">
+            {t.permanentBan || 'This account is permanently restricted.'}
+        </p>
         ) : (
           <p className="text-amber-300/90 text-sm mb-6">
-            {t.suspendedUntil}: {until || '—'}
+            {t.suspendedUntil || 'Suspended until'}: {until || '—'}
           </p>
         )}
 
@@ -116,7 +137,10 @@ export default function AppealPage() {
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value.slice(0, 500))}
-              placeholder={t.appealPlaceholder}
+              placeholder={
+                t.appealPlaceholder ||
+                'Explain why your account should be restored (max 500)'
+              }
               rows={5}
               className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-sm mb-2"
             />
@@ -126,7 +150,9 @@ export default function AppealPage() {
               disabled={sending}
               className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50 mb-4"
             >
-              {sending ? t.pleaseWait : t.submitAppeal}
+              {sending
+                ? t.pleaseWait || 'Please wait...'
+                : t.submitAppeal || 'Submit appeal'}
             </button>
           </>
         )}
@@ -147,7 +173,9 @@ export default function AppealPage() {
                 </p>
                 <p className="text-zinc-200 whitespace-pre-wrap">{a.message}</p>
                 {a.admin_note && (
-                  <p className="text-xs text-cyan-400 mt-2">Admin: {a.admin_note}</p>
+                  <p className="text-xs text-cyan-400 mt-2">
+                    Admin: {a.admin_note}
+                  </p>
                 )}
               </div>
             ))}
@@ -158,7 +186,7 @@ export default function AppealPage() {
           onClick={logout}
           className="w-full bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl"
         >
-          {t.logout}
+          {t.logout || 'Logout'}
         </button>
       </div>
     </div>

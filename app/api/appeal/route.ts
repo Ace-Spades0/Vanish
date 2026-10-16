@@ -18,8 +18,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
   }
 
-  const { message } = await req.json()
-  const text = String(message || '').trim().slice(0, 500)
+  const body = await req.json()
+  const text = String(body.message || '').trim().slice(0, 500)
   if (text.length < 10) {
     return NextResponse.json(
       { error: 'Please write at least 10 characters' },
@@ -38,10 +38,7 @@ export async function POST(req: Request) {
     .eq('id', user.id)
     .maybeSingle()
 
-  if (
-    profile?.status !== 'suspended' &&
-    profile?.status !== 'banned'
-  ) {
+  if (profile?.status !== 'suspended' && profile?.status !== 'banned') {
     return NextResponse.json(
       { error: 'Account is not suspended' },
       { status: 400 }

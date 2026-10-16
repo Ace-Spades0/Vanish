@@ -8,7 +8,9 @@ export async function GET(req: Request) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { global: { headers: { Authorization: authHeader || '' } } }
+    {
+      global: { headers: { Authorization: authHeader || '' } },
+    }
   )
 
   const {
@@ -30,15 +32,15 @@ export async function GET(req: Request) {
     .limit(50)
 
   const ids = Array.from(
-    new Set((appeals || []).map((a) => a.user_id).filter(Boolean))
+    new Set((appeals || []).map((a: any) => a.user_id).filter(Boolean))
   )
-  let names: Record<string, string> = {}
+  const names: Record<string, string> = {}
   if (ids.length) {
     const { data: profiles } = await db
       .from('profiles')
       .select('id, username')
       .in('id', ids)
-    ;(profiles || []).forEach((p) => {
+    ;(profiles || []).forEach((p: any) => {
       names[p.id] = p.username || 'No username'
     })
   }
@@ -51,7 +53,9 @@ export async function POST(req: Request) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { global: { headers: { Authorization: authHeader || '' } } }
+    {
+      global: { headers: { Authorization: authHeader || '' } },
+    }
   )
 
   const {
