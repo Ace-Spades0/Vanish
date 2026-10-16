@@ -47,6 +47,28 @@ export default function LettersPage() {
         router.push('/auth')
         return
       }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('status, suspended_until')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profile?.status === 'banned') {
+        await supabase.auth.signOut()
+        router.push('/auth')
+        return
+      }
+      if (profile?.status === 'suspended') {
+        const until = profile.suspended_until
+          ? new Date(profile.suspended_until).getTime()
+          : null
+        if (!until || until > Date.now()) {
+          router.push('/appeal')
+          return
+        }
+      }
+
       setUser(user)
       await loadInbox(user.id)
       try {
@@ -67,7 +89,6 @@ export default function LettersPage() {
   const resolveTarget = async (input: string) => {
     const trimmed = input.trim()
     if (!trimmed) return { error: 'Enter a username or vanish link' }
-
     if (trimmed.includes('/i/')) {
       const code = extractInviteCode(trimmed)
       const { data: invite } = await supabase
@@ -84,14 +105,12 @@ export default function LettersPage() {
       if (!creator) return { error: 'User not available' }
       return { target: creator }
     }
-
     const { data: byName } = await supabase
       .from('profiles')
       .select('id, username')
       .ilike('username', trimmed)
       .maybeSingle()
     if (byName) return { target: byName }
-
     const code = extractInviteCode(trimmed)
     if (code.length >= 6) {
       const { data: invite } = await supabase
@@ -127,13 +146,11 @@ export default function LettersPage() {
     setMessageOk(false)
     setSafetyAlert(false)
     if (!user) return
-
     if (!acceptedSafety) {
       setSafetyAlert(true)
       setMessage('Please confirm the safety note first')
       return
     }
-
     if (!toInput.trim() || !body.trim()) {
       setMessage('Recipient and message required')
       return
@@ -142,13 +159,11 @@ export default function LettersPage() {
       setMessage('Max 500 characters')
       return
     }
-
     const resolved = await resolveTarget(toInput)
     if (resolved.error || !resolved.target) {
       setMessage(resolved.error || 'User not found')
       return
     }
-
     const target = resolved.target
     if (target.id === user.id) {
       setMessage('You cannot send a letter to yourself')
@@ -158,7 +173,6 @@ export default function LettersPage() {
       setMessage('You cannot send a letter to this user')
       return
     }
-
     const { error } = await supabase.from('letters').insert({
       from_id: user.id,
       to_username: target.username,
@@ -166,7 +180,6 @@ export default function LettersPage() {
       body: body.trim(),
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     })
-
     if (error) {
       setMessage(error.message)
       setMessageOk(false)
@@ -217,7 +230,6 @@ export default function LettersPage() {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[520px] h-[400px] bg-cyan-500/10 blur-[120px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-[300px] h-[300px] bg-blue-600/10 blur-[100px] rounded-full" />
       </div>
-
       <div className="relative z-10 max-w-md mx-auto px-4 py-10">
         <button
           onClick={() => router.push('/home')}
@@ -225,12 +237,10 @@ export default function LettersPage() {
         >
           ← Back to Home
         </button>
-
         <h1 className="text-3xl font-bold mb-2">Letters</h1>
         <p className="text-zinc-500 text-sm mb-6">
           One-time notes. Read once, then gone.
         </p>
-
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setTab('inbox')}
@@ -258,7 +268,6 @@ export default function LettersPage() {
             Send
           </button>
         </div>
-
         {tab === 'send' ? (
           <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
             <div
@@ -305,7 +314,6 @@ export default function LettersPage() {
                 </span>
               </label>
             </div>
-
             {safetyAlert && (
               <div className="rounded-xl border-2 border-red-500 bg-red-600 px-4 py-3.5 text-center shadow-[0_0_24px_rgba(220,38,38,0.35)] animate-pulse">
                 <p className="text-sm sm:text-base font-bold text-white tracking-wide">
@@ -316,7 +324,6 @@ export default function LettersPage() {
                 </p>
               </div>
             )}
-
             <input
               value={toInput}
               onChange={(e) => setToInput(e.target.value)}
@@ -340,7 +347,6 @@ export default function LettersPage() {
             >
               Send letter
             </button>
-
             {message && !safetyAlert && (
               <div
                 className={`rounded-xl px-4 py-3 text-center text-sm font-medium border ${
@@ -374,8 +380,6 @@ export default function LettersPage() {
           </div>
         )}
       </div>
-
-      {/* One-time letter bubble — clear MESSAGE vs CAPS */}
       {reading && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm">
@@ -385,7 +389,6 @@ export default function LettersPage() {
                   One-time letter
                 </p>
               </div>
-
               <div className="p-5 space-y-4">
                 <div className="rounded-2xl bg-zinc-900 border border-zinc-600 px-4 py-3.5">
                   <p className="text-[10px] text-zinc-500 uppercase tracking-wide mb-2 font-medium">
@@ -395,18 +398,15 @@ export default function LettersPage() {
                     {reading.body}
                   </p>
                 </div>
-
                 <div className="rounded-xl border border-amber-500/45 bg-amber-500/10 px-3 py-2.5">
                   <p className="text-[10px] font-semibold text-amber-200/95 leading-relaxed uppercase tracking-wide">
                     NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT
                     SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.
                   </p>
                 </div>
-
                 <p className="text-[11px] text-zinc-500 text-center">
                   Closing removes this letter forever.
                 </p>
-
                 <button
                   onClick={finishReading}
                   className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl"
