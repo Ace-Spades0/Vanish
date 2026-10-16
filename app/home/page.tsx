@@ -14,20 +14,16 @@ function getExpiryLabel(profile: any, lang: Lang): string | null {
     return lang === 'sw' ? 'Ya kudumu' : 'Permanent'
   }
   if (!profile.username_claimed_at) return null
-
   const end =
     new Date(profile.username_claimed_at).getTime() + 24 * 60 * 60 * 1000
   const msLeft = end - Date.now()
-
   if (msLeft <= 0) {
     return lang === 'sw'
       ? 'Imeisha — chagua jina jipya'
       : 'Expired — pick a new username'
   }
-
   const hours = Math.floor(msLeft / (1000 * 60 * 60))
   const mins = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60))
-
   if (lang === 'sw') {
     if (hours >= 1) return `Inaisha baada ya ${hours}s ${mins}d`
     return `Inaisha baada ya ${mins}d`
@@ -105,7 +101,10 @@ export default function HomePage() {
     },
   }[lang]
 
-  const kickIfBlocked = async (status?: string, suspended_until?: string | null) => {
+  const kickIfBlocked = async (
+    status?: string,
+    suspended_until?: string | null
+  ) => {
     if (status === 'banned') {
       await supabase.auth.signOut()
       router.push('/auth')
@@ -116,8 +115,7 @@ export default function HomePage() {
       if (until && until <= Date.now()) {
         return false
       }
-      await supabase.auth.signOut()
-      router.push('/auth')
+      router.push('/appeal')
       return true
     }
     return false
@@ -128,18 +126,15 @@ export default function HomePage() {
       .from('blocks')
       .select('blocked_id')
       .eq('blocker_id', userId)
-
     if (!blocks?.length) {
       setBlockedUsers([])
       return
     }
-
     const ids = blocks.map((b) => b.blocked_id)
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, username')
       .in('id', ids)
-
     setBlockedUsers(profiles || [])
   }
 
@@ -149,25 +144,20 @@ export default function HomePage() {
       .select('*', { count: 'exact', head: true })
       .eq('to_id', userId)
       .is('read_at', null)
-
     setLetterCount(count || 0)
   }
 
   useEffect(() => {
     setLangState(getLang())
-
     let channel: any = null
-
     const loadData = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
-
       if (!user) {
         router.push('/auth')
         return
       }
-
       setUser(user)
 
       let { data: profileData } = await supabase
@@ -182,7 +172,6 @@ export default function HomePage() {
           profileData.username !== 'LESTAT' ||
           profileData.is_permanent_username !== true ||
           profileData.is_offline === true
-
         if (needsRepair) {
           await supabase.from('profiles').upsert({
             id: user.id,
@@ -211,7 +200,6 @@ export default function HomePage() {
         const until = profileData.suspended_until
           ? new Date(profileData.suspended_until).getTime()
           : null
-
         if (until && until <= Date.now()) {
           await supabase
             .from('profiles')
@@ -223,8 +211,7 @@ export default function HomePage() {
             suspended_until: null,
           }
         } else {
-          await supabase.auth.signOut()
-          router.push('/auth')
+          router.push('/appeal')
           return
         }
       }
@@ -250,7 +237,6 @@ export default function HomePage() {
       await loadLetterCount(user.id)
       setLoading(false)
 
-      // Realtime: kick as soon as admin suspends/bans
       channel = supabase
         .channel(`profile-status-${user.id}`)
         .on(
@@ -268,9 +254,7 @@ export default function HomePage() {
         )
         .subscribe()
     }
-
     loadData()
-
     return () => {
       if (channel) supabase.removeChannel(channel)
     }
@@ -399,7 +383,6 @@ export default function HomePage() {
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-cyan-500/10 blur-[120px] rounded-full" />
       </div>
-
       <div className="relative z-10 max-w-md mx-auto px-5 min-h-screen flex flex-col">
         <div className="flex items-center justify-between pt-5 pb-2">
           <div className="flex items-center gap-3">
@@ -440,7 +423,6 @@ export default function HomePage() {
             </button>
           </div>
         </div>
-
         <div className="flex-1 flex flex-col items-center justify-center text-center py-8">
           <div className="text-5xl mb-5">{profile?.avatar_icon || '🎭'}</div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
@@ -460,7 +442,6 @@ export default function HomePage() {
           {profile?.is_offline && (
             <p className="text-xs text-amber-400 mt-2">{copy.offline}</p>
           )}
-
           <div className="w-full mt-10">
             {!profile?.username ? (
               <button
@@ -478,7 +459,6 @@ export default function HomePage() {
               </button>
             )}
           </div>
-
           {profile?.username && (
             <div className="w-full grid grid-cols-2 gap-3 mt-6">
               <button
@@ -496,7 +476,6 @@ export default function HomePage() {
                   {copy.vanishLinkHelp}
                 </p>
               </button>
-
               <button
                 onClick={() => router.push('/letters')}
                 className="relative rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
@@ -509,7 +488,6 @@ export default function HomePage() {
                 <p className="text-sm font-medium text-white">{copy.letters}</p>
                 <p className="text-xs text-zinc-500 mt-1">{copy.lettersHelp}</p>
               </button>
-
               <button
                 onClick={() => router.push('/profile')}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
@@ -521,7 +499,6 @@ export default function HomePage() {
                   {copy.myAccountHelp}
                 </p>
               </button>
-
               <button
                 onClick={() => setShowBlockedModal(true)}
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 p-4 text-left transition"
@@ -535,7 +512,6 @@ export default function HomePage() {
               </button>
             </div>
           )}
-
           {showInvite && profile?.username && (
             <div className="w-full mt-4 rounded-2xl border border-cyan-500/20 bg-zinc-900/80 p-4 text-left">
               <p className="text-sm font-medium mb-1">{copy.yourLink}</p>
@@ -578,7 +554,6 @@ export default function HomePage() {
             </div>
           )}
         </div>
-
         <div className="pb-8 pt-2 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-600">
           {user?.id === ADMIN_ID && (
             <button
@@ -602,7 +577,6 @@ export default function HomePage() {
           </button>
         </div>
       </div>
-
       {showBlockedModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-sm">
