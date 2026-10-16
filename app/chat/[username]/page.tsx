@@ -230,7 +230,9 @@ export default function ChatPage() {
         return
       }
 
-      const convId = [myProfile!.username, targetProfile.username].sort().join('_')
+      const convId = [myProfile!.username, targetProfile.username]
+        .sort()
+        .join('_')
       setConversationId(convId)
 
       const { data: settings } = await supabase
@@ -309,8 +311,10 @@ export default function ChatPage() {
       setModal('safety')
 
       if (channelRef.current) supabase.removeChannel(channelRef.current)
-      if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
-      if (settingsChannelRef.current) supabase.removeChannel(settingsChannelRef.current)
+      if (profileChannelRef.current)
+        supabase.removeChannel(profileChannelRef.current)
+      if (settingsChannelRef.current)
+        supabase.removeChannel(settingsChannelRef.current)
 
       const channel = supabase.channel(`chat-${convId}`)
       channel.on(
@@ -419,7 +423,8 @@ export default function ChatPage() {
     return () => {
       isMounted = false
       if (channelRef.current) supabase.removeChannel(channelRef.current)
-      if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
+      if (profileChannelRef.current)
+        supabase.removeChannel(profileChannelRef.current)
       if (settingsChannelRef.current)
         supabase.removeChannel(settingsChannelRef.current)
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
@@ -1010,9 +1015,26 @@ export default function ChatPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col">
+      {/* Vanish wall: deep black + fading cyan particles */}
+      <div
+        className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col relative"
+        style={{
+          backgroundColor: '#050508',
+          backgroundImage: `
+            radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,211,238,0.12), transparent 50%),
+            radial-gradient(circle at 20% 30%, rgba(34,211,238,0.06) 0%, transparent 2px),
+            radial-gradient(circle at 80% 20%, rgba(165,243,252,0.05) 0%, transparent 1.5px),
+            radial-gradient(circle at 40% 70%, rgba(34,211,238,0.05) 0%, transparent 2px),
+            radial-gradient(circle at 70% 60%, rgba(207,250,254,0.04) 0%, transparent 1.5px),
+            radial-gradient(circle at 15% 80%, rgba(34,211,238,0.04) 0%, transparent 2px),
+            radial-gradient(circle at 90% 85%, rgba(34,211,238,0.05) 0%, transparent 1.5px),
+            radial-gradient(circle at 55% 40%, rgba(165,243,252,0.03) 0%, transparent 2px),
+            linear-gradient(180deg, #050508 0%, #0a0a0f 50%, #050508 100%)
+          `,
+        }}
+      >
         {messages.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center px-4">
+          <div className="flex-1 flex items-center justify-center px-4 relative z-10">
             <p className="text-center text-zinc-500 text-sm leading-relaxed max-w-xs">
               {chatExpired || sealed
                 ? 'This chat has ended.'
@@ -1020,7 +1042,7 @@ export default function ChatPage() {
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 relative z-10">
             {messages.map((msg) => {
               const mine = msg.sender_id === user?.id
               return (
@@ -1040,8 +1062,8 @@ export default function ChatPage() {
                   <div
                     className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
                       mine
-                        ? 'bg-cyan-600 text-white rounded-br-md'
-                        : 'bg-zinc-800 text-zinc-100 rounded-bl-md'
+                        ? 'bg-cyan-600/95 text-white rounded-br-md shadow-[0_0_20px_rgba(34,211,238,0.15)]'
+                        : 'bg-zinc-800/90 text-zinc-100 rounded-bl-md border border-white/5'
                     }`}
                   >
                     {msg.type === 'image' && (
