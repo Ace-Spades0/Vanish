@@ -82,18 +82,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  await db.from('safety_logs').insert({
-    conversation_id: null,
-    payload: {
-      action: 'admin_suspend',
-      admin_id: user.id,
-      target_id: profileId,
-      mode,
-      hours: mode === 'timed' ? body.hours || 24 : null,
-      status,
-      suspended_until,
-    },
-  }).catch(() => null)
+  try {
+    await db.from('safety_logs').insert({
+      conversation_id: null,
+      payload: {
+        action: 'admin_suspend',
+        admin_id: user.id,
+        target_id: profileId,
+        mode,
+        hours: mode === 'timed' ? body.hours || 24 : null,
+        status,
+        suspended_until,
+      },
+    })
+  } catch {
+    // log is optional — suspend still succeeds
+  }
 
   return NextResponse.json({
     success: true,
