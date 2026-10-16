@@ -1,31 +1,25 @@
-const APP_SALT = 'go-vanish-v1-e2ee-salt'
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
 
-function toBase64(bytes: ArrayBuffer): string {
-  const u8 = new Uint8Array(bytes)
+function b64FromBytes(bytes: Uint8Array): string {
   let s = ''
-  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i])
+  bytes.forEach((b) => {
+    s += String.fromCharCode(b)
+  })
   return btoa(s)
 }
 
-function fromBase64(b64: string): Uint8Array {
+function bytesFromB64(b64: string): Uint8Array {
   const s = atob(b64)
-  const u8 = new Uint8Array(s.length)
-  for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i)
-  return u8
-}
-
-/** Copy into a plain ArrayBuffer so TS accepts BufferSource */
-function asBufferSource(u8: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(u8.byteLength)
-  copy.set(u8)
-  return copy.buffer
+  const out = new Uint8Array(s.length)
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i)
+  return out
 }
 
 async function deriveKey(conversationId: string): Promise<CryptoKey> {
-  const enc = new TextEncoder()
   const material = await crypto.subtle.importKey(
     'raw',
-    enc.encode(`${APP_SALT}:${conversationId}`),
+    textEncoder.encode(`vanish-e2ee-v1:${conversationId}`),
     'PBKDF2',
     false,
     ['deriveKey']
@@ -33,7 +27,7 @@ async function deriveKey(conversationId: string): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: enc.encode(APP_SALT),
+      salt: textEncoder.encode('go-vanish-salt-v1'),
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -44,7 +38,7 @@ async function deriveKey(conversationId: string): Promise<CryptoKey> {
   )
 }
 
-/** Returns payload: v1.<iv_b64>.<cipher_b64> */
+/** Text payload: v1.<iv_b64>.<cipher_b64> */
 export async function encryptText(
   conversationId: string,
   plain: string
@@ -52,35 +46,68 @@ export async function encryptText(
   const key = await deriveKey(conversationId)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const cipher = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: asBufferSource(iv) },
+    { name: 'AES-GCM', iv },
     key,
-    new TextEncoder().encode(plain)
+    textEncoder.encode(plain)
   )
-  return `v1.${toBase64(asBufferSource(iv))}.${toBase64(cipher)}`
+  return `v1.${b64FromBytes(iv)}.${b64FromBytes(new Uint8Array(cipher))}`
 }
 
 export async function decryptText(
   conversationId: string,
   payload: string
 ): Promise<string> {
-  if (!payload.startsWith('v1.')) return payload
   const parts = payload.split('.')
-  if (parts.length !== 3) return payload
-  try {
-    const key = await deriveKey(conversationId)
-    const iv = fromBase64(parts[1])
-    const data = fromBase64(parts[2])
-    const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: asBufferSource(iv) },
-      key,
-      asBufferSource(data)
-    )
-    return new TextDecoder().decode(plain)
-  } catch {
-    return '[Unable to decrypt]'
+  if (parts.length !== 3 || parts[0] !== 'v1') {
+    throw new Error('Invalid ciphertext')
   }
+  const key = await deriveKey(conversationId)
+  const iv = bytesFromB64(parts[1])
+  const data = bytesFromB64(parts[2])
+  const plain = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource },
+    key,
+    data as BufferSource
+  )
+  return textDecoder.decode(plain)
 }
 
-export function looksEncrypted(text: string | null | undefined): boolean {
-  return !!text && text.startsWith('v1.')
+export function looksEncrypted(s: string): boolean {
+  return typeof s === 'string' && s.startsWith('v1.') && s.split('.').length === 3
+}
+
+/** Binary media: same AES-GCM; returns bytes = iv(12) + ciphertext */
+export async function encryptBytes(
+  conversationId: string,
+  data: ArrayBuffer
+): Promise<Uint8Array> {
+  const key = await deriveKey(conversationId)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const cipher = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      data
+    )
+  )
+  const out = new Uint8Array(12 + cipher.length)
+  out.set(iv, 0)
+  out.set(cipher, 12)
+  return out
+}
+
+export async function decryptBytes(
+  conversationId: string,
+  encrypted: ArrayBuffer
+): Promise<ArrayBuffer> {
+  const bytes = new Uint8Array(encrypted)
+  if (bytes.length < 13) throw new Error('Invalid encrypted media')
+  const iv = bytes.slice(0, 12)
+  const data = bytes.slice(12)
+  const key = await deriveKey(conversationId)
+  return crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource },
+    key,
+    data as BufferSource
+  )
 }

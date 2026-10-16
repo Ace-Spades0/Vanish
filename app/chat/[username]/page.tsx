@@ -2,7 +2,13 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { encryptText, decryptText, looksEncrypted } from '@/lib/e2ee'
+import {
+  encryptText,
+  decryptText,
+  looksEncrypted,
+  encryptBytes,
+  decryptBytes,
+} from '@/lib/e2ee'
 
 const REPORT_TYPES = [
   'Spam',
@@ -51,13 +57,34 @@ function asDurationMap(v: any): Record<string, number> {
 }
 
 async function decryptMessageRow(convId: string, row: any) {
-  if (!row || row.type !== 'text' || !row.content) return row
-  if (!looksEncrypted(row.content) && !row.is_encrypted) return row
+  if (!row) return row
+  if (row.type === 'text' && row.content) {
+    if (!looksEncrypted(row.content) && !row.is_encrypted) return row
+    try {
+      const plain = await decryptText(convId, row.content)
+      return { ...row, content: plain }
+    } catch {
+      return { ...row, content: '[Unable to decrypt]' }
+    }
+  }
+  return row
+}
+
+/** Decrypt encrypted media from Storage → object URL for display */
+async function mediaDisplayUrl(
+  convId: string,
+  url: string,
+  isEnc: boolean
+): Promise<string> {
+  if (!isEnc || !url) return url
   try {
-    const plain = await decryptText(convId, row.content)
-    return { ...row, content: plain }
+    const res = await fetch(url)
+    const buf = await res.arrayBuffer()
+    const plain = await decryptBytes(convId, buf)
+    const blob = new Blob([plain])
+    return URL.createObjectURL(blob)
   } catch {
-    return { ...row, content: '[Unable to decrypt]' }
+    return url
   }
 }
 
@@ -95,6 +122,7 @@ export default function ChatPage() {
   const [ghostReply, setGhostReply] = useState(false)
   const [sealed, setSealed] = useState(false)
   const [headerOpen, setHeaderOpen] = useState(false)
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({})
 
   const [sealUserIds, setSealUserIds] = useState<string[]>([])
   const [quietUserIds, setQuietUserIds] = useState<string[]>([])
@@ -131,6 +159,20 @@ export default function ChatPage() {
   const recountMedia = (list: any[]) => {
     setFileCount(list.filter((m) => m.type === 'file' || m.type === 'image').length)
     setVideoCount(list.filter((m) => m.type === 'video').length)
+  }
+
+  const resolveMediaList = async (convId: string, list: any[]) => {
+    const next: Record<string, string> = {}
+    for (const m of list) {
+      if (m.type === 'image' || m.type === 'video' || m.type === 'file') {
+        next[m.id] = await mediaDisplayUrl(
+          convId,
+          m.content,
+          !!m.is_encrypted
+        )
+      }
+    }
+    setMediaUrls((prev) => ({ ...prev, ...next }))
   }
 
   const canStartNewChat = () => {
@@ -297,6 +339,7 @@ export default function ChatPage() {
         if (isMounted) {
           setMessages(decrypted)
           recountMedia(decrypted)
+          await resolveMediaList(convId, decrypted)
         }
       } else {
         setFirstMsgAt(null)
@@ -338,6 +381,14 @@ export default function ChatPage() {
             recountMedia(next)
             return next
           })
+          if (row.type === 'image' || row.type === 'video' || row.type === 'file') {
+            const u = await mediaDisplayUrl(
+              convId,
+              row.content,
+              !!row.is_encrypted
+            )
+            setMediaUrls((prev) => ({ ...prev, [row.id]: u }))
+          }
         }
       )
       channel.on(
@@ -538,6 +589,7 @@ export default function ChatPage() {
     setWarningLevel(0)
     setWarningText('')
     setNewMessage('')
+    setMediaUrls({})
     hadMessagesRef.current = false
     setStartingNew(false)
     if (textAreaRef.current) textAreaRef.current.style.height = 'auto'
@@ -702,30 +754,43 @@ export default function ChatPage() {
       e.target.value = ''
       return
     }
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-    const fileName = `${conversationId}/${Date.now()}-${safeName}`
-    const { error } = await supabase.storage
-      .from('chat-photos')
-      .upload(fileName, file)
-    if (error) {
-      alert('Upload failed')
-      e.target.value = ''
-      return
+
+    try {
+      const raw = await file.arrayBuffer()
+      const encrypted = await encryptBytes(conversationId, raw)
+      const encBlob = new Blob([encrypted as BlobPart], {
+        type: 'application/octet-stream',
+      })
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const fileName = `${conversationId}/${Date.now()}-${safeName}.enc`
+      const { error } = await supabase.storage
+        .from('chat-photos')
+        .upload(fileName, encBlob, {
+          contentType: 'application/octet-stream',
+          upsert: false,
+        })
+      if (error) {
+        alert('Upload failed')
+        e.target.value = ''
+        return
+      }
+      const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
+      const type = isVideo ? 'video' : isImage ? 'image' : 'file'
+      await supabase.from('messages').insert({
+        conversation_id: conversationId,
+        sender_id: user.id,
+        content: data.publicUrl,
+        type,
+        is_encrypted: true,
+        expires_at: expiresAt,
+      })
+      hadMessagesRef.current = true
+      if (!firstMsgAt) setFirstMsgAt(new Date().toISOString())
+      setSealed(false)
+      setChatExpired(false)
+    } catch {
+      alert('Could not encrypt media')
     }
-    const { data } = supabase.storage.from('chat-photos').getPublicUrl(fileName)
-    const type = isVideo ? 'video' : isImage ? 'image' : 'file'
-    await supabase.from('messages').insert({
-      conversation_id: conversationId,
-      sender_id: user.id,
-      content: data.publicUrl,
-      type,
-      is_encrypted: false,
-      expires_at: expiresAt,
-    })
-    hadMessagesRef.current = true
-    if (!firstMsgAt) setFirstMsgAt(new Date().toISOString())
-    setSealed(false)
-    setChatExpired(false)
     e.target.value = ''
   }
     const openMsgMenu = (msg: any) => {
@@ -795,6 +860,7 @@ export default function ChatPage() {
     setVideoCount(0)
     setChatEndsAt(null)
     setFirstMsgAt(null)
+    setMediaUrls({})
     setSealed(true)
     setModal(null)
     setSafetyNext('enter')
@@ -857,6 +923,8 @@ export default function ChatPage() {
     alert('Report submitted')
   }
 
+  const srcFor = (msg: any) => mediaUrls[msg.id] || msg.content
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
@@ -883,7 +951,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-[100dvh] bg-black text-white flex flex-col overflow-hidden">
-      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 shrink-0 px-3 py-2.5">
+      <div className="bg-black/95 backdrop-blur-md border-b border-cyan-500/10 shrink-0 px-3 py-2.5">
         <div className="flex gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm text-zinc-400 leading-none mb-1">
@@ -944,24 +1012,24 @@ export default function ChatPage() {
 
           <div className="shrink-0 flex flex-col items-end gap-1.5">
             <div className="flex gap-1">
-              <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-700 text-zinc-300">
                 {fileCount}/4 files
               </span>
-              <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-700 text-zinc-300">
                 {videoCount}/1 video
               </span>
             </div>
             <button
               type="button"
               onClick={() => setHeaderOpen((v) => !v)}
-              className="h-9 px-3 rounded-xl bg-zinc-800 border border-zinc-600 text-sm font-semibold text-zinc-200"
+              className="h-9 px-3 rounded-xl bg-zinc-900 border border-zinc-600 text-sm font-semibold text-zinc-200"
             >
               {headerOpen ? '▲ Less' : '▼ More'}
             </button>
             <button
               type="button"
               onClick={() => router.push('/search')}
-              className="h-10 px-4 rounded-xl bg-zinc-800 border-2 border-cyan-400 text-cyan-300 font-bold text-sm"
+              className="h-10 px-4 rounded-xl bg-zinc-900 border-2 border-cyan-400 text-cyan-300 font-bold text-sm"
             >
               ← Back
             </button>
@@ -969,7 +1037,7 @@ export default function ChatPage() {
         </div>
 
         {headerOpen && (
-          <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-white/10">
+          <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-cyan-500/10">
             <button
               type="button"
               onClick={requestSealToggle}
@@ -977,7 +1045,7 @@ export default function ChatPage() {
               className={`flex-1 h-10 rounded-xl text-sm font-bold border ${
                 mySealOn
                   ? 'bg-cyan-500 text-black border-cyan-300'
-                  : 'bg-zinc-800 text-cyan-300 border-cyan-500/40'
+                  : 'bg-zinc-900 text-cyan-300 border-cyan-500/40'
               }`}
             >
               {mySealOn ? 'SEAL ON' : 'SEAL'}
@@ -989,7 +1057,7 @@ export default function ChatPage() {
               className={`flex-1 h-10 rounded-xl text-sm font-bold border ${
                 myQuietOn
                   ? 'bg-violet-500 text-white border-violet-300'
-                  : 'bg-zinc-800 text-violet-300 border-violet-500/40'
+                  : 'bg-zinc-900 text-violet-300 border-violet-500/40'
               }`}
             >
               {myQuietOn ? 'QUIET ON' : 'QUIET'}
@@ -1000,7 +1068,7 @@ export default function ChatPage() {
               className={`flex-1 h-10 rounded-xl text-sm font-bold border ${
                 ghostReply
                   ? 'bg-emerald-500 text-black border-emerald-300'
-                  : 'bg-zinc-800 text-emerald-300 border-emerald-500/40'
+                  : 'bg-zinc-900 text-emerald-300 border-emerald-500/40'
               }`}
             >
               {ghostReply ? 'GHOST ON' : 'GHOST'}
@@ -1015,27 +1083,38 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Vanish wall: deep black + fading cyan particles */}
+      {/* Creative Vanish field: pure black + cyan starfield + soft aurora */}
       <div
         className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col relative"
         style={{
-          backgroundColor: '#050508',
+          backgroundColor: '#000000',
           backgroundImage: `
-            radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,211,238,0.12), transparent 50%),
-            radial-gradient(circle at 20% 30%, rgba(34,211,238,0.06) 0%, transparent 2px),
-            radial-gradient(circle at 80% 20%, rgba(165,243,252,0.05) 0%, transparent 1.5px),
-            radial-gradient(circle at 40% 70%, rgba(34,211,238,0.05) 0%, transparent 2px),
-            radial-gradient(circle at 70% 60%, rgba(207,250,254,0.04) 0%, transparent 1.5px),
-            radial-gradient(circle at 15% 80%, rgba(34,211,238,0.04) 0%, transparent 2px),
-            radial-gradient(circle at 90% 85%, rgba(34,211,238,0.05) 0%, transparent 1.5px),
-            radial-gradient(circle at 55% 40%, rgba(165,243,252,0.03) 0%, transparent 2px),
-            linear-gradient(180deg, #050508 0%, #0a0a0f 50%, #050508 100%)
+            radial-gradient(ellipse 120% 80% at 50% -30%, rgba(34,211,238,0.22), transparent 55%),
+            radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6,182,212,0.08), transparent 50%),
+            radial-gradient(ellipse 50% 30% at 10% 90%, rgba(34,211,238,0.06), transparent 45%),
+            radial-gradient(1.5px 1.5px at 8% 12%, rgba(165,243,252,0.9), transparent),
+            radial-gradient(1px 1px at 22% 28%, rgba(34,211,238,0.7), transparent),
+            radial-gradient(1.5px 1.5px at 35% 8%, rgba(207,250,254,0.8), transparent),
+            radial-gradient(1px 1px at 48% 22%, rgba(34,211,238,0.55), transparent),
+            radial-gradient(2px 2px at 62% 15%, rgba(165,243,252,0.75), transparent),
+            radial-gradient(1px 1px at 78% 30%, rgba(34,211,238,0.6), transparent),
+            radial-gradient(1.5px 1.5px at 92% 18%, rgba(207,250,254,0.7), transparent),
+            radial-gradient(1px 1px at 12% 48%, rgba(34,211,238,0.5), transparent),
+            radial-gradient(1.5px 1.5px at 28% 62%, rgba(165,243,252,0.65), transparent),
+            radial-gradient(1px 1px at 44% 55%, rgba(34,211,238,0.45), transparent),
+            radial-gradient(2px 2px at 58% 72%, rgba(207,250,254,0.55), transparent),
+            radial-gradient(1px 1px at 72% 58%, rgba(34,211,238,0.5), transparent),
+            radial-gradient(1.5px 1.5px at 88% 68%, rgba(165,243,252,0.6), transparent),
+            radial-gradient(1px 1px at 18% 82%, rgba(34,211,238,0.4), transparent),
+            radial-gradient(1.5px 1.5px at 38% 88%, rgba(207,250,254,0.5), transparent),
+            radial-gradient(1px 1px at 66% 92%, rgba(34,211,238,0.45), transparent),
+            radial-gradient(2px 2px at 84% 85%, rgba(165,243,252,0.55), transparent)
           `,
         }}
       >
         {messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center px-4 relative z-10">
-            <p className="text-center text-zinc-500 text-sm leading-relaxed max-w-xs">
+            <p className="text-center text-zinc-400 text-sm leading-relaxed max-w-xs">
               {chatExpired || sealed
                 ? 'This chat has ended.'
                 : 'Nothing here yet. When you speak, it can vanish.'}
@@ -1045,6 +1124,7 @@ export default function ChatPage() {
           <div className="space-y-3 relative z-10">
             {messages.map((msg) => {
               const mine = msg.sender_id === user?.id
+              const mediaSrc = srcFor(msg)
               return (
                 <div
                   key={msg.id}
@@ -1062,19 +1142,19 @@ export default function ChatPage() {
                   <div
                     className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
                       mine
-                        ? 'bg-cyan-600/95 text-white rounded-br-md shadow-[0_0_20px_rgba(34,211,238,0.15)]'
-                        : 'bg-zinc-800/90 text-zinc-100 rounded-bl-md border border-white/5'
+                        ? 'bg-cyan-600 text-white rounded-br-md shadow-[0_0_24px_rgba(34,211,238,0.25)]'
+                        : 'bg-black/75 text-zinc-100 rounded-bl-md border border-cyan-500/20 backdrop-blur-sm'
                     }`}
                   >
                     {msg.type === 'image' && (
                       <div>
                         <img
-                          src={msg.content}
+                          src={mediaSrc}
                           alt=""
                           className="max-w-full rounded-lg mb-1"
                         />
                         <a
-                          href={msg.content}
+                          href={mediaSrc}
                           download
                           target="_blank"
                           rel="noreferrer"
@@ -1087,12 +1167,12 @@ export default function ChatPage() {
                     {msg.type === 'video' && (
                       <div>
                         <video
-                          src={msg.content}
+                          src={mediaSrc}
                           controls
                           className="max-w-full rounded-lg mb-1"
                         />
                         <a
-                          href={msg.content}
+                          href={mediaSrc}
                           download
                           target="_blank"
                           rel="noreferrer"
@@ -1104,7 +1184,7 @@ export default function ChatPage() {
                     )}
                     {msg.type === 'file' && (
                       <a
-                        href={msg.content}
+                        href={mediaSrc}
                         target="_blank"
                         rel="noreferrer"
                         className="text-sm underline break-all"
@@ -1127,7 +1207,7 @@ export default function ChatPage() {
       </div>
 
       {(chatExpired || sealed) && messages.length === 0 && (
-        <div className="shrink-0 p-4 border-t border-zinc-800 bg-zinc-950">
+        <div className="shrink-0 p-4 border-t border-zinc-900 bg-black">
           <p className="text-center text-zinc-400 text-sm mb-3">Chat ended.</p>
           {canStartNewChat() ? (
             <button
@@ -1146,12 +1226,12 @@ export default function ChatPage() {
       )}
 
       {!chatExpired && !sealed && (
-        <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 p-2">
+        <div className="shrink-0 bg-black border-t border-cyan-500/10 p-2">
           <div className="flex items-end gap-2">
             <button
               type="button"
               onClick={() => mediaInputRef.current?.click()}
-              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xl"
+              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-900 border border-zinc-700 flex items-center justify-center text-xl"
               title="Photo / Video"
             >
               📷
@@ -1159,7 +1239,7 @@ export default function ChatPage() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xl"
+              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-900 border border-zinc-700 flex items-center justify-center text-xl"
               title="File"
             >
               📎
@@ -1192,7 +1272,7 @@ export default function ChatPage() {
               }}
               placeholder="Type a message..."
               rows={1}
-              className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none overflow-hidden"
+              className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-900 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none overflow-hidden"
               style={{ maxHeight: 160 }}
             />
             <button
@@ -1206,8 +1286,8 @@ export default function ChatPage() {
       )}
 
       {modal === 'safety' && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-3xl p-6">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/20 rounded-3xl p-6">
             <h2 className="text-xl font-semibold mb-3">Before you continue</h2>
             <ul className="text-sm text-zinc-300 space-y-2 mb-4 list-disc pl-5">
               <li>Chats are temporary and may disappear after a limited time.</li>
@@ -1230,8 +1310,8 @@ export default function ChatPage() {
       )}
 
       {modal === 'clear' && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
             <h3 className="text-lg font-semibold mb-2">Clear this chat?</h3>
             <p className="text-sm text-zinc-400 mb-4">
               Messages vanish for both of you right away.
@@ -1239,7 +1319,7 @@ export default function ChatPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setModal(null)}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
@@ -1255,8 +1335,8 @@ export default function ChatPage() {
       )}
 
       {modal === 'block' && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
             <h3 className="text-lg font-semibold mb-2">
               Block {targetUsername}?
             </h3>
@@ -1266,7 +1346,7 @@ export default function ChatPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setModal(null)}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
@@ -1282,8 +1362,8 @@ export default function ChatPage() {
       )}
 
       {modal === 'report' && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold mb-2">
               Report {targetUsername}
             </h3>
@@ -1302,7 +1382,7 @@ export default function ChatPage() {
                   className={`text-xs px-2.5 py-1.5 rounded-lg border ${
                     reportType === type
                       ? 'bg-yellow-600 border-yellow-400 text-white'
-                      : 'bg-zinc-800 border-zinc-600 text-zinc-300'
+                      : 'bg-zinc-900 border-zinc-600 text-zinc-300'
                   }`}
                 >
                   {type}
@@ -1315,7 +1395,7 @@ export default function ChatPage() {
               value={reportReason}
               onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
               rows={3}
-              className="w-full p-3 mb-2 rounded-xl bg-zinc-800 border border-zinc-700 text-sm resize-none"
+              className="w-full p-3 mb-2 rounded-xl bg-zinc-900 border border-zinc-700 text-sm resize-none"
             />
             <p className="text-[11px] text-zinc-500 mb-4">
               {reportReason.length}/400
@@ -1328,7 +1408,7 @@ export default function ChatPage() {
                   setReportType('')
                   setReportReason('')
                 }}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
@@ -1344,8 +1424,8 @@ export default function ChatPage() {
       )}
 
       {modal === 'ghost' && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
             <h3 className="text-lg font-semibold mb-2">Ghost mode</h3>
             <p className="text-sm text-zinc-400 mb-4">
               After your next message is sent, you go offline. Others cannot find
@@ -1354,7 +1434,7 @@ export default function ChatPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setModal(null)}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
@@ -1373,8 +1453,8 @@ export default function ChatPage() {
       )}
 
       {sealConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
             <h3 className="text-lg font-semibold mb-2">
               {sealConfirm === 'on' ? 'Turn Seal on?' : 'Turn Seal off?'}
             </h3>
@@ -1386,7 +1466,7 @@ export default function ChatPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setSealConfirm(null)}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
@@ -1402,8 +1482,8 @@ export default function ChatPage() {
       )}
 
       {quietConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
             <h3 className="text-lg font-semibold mb-2">
               {quietConfirm === 'on' ? 'Turn Quiet on?' : 'Turn Quiet off?'}
             </h3>
@@ -1415,7 +1495,7 @@ export default function ChatPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setQuietConfirm(null)}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
@@ -1431,8 +1511,8 @@ export default function ChatPage() {
       )}
 
       {msgMenu && activeMsg && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-4 w-full max-w-sm">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-4 w-full max-w-sm">
             {msgMenu === 'menu' && (
               <>
                 <p className="text-sm text-zinc-400 mb-3 line-clamp-2">
@@ -1490,12 +1570,12 @@ export default function ChatPage() {
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   rows={3}
-                  className="w-full p-3 mb-3 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
+                  className="w-full p-3 mb-3 rounded-xl bg-zinc-900 border border-zinc-700 text-sm"
                 />
                 <div className="flex gap-2">
                   <button
                     onClick={() => setMsgMenu('menu')}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
+                    className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
                   >
                     Back
                   </button>
