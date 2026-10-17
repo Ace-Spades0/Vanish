@@ -38,6 +38,17 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return '0m'
+  const totalMin = Math.floor(ms / 60000)
+  const days = Math.floor(totalMin / (60 * 24))
+  const hours = Math.floor((totalMin % (60 * 24)) / 60)
+  const mins = totalMin % 60
+  if (days > 0) return `${days}d ${hours}h ${mins}m`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+
 export default function AppealPage() {
   const router = useRouter()
   const [lang, setLangState] = useState<Lang>('en')
@@ -48,6 +59,7 @@ export default function AppealPage() {
   const [sending, setSending] = useState(false)
   const [profile, setProfile] = useState<any>(null)
   const [appeals, setAppeals] = useState<any[]>([])
+  const [remainLabel, setRemainLabel] = useState('')
 
   useEffect(() => {
     setLangState(getLang())
@@ -98,6 +110,25 @@ export default function AppealPage() {
     init()
   }, [])
 
+  useEffect(() => {
+    if (!profile?.suspended_until || profile?.status === 'banned') {
+      setRemainLabel('')
+      return
+    }
+    const tick = () => {
+      const ms = new Date(profile.suspended_until).getTime() - Date.now()
+      if (ms <= 0) {
+        setRemainLabel('0m')
+        router.push('/home')
+        return
+      }
+      setRemainLabel(formatCountdown(ms))
+    }
+    tick()
+    const id = setInterval(tick, 30000)
+    return () => clearInterval(id)
+  }, [profile?.suspended_until, profile?.status])
+
   const submit = async () => {
     setSending(true)
     setStatusMsg('')
@@ -115,17 +146,27 @@ export default function AppealPage() {
     const data = await res.json()
     if (data.error) {
       setStatusMsg(data.error)
-    } else {
-      setStatusMsg(
-        t.appealSent || 'Appeal submitted. Please wait for a decision.'
-      )
-      setMessage('')
-      const res2 = await fetch('/api/appeal', {
-        headers: { Authorization: `Bearer ${session?.access_token || ''}` },
-      })
-      const data2 = await res2.json()
-      setAppeals(data2.appeals || [])
+      setSending(false)
+      return
     }
+    if (data.auto_restored) {
+      setStatusMsg(
+        'Appeal accepted. Your account is active again. Redirecting…'
+      )
+      setTimeout(() => router.push('/home'), 1500)
+      setSending(false)
+      return
+    }
+    setStatusMsg(
+      data.message ||
+        'Appeals are reviewed; a decision can restore access. Please wait.'
+    )
+    setMessage('')
+    const res2 = await fetch('/api/appeal', {
+      headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+    })
+    const data2 = await res2.json()
+    setAppeals(data2.appeals || [])
     setSending(false)
   }
 
@@ -153,54 +194,62 @@ export default function AppealPage() {
   return (
     <div className="min-h-screen bg-black text-white px-4 py-10">
       <div className="max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-2">
-          {t.appealTitle || 'Account suspended'}
-        </h1>
-        <p className="text-sm text-zinc-400 mb-4">
-          {t.appealHelp ||
-            'You can send one appeal. An admin will review it. AI may help sort urgency; a human decides.'}
+        <h1 className="text-2xl font-bold mb-2">Account suspended</h1>
+        <p className="text-sm text-zinc-400 mb-4 leading-relaxed">
+          Appeals are reviewed; a decision can restore access. Private chats are
+          not read for fun — only safety decisions on reports and appeals.
         </p>
 
         {profile?.status === 'banned' ? (
           <p className="text-red-400 text-sm mb-6">
-            {t.permanentBan || 'This account is permanently restricted.'}
+            This account is permanently restricted. You may still submit an
+            appeal.
           </p>
         ) : (
-          <p className="text-amber-300/90 text-sm mb-6">
-            {t.suspendedUntil || 'Suspended until'}: {until || '—'}
-          </p>
+          <div className="mb-6 rounded-2xl border border-cyan-500/20 bg-zinc-900/80 p-4">
+            <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">
+              Time until account can be fully active
+            </p>
+            <p className="text-2xl font-semibold text-cyan-400 tabular-nums">
+              {remainLabel || '—'}
+            </p>
+            <p className="text-xs text-zinc-500 mt-2">
+              Ends: {until || '—'}
+            </p>
+            <p className="text-[11px] text-zinc-500 mt-2">
+              Suspensions of 24 hours or less stay in place unless a human
+              restores access. Longer suspensions or bans may be restored after
+              appeal review.
+            </p>
+          </div>
         )}
 
-        {profile?.status === 'suspended' && !hasPending && (
-          <>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value.slice(0, 500))}
-              placeholder={
-                t.appealPlaceholder ||
-                'Explain why your account should be restored (max 500)'
-              }
-              rows={5}
-              className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-sm mb-2"
-            />
-            <p className="text-xs text-zinc-500 mb-3">{message.length}/500</p>
-            <button
-              onClick={submit}
-              disabled={sending}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50 mb-4"
-            >
-              {sending
-                ? t.pleaseWait || 'Please wait...'
-                : t.submitAppeal || 'Submit appeal'}
-            </button>
-          </>
-        )}
-
-        {profile?.status === 'suspended' && hasPending && (
-          <p className="text-sm text-zinc-400 mb-4">
-            You already have an appeal under review. Wait for a decision.
-          </p>
-        )}
+        {profile?.status === 'suspended' || profile?.status === 'banned' ? (
+          !hasPending ? (
+            <>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value.slice(0, 500))}
+                placeholder="Explain why your account should be restored (max 500)"
+                rows={5}
+                className="w-full p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-sm mb-2"
+              />
+              <p className="text-xs text-zinc-500 mb-3">{message.length}/500</p>
+              <button
+                onClick={submit}
+                disabled={sending}
+                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50 mb-4"
+              >
+                {sending ? 'Please wait...' : 'Submit appeal'}
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-400 mb-4">
+              You already have an appeal under review. Wait for a decision or
+              for the timer to reach zero.
+            </p>
+          )
+        ) : null}
 
         {statusMsg && (
           <p className="text-center text-sm text-cyan-400 mb-4">{statusMsg}</p>
@@ -225,9 +274,7 @@ export default function AppealPage() {
                   {a.message}
                 </p>
                 {a.admin_note && (
-                  <p className="text-xs text-cyan-400 mt-2">
-                    Admin: {a.admin_note}
-                  </p>
+                  <p className="text-xs text-cyan-400/90 mt-2">{a.admin_note}</p>
                 )}
               </div>
             ))}
@@ -238,7 +285,7 @@ export default function AppealPage() {
           onClick={logout}
           className="w-full bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl"
         >
-          {t.logout || 'Logout'}
+          Logout
         </button>
       </div>
     </div>
