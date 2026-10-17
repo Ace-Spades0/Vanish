@@ -5,6 +5,39 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getLang, translations, type Lang } from '@/lib/i18n'
 
+function StatusBadge({ status }: { status: string }) {
+  const s = (status || '').toLowerCase()
+  if (s === 'pending') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-600 bg-zinc-800/90 px-3 py-1 text-xs font-semibold tracking-wide text-zinc-300">
+        <span aria-hidden>⚠️</span>
+        PENDING
+      </span>
+    )
+  }
+  if (s === 'rejected') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/50 bg-red-950/80 px-3 py-1 text-xs font-semibold tracking-wide text-red-400">
+        <span aria-hidden>⛔</span>
+        REJECTED
+      </span>
+    )
+  }
+  if (s === 'approved') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/60 px-3 py-1 text-xs font-semibold tracking-wide text-emerald-400">
+        <span aria-hidden>✓</span>
+        APPROVED
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-400">
+      {status || '—'}
+    </span>
+  )
+}
+
 export default function AppealPage() {
   const router = useRouter()
   const [lang, setLangState] = useState<Lang>('en')
@@ -83,7 +116,9 @@ export default function AppealPage() {
     if (data.error) {
       setStatusMsg(data.error)
     } else {
-      setStatusMsg(t.appealSent || 'Appeal submitted. Please wait for a decision.')
+      setStatusMsg(
+        t.appealSent || 'Appeal submitted. Please wait for a decision.'
+      )
       setMessage('')
       const res2 = await fetch('/api/appeal', {
         headers: { Authorization: `Bearer ${session?.access_token || ''}` },
@@ -111,6 +146,10 @@ export default function AppealPage() {
     profile?.suspended_until &&
     new Date(profile.suspended_until).toLocaleString()
 
+  const hasPending = appeals.some(
+    (a) => (a.status || '').toLowerCase() === 'pending'
+  )
+
   return (
     <div className="min-h-screen bg-black text-white px-4 py-10">
       <div className="max-w-md mx-auto">
@@ -125,14 +164,14 @@ export default function AppealPage() {
         {profile?.status === 'banned' ? (
           <p className="text-red-400 text-sm mb-6">
             {t.permanentBan || 'This account is permanently restricted.'}
-        </p>
+          </p>
         ) : (
           <p className="text-amber-300/90 text-sm mb-6">
             {t.suspendedUntil || 'Suspended until'}: {until || '—'}
           </p>
         )}
 
-        {profile?.status === 'suspended' && (
+        {profile?.status === 'suspended' && !hasPending && (
           <>
             <textarea
               value={message}
@@ -157,21 +196,34 @@ export default function AppealPage() {
           </>
         )}
 
+        {profile?.status === 'suspended' && hasPending && (
+          <p className="text-sm text-zinc-400 mb-4">
+            You already have an appeal under review. Wait for a decision.
+          </p>
+        )}
+
         {statusMsg && (
           <p className="text-center text-sm text-cyan-400 mb-4">{statusMsg}</p>
         )}
 
         {appeals.length > 0 && (
-          <div className="space-y-2 mb-8">
+          <div className="space-y-3 mb-8">
             {appeals.map((a) => (
               <div
                 key={a.id}
-                className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-sm"
+                className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800"
               >
-                <p className="text-zinc-400 text-xs mb-1">
-                  {a.status} · {new Date(a.created_at).toLocaleString()}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <StatusBadge status={a.status} />
+                  <p className="text-[11px] text-zinc-500">
+                    {a.created_at
+                      ? new Date(a.created_at).toLocaleString()
+                      : '—'}
+                  </p>
+                </div>
+                <p className="text-sm text-zinc-200 whitespace-pre-wrap">
+                  {a.message}
                 </p>
-                <p className="text-zinc-200 whitespace-pre-wrap">{a.message}</p>
                 {a.admin_note && (
                   <p className="text-xs text-cyan-400 mt-2">
                     Admin: {a.admin_note}
