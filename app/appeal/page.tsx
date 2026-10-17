@@ -157,10 +157,7 @@ export default function AppealPage() {
       setSending(false)
       return
     }
-    setStatusMsg(
-      data.message ||
-        'Appeals are reviewed; a decision can restore access. Please wait.'
-    )
+    setStatusMsg(data.message || '')
     setMessage('')
     const res2 = await fetch('/api/appeal', {
       headers: { Authorization: `Bearer ${session?.access_token || ''}` },
@@ -194,16 +191,11 @@ export default function AppealPage() {
   return (
     <div className="min-h-screen bg-black text-white px-4 py-10">
       <div className="max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-2">Account suspended</h1>
-        <p className="text-sm text-zinc-400 mb-4 leading-relaxed">
-          Appeals are reviewed; a decision can restore access. Private chats are
-          not read for fun — only safety decisions on reports and appeals.
-        </p>
+        <h1 className="text-2xl font-bold mb-6">Account suspended</h1>
 
         {profile?.status === 'banned' ? (
           <p className="text-red-400 text-sm mb-6">
-            This account is permanently restricted. You may still submit an
-            appeal.
+            This account is permanently restricted.
           </p>
         ) : (
           <div className="mb-6 rounded-2xl border border-cyan-500/20 bg-zinc-900/80 p-4">
@@ -216,16 +208,11 @@ export default function AppealPage() {
             <p className="text-xs text-zinc-500 mt-2">
               Ends: {until || '—'}
             </p>
-            <p className="text-[11px] text-zinc-500 mt-2">
-              Suspensions of 24 hours or less stay in place unless a human
-              restores access. Longer suspensions or bans may be restored after
-              appeal review.
-            </p>
           </div>
         )}
 
-        {profile?.status === 'suspended' || profile?.status === 'banned' ? (
-          !hasPending ? (
+        {(profile?.status === 'suspended' || profile?.status === 'banned') &&
+          !hasPending && (
             <>
               <textarea
                 value={message}
@@ -243,13 +230,15 @@ export default function AppealPage() {
                 {sending ? 'Please wait...' : 'Submit appeal'}
               </button>
             </>
-          ) : (
+          )}
+
+        {(profile?.status === 'suspended' || profile?.status === 'banned') &&
+          hasPending && (
             <p className="text-sm text-zinc-400 mb-4">
               You already have an appeal under review. Wait for a decision or
               for the timer to reach zero.
             </p>
-          )
-        ) : null}
+          )}
 
         {statusMsg && (
           <p className="text-center text-sm text-cyan-400 mb-4">{statusMsg}</p>
