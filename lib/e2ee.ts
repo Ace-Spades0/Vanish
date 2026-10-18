@@ -16,6 +16,12 @@ function bytesFromB64(b64: string): Uint8Array {
   return out
 }
 
+function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(u8.byteLength)
+  copy.set(u8)
+  return copy.buffer
+}
+
 async function deriveKey(conversationId: string): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey(
     'raw',
@@ -38,7 +44,6 @@ async function deriveKey(conversationId: string): Promise<CryptoKey> {
   )
 }
 
-/** Text payload: v1.<iv_b64>.<cipher_b64> */
 export async function encryptText(
   conversationId: string,
   plain: string
@@ -65,9 +70,9 @@ export async function decryptText(
   const iv = bytesFromB64(parts[1])
   const data = bytesFromB64(parts[2])
   const plain = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv as BufferSource },
+    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
     key,
-    data as BufferSource
+    toArrayBuffer(data)
   )
   return textDecoder.decode(plain)
 }
@@ -76,7 +81,6 @@ export function looksEncrypted(s: string): boolean {
   return typeof s === 'string' && s.startsWith('v1.') && s.split('.').length === 3
 }
 
-/** Binary media: same AES-GCM; returns bytes = iv(12) + ciphertext */
 export async function encryptBytes(
   conversationId: string,
   data: ArrayBuffer
@@ -84,11 +88,7 @@ export async function encryptBytes(
   const key = await deriveKey(conversationId)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const cipher = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      data
-    )
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data)
   )
   const out = new Uint8Array(12 + cipher.length)
   out.set(iv, 0)
@@ -106,8 +106,8 @@ export async function decryptBytes(
   const data = bytes.slice(12)
   const key = await deriveKey(conversationId)
   return crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv as BufferSource },
+    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
     key,
-    data as BufferSource
+    toArrayBuffer(data)
   )
 }

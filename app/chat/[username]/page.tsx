@@ -71,17 +71,32 @@ async function decryptMessageRow(convId: string, row: any) {
   return row
 }
 
+function guessMimeFromUrl(url: string): string {
+  const u = url.toLowerCase()
+  if (u.includes('.png')) return 'image/png'
+  if (u.includes('.gif')) return 'image/gif'
+  if (u.includes('.webp')) return 'image/webp'
+  if (u.includes('.mp4')) return 'video/mp4'
+  if (u.includes('.webm')) return 'video/webm'
+  if (u.includes('.mov')) return 'video/quicktime'
+  if (u.includes('.pdf')) return 'application/pdf'
+  return 'image/jpeg'
+}
+
 async function mediaDisplayUrl(
   convId: string,
   url: string,
   isEnc: boolean
 ): Promise<string> {
-  if (!isEnc || !url) return url
+  if (!url) return url
+  if (!isEnc) return url
   try {
     const res = await fetch(url)
+    if (!res.ok) return url
     const buf = await res.arrayBuffer()
     const plain = await decryptBytes(convId, buf)
-    const blob = new Blob([plain as BlobPart])
+    const mime = guessMimeFromUrl(url)
+    const blob = new Blob([plain as BlobPart], { type: mime })
     return URL.createObjectURL(blob)
   } catch {
     return url
@@ -197,7 +212,6 @@ export default function ChatPage() {
     setChatEndsAt(ends)
     if (new Date(ends).getTime() <= Date.now()) {
       setChatExpired(true)
-      setSealed(true)
     }
   }
 
@@ -337,7 +351,6 @@ export default function ChatPage() {
             .eq('conversation_id', convId)
           setMessages([])
           setChatExpired(true)
-          setSealed(true)
           setLoading(false)
           return
         }
@@ -500,6 +513,25 @@ export default function ChatPage() {
       recomputeEnd(firstMsgAt, durationByUser)
     }
   }, [durationByUser, firstMsgAt, user?.id, targetUser?.id])
+
+  useEffect(() => {
+    if (!chatEndsAt || chatExpired || !conversationId) return
+    const tick = async () => {
+      if (new Date(chatEndsAt).getTime() > Date.now()) return
+      setChatExpired(true)
+      await supabase
+        .from('messages')
+        .update({ deleted: true })
+        .eq('conversation_id', conversationId)
+      setMessages([])
+      setFileCount(0)
+      setVideoCount(0)
+      setMediaUrls({})
+    }
+    tick()
+    const id = setInterval(tick, 5000)
+    return () => clearInterval(id)
+  }, [chatEndsAt, chatExpired, conversationId])
 
   const saveSettings = async (patch: {
     seal_user_ids?: string[]
@@ -761,12 +793,12 @@ export default function ChatPage() {
       '_'
     )}`
 
-    let uploadBody: Blob | ArrayBuffer = file
+    let uploadBody: Blob = file
     let isEnc = false
     try {
       const buf = await file.arrayBuffer()
       const enc = await encryptBytes(conversationId, buf)
-      uploadBody = enc.buffer as ArrayBuffer
+      uploadBody = new Blob([enc], { type: 'application/octet-stream' })
       isEnc = true
     } catch {
       uploadBody = file
@@ -776,7 +808,9 @@ export default function ChatPage() {
     const { error: upErr } = await supabase.storage
       .from('chat-photos')
       .upload(path, uploadBody, {
-        contentType: isEnc ? 'application/octet-stream' : file.type,
+        contentType: isEnc
+          ? 'application/octet-stream'
+          : file.type || 'application/octet-stream',
         upsert: false,
       })
 
@@ -819,26 +853,6 @@ export default function ChatPage() {
     setMessages([])
     setSealed(true)
     setModal(null)
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      await fetch('/api/report', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token || ''}`,
-        },
-        body: JSON.stringify({
-          reported_id: targetUser?.id,
-          conversation_id: conversationId,
-          reason: 'Chat cleared by user (audit)',
-          type: 'Other',
-        }),
-      }).catch(() => null)
-    } catch {
-      /* optional audit */
-    }
   }
 
   const confirmBlockUser = async () => {
@@ -1130,9 +1144,11 @@ export default function ChatPage() {
         {messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center px-4 relative z-10">
             <p className="text-center text-zinc-400 text-sm leading-relaxed max-w-xs">
-              {chatExpired || sealed
-                ? 'This chat has ended.'
-                : 'Nothing here yet. When you speak, it can vanish.'}
+              {chatExpired
+                ? 'This chat has Vanished.'
+                : sealed
+                  ? 'This chat was cleared.'
+                  : 'Nothing here yet. When you speak, it can vanish.'}
             </p>
           </div>
         ) : (
@@ -1166,7 +1182,7 @@ export default function ChatPage() {
                         <img
                           src={mediaSrc}
                           alt=""
-                          className="max-w-full rounded-lg mb-1"
+                          className="max-w-[220px] max-h-[280px] w-auto h-auto object-contain rounded-lg mb-1"
                         />
                         <a
                           href={mediaSrc}
@@ -1184,7 +1200,7 @@ export default function ChatPage() {
                         <video
                           src={mediaSrc}
                           controls
-                          className="max-w-full rounded-lg mb-1"
+                          className="max-w-[220px] max-h-[280px] w-auto rounded-lg mb-1"
                         />
                         <a
                           href={mediaSrc}
@@ -1222,20 +1238,54 @@ export default function ChatPage() {
       </div>
 
       {(chatExpired || sealed) && messages.length === 0 && (
-        <div className="shrink-0 p-4 border-t border-zinc-900 bg-black">
-          <p className="text-center text-zinc-400 text-sm mb-3">Chat ended.</p>
+        <div className="shrink-0 p-4 border-t border-zinc-900 bg-black space-y-2">
+          <p className="text-center text-zinc-300 text-sm font-medium mb-1">
+            {chatExpired ? 'This chat has Vanished.' : 'This chat was cleared.'}
+          </p>
           {canStartNewChat() ? (
-            <button
-              onClick={requestNewChat}
-              disabled={startingNew}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50"
-            >
-              {startingNew ? 'Please wait...' : 'Start a new chat'}
-            </button>
+            <>
+              <button
+                onClick={requestNewChat}
+                disabled={startingNew}
+                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50"
+              >
+                {startingNew ? 'Please wait...' : 'Start a new chat'}
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/home')}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Go home
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/search')}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Search users
+              </button>
+            </>
           ) : (
-            <p className="text-center text-zinc-500 text-sm">
-              This chat cannot be reopened.
-            </p>
+            <>
+              <p className="text-center text-zinc-500 text-sm mb-2">
+                This chat cannot be reopened.
+              </p>
+              <button
+                type="button"
+                onClick={() => router.push('/home')}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Go home
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/search')}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Search users
+              </button>
+            </>
           )}
         </div>
       )}
