@@ -535,7 +535,7 @@ export default function ChatPage() {
 
   const requestSealToggle = () => {
     if (!user || !conversationId || savingSeal) return
-        setSealConfirm(mySealOn ? 'off' : 'on')
+    setSealConfirm(mySealOn ? 'off' : 'on')
   }
 
   const confirmSealToggle = async () => {
@@ -654,33 +654,43 @@ export default function ChatPage() {
     ).length
     const isQuestion = content.endsWith('?')
     const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
-    const qThreshold = myQuietOn ? 4 : 8
-    let forceShort = warningLevel >= 2
-    if (isQuestion && totalQuestions >= qThreshold && warningLevel < 2) {
-      const next = warningLevel + 1
-      setWarningLevel(next)
-      if (next === 1) {
+    const qThreshold = myQuietOn ? 3 : 6
+    const interrogationDetected = isQuestion && totalQuestions >= qThreshold
+    let useShortExpiry = warningLevel >= 2
+
+    if (interrogationDetected) {
+      const nextLevel = Math.min(warningLevel + 1, 2)
+      setWarningLevel(nextLevel)
+      if (nextLevel === 1) {
         setWarningText(
           'You are asking a lot of questions. Please slow down.'
         )
       } else {
         setWarningText(
-          'Interrogation limit reached. This chat will end in 30 minutes.'
+          'Too many questions. This chat will end sooner (30 min rule).'
         )
-        forceShort = true
-        try {
-          await fetch('/api/interrogation-strike', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
-          })
-        } catch {
-          /* non-blocking */
-        }
+        useShortExpiry = true
+      }
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        await fetch('/api/interrogation-strike', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token || ''}`,
+          },
+          body: JSON.stringify({ conversation_id: conversationId }),
+        })
+      } catch {
+        /* non-blocking */
       }
     }
 
-    const expiresAt = await resolveExpiresAt(forceShort)
+    const expiresAt = await resolveExpiresAt(useShortExpiry)
+    if (!firstMsgAt) setFirstMsgAt(new Date().toISOString())
+
     let stored = content
     let isEnc = false
     try {
@@ -823,10 +833,11 @@ export default function ChatPage() {
           reported_id: targetUser?.id,
           conversation_id: conversationId,
           reason: 'Chat cleared by user (audit)',
+          type: 'Other',
         }),
-      })
+      }).catch(() => null)
     } catch {
-      /* optional */
+      /* optional audit */
     }
   }
 
@@ -848,6 +859,7 @@ export default function ChatPage() {
     else {
       setBlocked(true)
       setModal(null)
+      router.push('/home')
     }
   }
 
@@ -857,6 +869,15 @@ export default function ChatPage() {
     const {
       data: { session },
     } = await supabase.auth.getSession()
+    const snapshot = messages.slice(-20).map((m) => ({
+      id: m.id,
+      sender_id: m.sender_id,
+      type: m.type,
+      content:
+        m.type === 'text'
+          ? String(m.content || '').slice(0, 200)
+          : `[${m.type}]`,
+    }))
     const res = await fetch('/api/report', {
       method: 'POST',
       headers: {
@@ -868,6 +889,7 @@ export default function ChatPage() {
         conversation_id: conversationId,
         reason: `[${reportType}] ${reportReason.trim()}`,
         message_id: reportMessageId,
+        message_snapshot: snapshot,
       }),
     })
     const data = await res.json()
@@ -889,22 +911,24 @@ export default function ChatPage() {
 
   const startLongPress = (msg: any) => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current)
-    longPressTimer.current = setTimeout(() => openMsgMenu(msg), 450)
+    longPressTimer.current = setTimeout(() => openMsgMenu(msg), 500)
   }
 
   const endLongPress = () => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
   }
 
   const vanishOneMessage = async (msg: any) => {
-    if (!msg?.id) return
     await supabase.from('messages').update({ deleted: true }).eq('id', msg.id)
     setMsgMenu(null)
     setActiveMsg(null)
   }
 
   const saveEditMessage = async () => {
-    if (!activeMsg || !editText.trim() || !conversationId) return
+    if (!activeMsg || activeMsg.type !== 'text' || !editText.trim()) return
     let stored = editText.trim()
     let isEnc = false
     try {
@@ -922,8 +946,7 @@ export default function ChatPage() {
   }
 
   const srcFor = (msg: any) => mediaUrls[msg.id] || msg.content
-
-  if (loading) {
+    if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <p className="text-zinc-400">Loading...</p>
@@ -946,19 +969,18 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
-      <div className="shrink-0 border-b border-zinc-900 px-3 py-2 bg-black/95">
+    <div className="min-h-screen bg-black text-white flex flex-col h-[100dvh]">
+      <div className="shrink-0 border-b border-zinc-800 bg-black/95 px-3 py-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] text-zinc-500">Chatting with</p>
-            <p className="text-lg font-semibold text-cyan-400 truncate">
-              {targetUser?.avatar_icon ? `${targetUser.avatar_icon} ` : ''}
-              {targetUsername}
+            <p className="text-sm text-zinc-500">Chatting with</p>
+            <p className="text-xl font-semibold text-cyan-400 truncate">
+              {targetUser?.avatar_icon || '🎭'} {targetUsername}
             </p>
-            <p className="text-[11px] text-zinc-500 leading-snug">
+            <p className="text-sm text-zinc-500 leading-snug">
               No last seen. No read receipts. Text encrypted.
             </p>
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-sm text-zinc-500">
               Chat length (from first message) · your pick:{' '}
               {myDuration === 30 ? '30m' : myDuration === 60 ? '1h' : '3h'}
               {chatEndsAt
@@ -972,7 +994,7 @@ export default function ChatPage() {
                   type="button"
                   disabled={savingDuration}
                   onClick={() => pickMyDuration(d.minutes)}
-                  className={`text-[11px] px-2 py-1 rounded-lg border ${
+                  className={`text-sm px-2.5 py-1.5 rounded-lg border ${
                     myDuration === d.minutes
                       ? 'bg-cyan-500 text-black border-cyan-400'
                       : 'bg-zinc-900 border-zinc-700 text-zinc-300'
@@ -981,11 +1003,11 @@ export default function ChatPage() {
                   {d.label}
                 </button>
               ))}
-              <span className="text-zinc-600 text-[11px]">|</span>
+              <span className="text-zinc-600 text-sm">|</span>
               <button
                 type="button"
                 onClick={() => setModal('clear')}
-                className="text-[11px] px-2 py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-medium"
+                className="text-sm px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-medium"
               >
                 Clear
               </button>
@@ -998,31 +1020,34 @@ export default function ChatPage() {
                   setReportReason('')
                   setModal('report')
                 }}
-                className="text-[11px] px-2 py-1 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-medium"
+                className="text-sm px-2.5 py-1.5 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-medium"
               >
                 Report
               </button>
               <button
                 type="button"
                 onClick={() => setModal('block')}
-                className="text-[11px] px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium"
+                className="text-sm px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium"
               >
                 Block
               </button>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <p className="text-sm text-zinc-400">
+              {fileCount}/4 files · {videoCount}/1 video
+            </p>
             <button
               type="button"
               onClick={() => setHeaderOpen((v) => !v)}
-              className="text-[11px] px-2 py-1 rounded-lg border border-cyan-500/50 bg-cyan-500/15 text-cyan-300 font-medium hover:bg-cyan-500/25"
+              className="text-sm px-2.5 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/15 text-cyan-300 font-medium hover:bg-cyan-500/25"
             >
               {headerOpen ? 'Less' : 'More'}
             </button>
             <button
               type="button"
               onClick={() => router.push('/home')}
-              className="text-sm font-medium text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-xl"
+              className="text-base font-medium text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-xl"
             >
               ← Back
             </button>
@@ -1035,7 +1060,7 @@ export default function ChatPage() {
               type="button"
               disabled={savingSeal}
               onClick={requestSealToggle}
-              className={`text-xs font-semibold px-3 py-2 rounded-xl border ${
+              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
                 mySealOn
                   ? 'bg-cyan-500 text-black border-cyan-400'
                   : 'bg-zinc-900 border-zinc-700'
@@ -1047,18 +1072,18 @@ export default function ChatPage() {
               type="button"
               disabled={savingQuiet}
               onClick={requestQuietToggle}
-              className={`text-xs font-semibold px-3 py-2 rounded-xl border ${
+              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
                 myQuietOn
                   ? 'bg-violet-500 text-white border-violet-400'
                   : 'bg-zinc-900 border-zinc-700'
               }`}
             >
-                            Quiet {myQuietOn ? 'ON' : 'OFF'}
+              Quiet {myQuietOn ? 'ON' : 'OFF'}
             </button>
             <button
               type="button"
               onClick={() => setModal('ghost')}
-              className={`text-xs font-semibold px-3 py-2 rounded-xl border ${
+              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
                 ghostReply
                   ? 'bg-emerald-600 text-white border-emerald-400'
                   : 'bg-zinc-900 border-zinc-700'
@@ -1066,14 +1091,11 @@ export default function ChatPage() {
             >
               Ghost {ghostReply ? 'armed' : ''}
             </button>
-            <span className="text-[11px] text-zinc-500 self-center">
-              {fileCount}/4 files · {videoCount}/1 video
-            </span>
           </div>
         )}
 
         {warningText && (
-          <p className="mt-2 text-xs text-amber-300/95">{warningText}</p>
+          <p className="mt-2 text-sm text-amber-300/95">{warningText}</p>
         )}
       </div>
 
