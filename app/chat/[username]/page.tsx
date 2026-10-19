@@ -1005,9 +1005,6 @@ export default function ChatPage() {
             <p className="text-sm text-zinc-500">
               Chat length (from first message) · your pick:{' '}
               {myDuration === 30 ? '30m' : myDuration === 60 ? '1h' : '3h'}
-              {chatEndsAt
-                ? ` · ends ~${new Date(chatEndsAt).toLocaleTimeString()}`
-                : ''}
             </p>
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
               {DURATION_OPTIONS.map((d) => (
@@ -1152,11 +1149,9 @@ export default function ChatPage() {
         {messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center px-4 relative z-10">
             <p className="text-center text-zinc-400 text-sm leading-relaxed max-w-xs">
-              {chatExpired
-                ? 'This chat has Vanished.'
-                : sealed
-                  ? 'This chat was cleared.'
-                  : 'Nothing here yet. When you speak, it can vanish.'}
+              {chatExpired || sealed
+                ? ''
+                : 'Nothing here yet. When you speak, it can vanish.'}
             </p>
           </div>
         ) : (
@@ -1236,6 +1231,18 @@ export default function ChatPage() {
                         {msg.content}
                       </p>
                     )}
+                    {msg.created_at && (
+                      <p
+                        className={`text-[10px] mt-1 ${
+                          mine ? 'text-cyan-100/70 text-right' : 'text-zinc-500 text-left'
+                        }`}
+                      >
+                        {new Date(msg.created_at).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    )}
                   </div>
                 </div>
               )
@@ -1246,60 +1253,65 @@ export default function ChatPage() {
       </div>
 
       {(chatExpired || sealed) && messages.length === 0 && (
-        <div className="shrink-0 p-4 border-t border-zinc-900 bg-black space-y-2">
-          <p className="text-center text-zinc-300 text-sm font-medium mb-1">
-            {chatExpired ? 'This chat has Vanished.' : 'This chat was cleared.'}
-          </p>
-          {canStartNewChat() ? (
-            <>
-              <button
-                onClick={requestNewChat}
-                disabled={startingNew}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50"
-              >
-                {startingNew ? 'Please wait...' : 'Start a new chat'}
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
-              >
-                Go home
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/search')}
-                className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
-              >
-                Search users
-              </button>
-            </>
-          ) : (
-            <>
-              <p className="text-center text-zinc-500 text-sm mb-2">
-                This chat cannot be reopened.
-              </p>
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
-              >
-                Go home
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/search')}
-                className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
-              >
-                Search users
-              </button>
-            </>
-          )}
+        <div className="      {(chatExpired || sealed) && messages.length === 0 && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 shadow-[0_0_40px_rgba(34,211,238,0.15)]">
+            <p className="text-center text-2xl font-semibold text-cyan-400 mb-2">
+              {chatExpired ? 'This chat has Vanished.' : 'This chat was cleared.'}
+            </p>
+            <p className="text-center text-sm text-zinc-500 mb-6">
+              Messages are gone. Nothing left to read.
+            </p>
+            {canStartNewChat() ? (
+              <div className="space-y-2">
+                <button
+                  onClick={requestNewChat}
+                  disabled={startingNew}
+                  className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50"
+                >
+                  {startingNew ? 'Please wait...' : 'Start a new chat'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push('/home')}
+                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+                >
+                  Go home
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push('/search')}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
+                >
+                  Search users
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-center text-zinc-500 text-sm mb-2">
+                  This chat cannot be reopened.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => router.push('/home')}
+                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+                >
+                  Go home
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push('/search')}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
+                >
+                  Search users
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {!chatExpired && !sealed && (
-        <div className="shrink-0 bg-black border-t border-cyan-500/10 p-2">
+t border-cyan-500/10 p-2">
           <div className="flex items-end gap-2">
             <button
               type="button"
