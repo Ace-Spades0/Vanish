@@ -2,7 +2,7 @@ export type Lang = 'en' | 'sw'
 
 export const translations = {
   en: {
-    appName: 'VANISH',
+    appName: 'Go Vanish',
     tagline: 'Talk freely. Stay private.',
     subtitle:
       'Temporary usernames. Messages that disappear. No permanent identity.',
@@ -21,12 +21,14 @@ export const translations = {
     termsShort: 'Terms',
     privacyShort: 'Privacy',
     hourMessages: '3-Hour Messages',
-    hourMessagesDesc: 'Every message automatically disappears after a limited time.',
+    hourMessagesDesc:
+      'Every message automatically disappears after a limited time.',
     antiInterrogation: 'Anti-Interrogation',
     antiInterrogationDesc:
       'Protects conversations from pressure and spam. Fair warnings before any limits apply.',
     dailyUsernames: 'Daily Usernames',
-    dailyUsernamesDesc: 'Pick a new name every 24 hours. Fully temporary identity.',
+    dailyUsernamesDesc:
+      'Pick a new name every 24 hours. Fully temporary identity.',
     username: 'Username',
     noUsername: 'No username',
     privateByDesign: 'Private by design',
@@ -47,7 +49,7 @@ export const translations = {
     unblock: 'Unblock',
     admin: 'Admin',
     language: 'Language',
-    loading: 'Loading VANISH...',
+    loading: 'Loading Go Vanish...',
     searchTitle: 'Search',
     searchHelp: 'Find someone by their exact username',
     enterUsername: 'Enter username',
@@ -64,8 +66,7 @@ export const translations = {
     bio: 'Bio',
     maxBio: '20 characters max',
     goOffline: 'Go offline',
-    goOfflineHelp:
-      'When offline, others cannot find you in search.',
+    goOfflineHelp: 'When offline, others cannot find you in search.',
     saveProfile: 'Save profile',
     changePassword: 'Change password',
     changePasswordHelp:
@@ -76,7 +77,7 @@ export const translations = {
     emptySearchHint: 'Usernames are temporary. Ask for today’s name.',
     letters: 'Letters',
     activeChats: 'Active chats',
-    vanishLink: 'Vanish link',
+    vanishLink: 'Go Vanish link',
     myAccount: 'My account',
     chattingWith: 'Chatting with',
     noLastSeen: 'No last seen · No read receipts · Text encrypted',
@@ -106,7 +107,7 @@ export const translations = {
     close: 'Close',
   },
   sw: {
-    appName: 'VANISH',
+    appName: 'Go Vanish',
     tagline: 'Ongea kwa uhuru. Kaa faraghani.',
     subtitle:
       'Majina ya muda. Ujumbe unaotoweka. Hakuna utambulisho wa kudumu.',
@@ -150,7 +151,7 @@ export const translations = {
     unblock: 'Ondoa zuio',
     admin: 'Admin',
     language: 'Lugha',
-    loading: 'Inapakia VANISH...',
+    loading: 'Inapakia Go Vanish...',
     searchTitle: 'Tafuta',
     searchHelp: 'Tafuta mtu kwa jina lake kamili',
     enterUsername: 'Weka jina la mtumiaji',
@@ -179,10 +180,11 @@ export const translations = {
     emptySearchHint: 'Majina ni ya muda. Waulize jina la leo.',
     letters: 'Barua',
     activeChats: 'Gumzo hai',
-    vanishLink: 'Kiungo cha Vanish',
+    vanishLink: 'Kiungo cha Go Vanish',
     myAccount: 'Akaunti yangu',
     chattingWith: 'Unazungumza na',
-    noLastSeen: 'Hakuna last seen · Hakuna read receipts · Maandishi yamesimbwa',
+    noLastSeen:
+      'Hakuna last seen · Hakuna read receipts · Maandishi yamesimbwa',
     chatLength: 'Muda wa gumzo (kutoka ujumbe wa kwanza)',
     clear: 'Futa',
     report: 'Ripoti',
