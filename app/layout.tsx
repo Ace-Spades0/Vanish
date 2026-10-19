@@ -18,6 +18,7 @@ export const metadata: Metadata = {
   description:
     'Talk freely. Stay private. Temporary usernames and vanishing chats.',
   applicationName: 'Go Vanish',
+  manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
