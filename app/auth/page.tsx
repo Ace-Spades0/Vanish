@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { supabase } from '@/lib/supabase'
 import { Turnstile } from '@marsidev/react-turnstile'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
@@ -62,9 +63,7 @@ export default function AuthPage() {
     const { error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
-      options: captchaToken
-        ? { captchaToken }
-        : undefined,
+      options: captchaToken ? { captchaToken } : undefined,
     })
     if (error) setMessage(error.message)
     else setMessage('Account created! Please check your email to confirm.')
@@ -88,7 +87,6 @@ export default function AuthPage() {
       setLoading(false)
       return
     }
-
     const uid = data.user?.id
     if (uid) {
       const { data: p } = await supabase
@@ -96,7 +94,6 @@ export default function AuthPage() {
         .select('status, suspended_until')
         .eq('id', uid)
         .maybeSingle()
-
       if (p?.status === 'banned') {
         await supabase.auth.signOut()
         setMessage('This account is restricted.')
@@ -114,7 +111,6 @@ export default function AuthPage() {
         }
       }
     }
-
     setMessage('Login successful!')
     router.push('/home')
     setLoading(false)
@@ -151,17 +147,32 @@ export default function AuthPage() {
           <button
             type="button"
             onClick={() => changeLang('en')}
-            className={`text-xs px-2 py-1 rounded ${lang === 'en' ? 'text-cyan-400' : 'text-zinc-500'}`}
+            className={`text-xs px-2 py-1 rounded ${
+              lang === 'en' ? 'text-cyan-400' : 'text-zinc-500'
+            }`}
           >
             EN
           </button>
           <button
             type="button"
             onClick={() => changeLang('sw')}
-            className={`text-xs px-2 py-1 rounded ${lang === 'sw' ? 'text-cyan-400' : 'text-zinc-500'}`}
+            className={`text-xs px-2 py-1 rounded ${
+              lang === 'sw' ? 'text-cyan-400' : 'text-zinc-500'
+            }`}
           >
             SW
           </button>
+        </div>
+
+        <div className="mb-4 flex justify-center">
+          <Image
+            src="/logo.png"
+            alt="Go Vanish"
+            width={88}
+            height={88}
+            className="drop-shadow-[0_0_24px_rgba(34,211,238,0.35)]"
+            priority
+          />
         </div>
 
         <h1 className="text-3xl font-bold mb-2 text-center">{t.appName}</h1>
@@ -192,7 +203,6 @@ export default function AuthPage() {
                 {showPassword ? 'Hide' : 'Show'}
               </button>
             </div>
-
             <label className="flex items-start gap-2 mb-4 text-sm text-zinc-400 cursor-pointer">
               <input
                 type="checkbox"
@@ -202,7 +212,6 @@ export default function AuthPage() {
               />
               <span>{t.acceptTerms}</span>
             </label>
-
             {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && (
               <div className="mb-4 flex justify-center">
                 <Turnstile
@@ -211,7 +220,6 @@ export default function AuthPage() {
                 />
               </div>
             )}
-
             <button
               onClick={handleSignUp}
               disabled={loading}
@@ -270,11 +278,17 @@ export default function AuthPage() {
         )}
 
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
-          <button onClick={() => router.push('/terms')} className="hover:text-cyan-400">
+          <button
+            onClick={() => router.push('/terms')}
+            className="hover:text-cyan-400"
+          >
             {t.termsShort}
           </button>
           <span>•</span>
-          <button onClick={() => router.push('/privacy')} className="hover:text-cyan-400">
+          <button
+            onClick={() => router.push('/privacy')}
+            className="hover:text-cyan-400"
+          >
             {t.privacyShort}
           </button>
         </div>

@@ -54,7 +54,7 @@ export default function HomePage() {
     en: {
       startChat: 'Start a vanishing chat',
       pickUsername: 'Pick a username',
-      vanishLink: 'Vanish link',
+      vanishLink: 'Go Vanish link',
       vanishLinkHelp: 'One chat with you, then the link dies',
       letters: 'Letters',
       lettersHelp: 'One-time notes',
@@ -67,18 +67,19 @@ export default function HomePage() {
       createLink: 'Create link',
       copy: 'Copy',
       revoke: 'Revoke',
-      yourLink: 'Your vanish link',
+      yourLink: 'Your Go Vanish link',
       linkHelp:
         'Share so someone can open one chat with you. After they open it, the link stops working.',
       close: 'Close',
       unblock: 'Unblock',
       none: 'None',
       username: 'Username',
+      homeLine: 'This is where secrets are kept.',
     },
     sw: {
       startChat: 'Anza gumzo linalotoweka',
       pickUsername: 'Chagua jina la utumizi',
-      vanishLink: 'Kiungo cha Vanish',
+      vanishLink: 'Kiungo cha Go Vanish',
       vanishLinkHelp: 'Gumzo moja nawe, kisha kiungo kinakufa',
       letters: 'Barua',
       lettersHelp: 'Ujumbe wa mara moja',
@@ -91,13 +92,14 @@ export default function HomePage() {
       createLink: 'Tengeneza kiungo',
       copy: 'Nakili',
       revoke: 'Batilisha',
-      yourLink: 'Kiungo chako cha Vanish',
+      yourLink: 'Kiungo chako cha Go Vanish',
       linkHelp:
         'Shiriki ili mtu afungue gumzo moja nawe. Baada ya kufunguliwa, kiungo kinaacha kufanya kazi.',
       close: 'Funga',
       unblock: 'Ondoa zuio',
       none: 'Hakuna',
       username: 'Jina la utumizi',
+      homeLine: 'Hapa ndipo siri zinahifadhiwa.',
     },
   }[lang]
 
@@ -159,13 +161,11 @@ export default function HomePage() {
         return
       }
       setUser(user)
-
       let { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
-
       if (user.id === ADMIN_ID) {
         const needsRepair =
           !profileData ||
@@ -189,13 +189,11 @@ export default function HomePage() {
           profileData = fixed
         }
       }
-
       if (profileData?.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
         return
       }
-
       if (profileData?.status === 'suspended') {
         const until = profileData.suspended_until
           ? new Date(profileData.suspended_until).getTime()
@@ -215,7 +213,6 @@ export default function HomePage() {
           return
         }
       }
-
       if (profileData?.username) {
         if (profileData.is_permanent_username) {
           setProfile(profileData)
@@ -230,13 +227,11 @@ export default function HomePage() {
       } else {
         setProfile(null)
       }
-
       const currentLang = getLang()
       setExpiryLabel(getExpiryLabel(profileData, currentLang))
       await loadBlockedUsers(user.id)
       await loadLetterCount(user.id)
       setLoading(false)
-
       channel = supabase
         .channel(`profile-status-${user.id}`)
         .on(
@@ -320,8 +315,7 @@ export default function HomePage() {
       setCreatingInvite(false)
     }
   }
-
-  const copyInvite = async () => {
+    const copyInvite = async () => {
     if (!inviteUrl) return
     try {
       await navigator.clipboard.writeText(inviteUrl)
@@ -423,6 +417,7 @@ export default function HomePage() {
             </button>
           </div>
         </div>
+
         <div className="flex-1 flex flex-col items-center justify-center text-center py-8">
           <div className="text-5xl mb-5">{profile?.avatar_icon || '🎭'}</div>
           <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
@@ -442,6 +437,11 @@ export default function HomePage() {
           {profile?.is_offline && (
             <p className="text-xs text-amber-400 mt-2">{copy.offline}</p>
           )}
+
+          <p className="mt-4 text-sm text-zinc-500 italic tracking-wide max-w-[280px]">
+            {copy.homeLine}
+          </p>
+
           <div className="w-full mt-10">
             {!profile?.username ? (
               <button
@@ -459,6 +459,7 @@ export default function HomePage() {
               </button>
             )}
           </div>
+
           {profile?.username && (
             <div className="w-full grid grid-cols-2 gap-3 mt-6">
               <button
@@ -512,6 +513,7 @@ export default function HomePage() {
               </button>
             </div>
           )}
+
           {showInvite && profile?.username && (
             <div className="w-full mt-4 rounded-2xl border border-cyan-500/20 bg-zinc-900/80 p-4 text-left">
               <p className="text-sm font-medium mb-1">{copy.yourLink}</p>
@@ -554,6 +556,7 @@ export default function HomePage() {
             </div>
           )}
         </div>
+
         <div className="pb-8 pt-2 flex flex-wrap items-center justify-center gap-3 text-xs text-zinc-600">
           {user?.id === ADMIN_ID && (
             <button
@@ -577,6 +580,7 @@ export default function HomePage() {
           </button>
         </div>
       </div>
+
       {showBlockedModal && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 w-full max-w-sm">
