@@ -59,26 +59,28 @@ function asDurationMap(v: any): Record<string, number> {
 
 async function decryptMessageRow(convId: string, row: any) {
   if (!row) return row
-  if (row.type === 'text' && row.content && looksEncrypted(row.content)) {
+  if (row.type === 'text' && row.content) {
+    if (!looksEncrypted(row.content) && !row.is_encrypted) return row
     try {
       const plain = await decryptText(convId, row.content)
       return { ...row, content: plain }
     } catch {
-      return { ...row, content: '[unable to decrypt]' }
+      return { ...row, content: '[Unable to decrypt]' }
     }
   }
   return row
 }
 
-function guessMimeFromUrl(url: string) {
-  const lower = (url || '').toLowerCase()
-  if (lower.includes('.png')) return 'image/png'
-  if (lower.includes('.webp')) return 'image/webp'
-  if (lower.includes('.gif')) return 'image/gif'
-  if (lower.includes('.mp4')) return 'video/mp4'
-  if (lower.includes('.webm')) return 'video/webm'
-  if (lower.includes('.pdf')) return 'application/pdf'
-  return 'application/octet-stream'
+function guessMimeFromUrl(url: string): string {
+  const u = url.toLowerCase()
+  if (u.includes('.png')) return 'image/png'
+  if (u.includes('.gif')) return 'image/gif'
+  if (u.includes('.webp')) return 'image/webp'
+  if (u.includes('.mp4')) return 'video/mp4'
+  if (u.includes('.webm')) return 'video/webm'
+  if (u.includes('.mov')) return 'video/quicktime'
+  if (u.includes('.pdf')) return 'application/pdf'
+  return 'image/jpeg'
 }
 
 async function mediaDisplayUrl(
@@ -86,22 +88,21 @@ async function mediaDisplayUrl(
   url: string,
   isEnc: boolean
 ): Promise<string> {
-  if (!isEnc || !url) return url
+  if (!url) return url
+  if (!isEnc) return url
   try {
     const res = await fetch(url)
     if (!res.ok) return url
     const buf = await res.arrayBuffer()
-    const plain = await decryptBytes(convId, buf)
-
+    const plain = await decryptBytes(convId, new Uint8Array(buf))
     const bytes =
       plain instanceof Uint8Array
         ? plain
         : new Uint8Array(plain as ArrayBuffer)
-
     const copy = new Uint8Array(bytes.byteLength)
     copy.set(bytes)
-
-    const blob = new Blob([copy], { type: guessMimeFromUrl(url) })
+    const mime = guessMimeFromUrl(url)
+    const blob = new Blob([copy], { type: mime })
     return URL.createObjectURL(blob)
   } catch {
     return url
@@ -125,35 +126,108 @@ export default function ChatPage() {
   const [blocked, setBlocked] = useState(false)
   const [chatExpired, setChatExpired] = useState(false)
   const [chatEndsAt, setChatEndsAt] = useState<string | null>(null)
+  const [firstMsgAt, setFirstMsgAt] = useState<string | null>(null)
   const [modal, setModal] = useState<
-    'clear' | 'block' | 'report' | 'seal' | 'quiet' | 'ghost' | null
+    'clear' | 'block' | 'report' | 'safety' | 'ghost' | null
   >(null)
-  const [reportReason, setReportReason] = useState('')
+  const [safetyNext, setSafetyNext] = useState<'enter' | 'newchat'>('enter')
   const [reportType, setReportType] = useState('')
+  const [reportReason, setReportReason] = useState('')
   const [reportMessageId, setReportMessageId] = useState<string | null>(null)
+  const [reportMessagePreview, setReportMessagePreview] = useState('')
   const [warningLevel, setWarningLevel] = useState(0)
   const [warningText, setWarningText] = useState('')
-  const [myDuration, setMyDuration] = useState(180)
-  const [durationMap, setDurationMap] = useState<Record<string, number>>({})
-  const [sealIds, setSealIds] = useState<string[]>([])
-  const [quietIds, setQuietIds] = useState<string[]>([])
-  const [headerOpen, setHeaderOpen] = useState(true)
-  const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
   const [activeMsg, setActiveMsg] = useState<any>(null)
   const [editText, setEditText] = useState('')
+  const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
+  const [ghostReply, setGhostReply] = useState(false)
+  const [sealed, setSealed] = useState(false)
+  const [headerOpen, setHeaderOpen] = useState(false)
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({})
-  const [acceptedSafety, setAcceptedSafety] = useState(false)
-  const [showSafety, setShowSafety] = useState(false)
+
+  const [sealUserIds, setSealUserIds] = useState<string[]>([])
+  const [quietUserIds, setQuietUserIds] = useState<string[]>([])
+  const [durationByUser, setDurationByUser] = useState<Record<string, number>>(
+    {}
+  )
+  const [savingSeal, setSavingSeal] = useState(false)
+  const [savingQuiet, setSavingQuiet] = useState(false)
+  const [savingDuration, setSavingDuration] = useState(false)
+  const [sealConfirm, setSealConfirm] = useState<'on' | 'off' | null>(null)
+  const [quietConfirm, setQuietConfirm] = useState<'on' | 'off' | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
+  const profileChannelRef = useRef<any>(null)
   const settingsChannelRef = useRef<any>(null)
+  const hadMessagesRef = useRef(false)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mediaInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const textAreaRef = useRef<HTMLTextAreaElement>(null)
 
-  const iSealed = user ? sealIds.includes(user.id) : false
-  const iQuiet = user ? quietIds.includes(user.id) : false
-  const otherSealed = targetUser
-    ? sealIds.includes(targetUser.id)
-    : false
+  const mySealOn = !!(user?.id && sealUserIds.includes(user.id))
+  const myQuietOn = !!(user?.id && quietUserIds.includes(user.id))
+  const myDuration = (user?.id && durationByUser[user.id]) || 180
+  const effectiveMinutes = Math.min(
+    myDuration,
+    (targetUser?.id && durationByUser[targetUser.id]) || 180
+  )
+
+  const getConversationEnd = (firstCreatedAt: string, minutes: number) =>
+    new Date(
+      new Date(firstCreatedAt).getTime() + minutes * 60 * 1000
+    ).toISOString()
+
+  const recountMedia = (list: any[]) => {
+    setFileCount(
+      list.filter((m) => m.type === 'file' || m.type === 'image').length
+    )
+    setVideoCount(list.filter((m) => m.type === 'video').length)
+  }
+
+  const resolveMediaList = async (convId: string, list: any[]) => {
+    const next: Record<string, string> = {}
+    for (const m of list) {
+      if (m.type === 'image' || m.type === 'video' || m.type === 'file') {
+        next[m.id] = await mediaDisplayUrl(
+          convId,
+          m.content,
+          !!m.is_encrypted
+        )
+      }
+    }
+    setMediaUrls((prev) => ({ ...prev, ...next }))
+  }
+
+  const canStartNewChat = () => {
+    if (!user?.id || !targetUser?.id) return true
+    return !sealUserIds.includes(targetUser.id)
+  }
+
+  const recomputeEnd = (
+    firstAt: string | null,
+    map: Record<string, number>
+  ) => {
+    if (!firstAt || !user?.id || !targetUser?.id) {
+      setChatEndsAt(null)
+      return
+    }
+    const mins = Math.min(map[user.id] || 180, map[targetUser.id] || 180)
+    const ends = getConversationEnd(firstAt, mins)
+    setChatEndsAt(ends)
+    if (new Date(ends).getTime() <= Date.now()) {
+      setChatExpired(true)
+    }
+  }
+
+  const growTextarea = () => {
+    const el = textAreaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.overflow = 'hidden'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -161,7 +235,6 @@ export default function ChatPage() {
 
   useEffect(() => {
     let isMounted = true
-
     const init = async () => {
       const {
         data: { user },
@@ -175,913 +248,1119 @@ export default function ChatPage() {
 
       const { data: myProfile } = await supabase
         .from('profiles')
-        .select('*')
+        .select(
+          'username, username_claimed_at, is_permanent_username, status, suspended_until'
+        )
         .eq('id', user.id)
         .maybeSingle()
 
-      if (!myProfile || !isUsernameActive(myProfile)) {
-        router.push('/username')
+      if (myProfile?.status === 'banned') {
+        await supabase.auth.signOut()
+        router.push('/auth')
         return
       }
-
-      if (myProfile.status === 'suspended' || myProfile.status === 'banned') {
-        router.push('/appeal')
+      if (myProfile?.status === 'suspended') {
+        const until = myProfile.suspended_until
+          ? new Date(myProfile.suspended_until).getTime()
+          : null
+        if (!until || until > Date.now()) {
+          router.push('/appeal')
+          return
+        }
+      }
+      if (!isUsernameActive(myProfile || {})) {
+        router.push('/username')
         return
       }
 
       const { data: targetProfile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('username', targetUsername)
+        .ilike('username', targetUsername)
         .maybeSingle()
 
       if (!targetProfile || !isUsernameActive(targetProfile)) {
+        setBlocked(true)
         setLoading(false)
         return
       }
-
-      if (!isMounted) return
       setTargetUser(targetProfile)
 
-      const { data: blockCheck } = await supabase
+      const { data: blocks } = await supabase
         .from('blocks')
         .select('id')
         .or(
           `and(blocker_id.eq.${user.id},blocked_id.eq.${targetProfile.id}),and(blocker_id.eq.${targetProfile.id},blocked_id.eq.${user.id})`
         )
-        .maybeSingle()
-
-      if (blockCheck) {
+      if (blocks && blocks.length > 0) {
         setBlocked(true)
         setLoading(false)
         return
       }
 
-      const participants = [user.id, targetProfile.id].sort()
-      const convKey = participants.join('_')
-
-      let { data: conv } = await supabase
-        .from('conversations')
-        .select('*')
-        .eq('participants_key', convKey)
-        .maybeSingle()
-
-      if (!conv) {
-        const { data: newConv, error } = await supabase
-          .from('conversations')
-          .insert({
-            participants_key: convKey,
-            participant_ids: participants,
-            created_by: user.id,
-          })
-          .select()
-          .single()
-        if (error || !newConv) {
-          setLoading(false)
-          return
-        }
-        conv = newConv
-      }
-
-      if (!isMounted) return
-      setConversationId(conv.id)
+      const convId = [myProfile!.username, targetProfile.username]
+        .sort()
+        .join('_')
+      setConversationId(convId)
 
       const { data: settings } = await supabase
         .from('conversation_settings')
-        .select('*')
-        .eq('conversation_id', conv.id)
+        .select(
+          'duration_minutes, duration_by_user, seal_user_ids, quiet_user_ids, sealed_by'
+        )
+        .eq('conversation_id', convId)
         .maybeSingle()
 
-      if (settings) {
-        const dmap = asDurationMap(settings.duration_minutes)
-        setDurationMap(dmap)
-        if (dmap[user.id]) setMyDuration(dmap[user.id])
-        setSealIds(asIdList(settings.seal_user_ids))
-        setQuietIds(asIdList(settings.quiet_user_ids))
-        if (settings.expires_at) {
-          setChatEndsAt(settings.expires_at)
-          if (new Date(settings.expires_at).getTime() <= Date.now()) {
-            setChatExpired(true)
-          }
-        }
+      let map = asDurationMap(settings?.duration_by_user)
+      if (
+        Object.keys(map).length === 0 &&
+        settings?.duration_minutes &&
+        [30, 60, 180].includes(settings.duration_minutes)
+      ) {
+        map = { [user.id]: settings.duration_minutes }
       }
+      setDurationByUser(map)
 
-      const { data: msgs } = await supabase
+      let seals = asIdList(settings?.seal_user_ids)
+      if (seals.length === 0 && settings?.sealed_by) seals = [settings.sealed_by]
+      setSealUserIds(seals)
+      setQuietUserIds(asIdList(settings?.quiet_user_ids))
+
+      await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', convId)
+        .lt('expires_at', new Date().toISOString())
+
+      const { data: existingMessages } = await supabase
         .from('messages')
         .select('*')
-        .eq('conversation_id', conv.id)
-        .eq('is_deleted', false)
+        .eq('conversation_id', convId)
+        .eq('deleted', false)
+        .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: true })
 
-      const decrypted = await Promise.all(
-        (msgs || []).map((m) => decryptMessageRow(conv.id, m))
-      )
-      if (!isMounted) return
-      setMessages(decrypted)
-
-      let files = 0
-      let videos = 0
-      for (const m of decrypted) {
-        if (m.type === 'image' || m.type === 'file') files++
-        if (m.type === 'video') videos++
+      const list = existingMessages || []
+      if (list.length > 0) {
+        const firstCreatedAt = list[0].created_at
+        setFirstMsgAt(firstCreatedAt)
+        const mins = Math.min(
+          map[user.id] || 180,
+          map[targetProfile.id] || 180
+        )
+        const endsAt = getConversationEnd(firstCreatedAt, mins)
+        setChatEndsAt(endsAt)
+        if (new Date(endsAt).getTime() <= Date.now()) {
+          await supabase
+            .from('messages')
+            .update({ deleted: true })
+            .eq('conversation_id', convId)
+          setMessages([])
+          setChatExpired(true)
+          setLoading(false)
+          return
+        }
+        hadMessagesRef.current = true
+        const decrypted = await Promise.all(
+          list.map((m) => decryptMessageRow(convId, m))
+        )
+        if (isMounted) {
+          setMessages(decrypted)
+          recountMedia(decrypted)
+          await resolveMediaList(convId, decrypted)
+        }
+      } else {
+        setFirstMsgAt(null)
+        setChatEndsAt(null)
+        setMessages([])
+        hadMessagesRef.current = false
       }
-      setFileCount(files)
-      setVideoCount(videos)
 
+      if (!isMounted) return
       setLoading(false)
-      setShowSafety(true)
-    }
+      setSafetyNext('enter')
+      setModal('safety')
 
+      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (profileChannelRef.current)
+        supabase.removeChannel(profileChannelRef.current)
+      if (settingsChannelRef.current)
+        supabase.removeChannel(settingsChannelRef.current)
+
+      const channel = supabase.channel(`chat-${convId}`)
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${convId}`,
+        },
+        async (payload) => {
+          if (payload.new.deleted) return
+          hadMessagesRef.current = true
+          setSealed(false)
+          setChatExpired(false)
+          const row = await decryptMessageRow(convId, payload.new)
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === row.id)) return prev
+            if (prev.length === 0) setFirstMsgAt(row.created_at)
+            const next = [...prev, row]
+            recountMedia(next)
+            return next
+          })
+          if (
+            row.type === 'image' ||
+            row.type === 'video' ||
+            row.type === 'file'
+          ) {
+            const u = await mediaDisplayUrl(
+              convId,
+              row.content,
+              !!row.is_encrypted
+            )
+            setMediaUrls((prev) => ({ ...prev, [row.id]: u }))
+          }
+        }
+      )
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${convId}`,
+        },
+        async (payload) => {
+          const row = payload.new as any
+          if (row.deleted) {
+            setMessages((prev) => {
+              const next = prev.filter((m) => m.id !== row.id)
+              recountMedia(next)
+              if (hadMessagesRef.current && next.length === 0) setSealed(true)
+              return next
+            })
+            return
+          }
+          const dec = await decryptMessageRow(convId, row)
+          setMessages((prev) =>
+            prev.map((m) => (m.id === dec.id ? { ...m, ...dec } : m))
+          )
+        }
+      )
+      channel.subscribe()
+      channelRef.current = channel
+
+      settingsChannelRef.current = supabase
+        .channel(`settings-${convId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'conversation_settings',
+            filter: `conversation_id=eq.${convId}`,
+          },
+          (payload) => {
+            const row = payload.new as any
+            if (!row) return
+            if (row.duration_by_user)
+              setDurationByUser(asDurationMap(row.duration_by_user))
+            if (row.seal_user_ids) setSealUserIds(asIdList(row.seal_user_ids))
+            if (row.quiet_user_ids)
+              setQuietUserIds(asIdList(row.quiet_user_ids))
+          }
+        )
+        .subscribe()
+
+      profileChannelRef.current = supabase
+        .channel(`chat-profile-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'profiles',
+            filter: `id=eq.${user.id}`,
+          },
+          async (payload) => {
+            const row = payload.new as any
+            if (row?.status === 'banned') {
+              await supabase.auth.signOut()
+              router.push('/auth')
+              return
+            }
+            if (row?.status === 'suspended') {
+              const until = row.suspended_until
+                ? new Date(row.suspended_until).getTime()
+                : null
+              if (!until || until > Date.now()) {
+                router.push('/appeal')
+              }
+            }
+          }
+        )
+        .subscribe()
+    }
     init()
     return () => {
       isMounted = false
+      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      if (profileChannelRef.current)
+        supabase.removeChannel(profileChannelRef.current)
+      if (settingsChannelRef.current)
+        supabase.removeChannel(settingsChannelRef.current)
+      if (longPressTimer.current) clearTimeout(longPressTimer.current)
     }
   }, [targetUsername])
 
   useEffect(() => {
-    if (!conversationId || !user) return
-
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current)
+    if (firstMsgAt && user?.id && targetUser?.id) {
+      recomputeEnd(firstMsgAt, durationByUser)
     }
-
-    const channel = supabase
-      .channel(`chat-${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        async (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const row = await decryptMessageRow(conversationId, payload.new)
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === row.id)) return prev
-              return [...prev, row]
-            })
-            if (row.type === 'image' || row.type === 'file') {
-              setFileCount((c) => c + 1)
-            }
-            if (row.type === 'video') {
-              setVideoCount((c) => c + 1)
-            }
-          }
-          if (payload.eventType === 'UPDATE') {
-            if (payload.new.is_deleted) {
-              setMessages((prev) => prev.filter((m) => m.id !== payload.new.id))
-            } else {
-              const row = await decryptMessageRow(conversationId, payload.new)
-              setMessages((prev) =>
-                prev.map((m) => (m.id === row.id ? row : m))
-              )
-            }
-          }
-        }
-      )
-      .subscribe()
-
-    channelRef.current = channel
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [conversationId, user])
+  }, [durationByUser, firstMsgAt, user?.id, targetUser?.id])
 
   useEffect(() => {
-    if (!conversationId) return
-
-    if (settingsChannelRef.current) {
-      supabase.removeChannel(settingsChannelRef.current)
+    if (!chatEndsAt || chatExpired || !conversationId) return
+    const tick = async () => {
+      if (new Date(chatEndsAt).getTime() > Date.now()) return
+      setChatExpired(true)
+      await supabase
+        .from('messages')
+        .update({ deleted: true })
+        .eq('conversation_id', conversationId)
+      setMessages([])
+      setFileCount(0)
+      setVideoCount(0)
+      setMediaUrls({})
     }
+    tick()
+    const id = setInterval(tick, 5000)
+    return () => clearInterval(id)
+  }, [chatEndsAt, chatExpired, conversationId])
 
-    const ch = supabase
-      .channel(`settings-${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'conversation_settings',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const s = payload.new as any
-          if (!s) return
-          setDurationMap(asDurationMap(s.duration_minutes))
-          setSealIds(asIdList(s.seal_user_ids))
-          setQuietIds(asIdList(s.quiet_user_ids))
-          if (s.expires_at) {
-            setChatEndsAt(s.expires_at)
-            if (new Date(s.expires_at).getTime() <= Date.now()) {
-              setChatExpired(true)
-            }
-          }
-        }
-      )
-      .subscribe()
-
-    settingsChannelRef.current = ch
-    return () => {
-      supabase.removeChannel(ch)
-    }
-  }, [conversationId])
-
-  useEffect(() => {
-    if (!chatEndsAt || chatExpired) return
-    const t = setInterval(() => {
-      if (new Date(chatEndsAt).getTime() <= Date.now()) {
-        setChatExpired(true)
-        setMessages([])
-      }
-    }, 5000)
-    return () => clearInterval(t)
-  }, [chatEndsAt, chatExpired])
-
-  useEffect(() => {
-    const loadMedia = async () => {
-      if (!conversationId) return
-      const next: Record<string, string> = {}
-      for (const m of messages) {
-        if (
-          (m.type === 'image' || m.type === 'video' || m.type === 'file') &&
-          m.content
-        ) {
-          if (!mediaUrls[m.id]) {
-            next[m.id] = await mediaDisplayUrl(
-              conversationId,
-              m.content,
-              !!m.is_encrypted
-            )
-          }
-        }
-      }
-      if (Object.keys(next).length > 0) {
-        setMediaUrls((prev) => ({ ...prev, ...next }))
-      }
-    }
-    loadMedia()
-  }, [messages, conversationId])
-
-  const ensureSettings = async () => {
-    if (!conversationId || !user) return null
-    const { data: existing } = await supabase
-      .from('conversation_settings')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .maybeSingle()
-
-    if (existing) return existing
-
-    const { data: created } = await supabase
-      .from('conversation_settings')
-      .insert({
+  const saveSettings = async (patch: {
+    seal_user_ids?: string[]
+    quiet_user_ids?: string[]
+    duration_by_user?: Record<string, number>
+  }) => {
+    const { error } = await supabase.from('conversation_settings').upsert(
+      {
         conversation_id: conversationId,
-        duration_minutes: { [user.id]: myDuration },
-        seal_user_ids: [],
-        quiet_user_ids: [],
-      })
-      .select()
-      .single()
-    return created
+        updated_at: new Date().toISOString(),
+        duration_by_user: patch.duration_by_user ?? durationByUser,
+        seal_user_ids: patch.seal_user_ids ?? sealUserIds,
+        quiet_user_ids: patch.quiet_user_ids ?? quietUserIds,
+      },
+      { onConflict: 'conversation_id' }
+    )
+    return error
   }
 
-  const setMyChatDuration = async (minutes: number) => {
-    if (!user || !conversationId || chatExpired) return
-    setMyDuration(minutes)
-    const settings = await ensureSettings()
-    if (!settings) return
-
-    const map = { ...asDurationMap(settings.duration_minutes), [user.id]: minutes }
-    const values = Object.values(map)
-    const shortest = values.length ? Math.min(...values) : minutes
-
-    let expires_at = settings.expires_at
-    if (messages.length > 0) {
-      const first = messages[0]?.created_at
-      if (first) {
-        expires_at = new Date(
-          new Date(first).getTime() + shortest * 60 * 1000
-        ).toISOString()
-      }
+  const pickMyDuration = async (minutes: number) => {
+    if (!user || !conversationId || savingDuration) return
+    setSavingDuration(true)
+    const next = { ...durationByUser, [user.id]: minutes }
+    const error = await saveSettings({ duration_by_user: next })
+    if (error) {
+      alert(error.message)
+      setSavingDuration(false)
+      return
     }
-
-    await supabase
-      .from('conversation_settings')
-      .update({
-        duration_minutes: map,
-        expires_at,
-      })
-      .eq('conversation_id', conversationId)
-
-    setDurationMap(map)
-    if (expires_at) setChatEndsAt(expires_at)
+    setDurationByUser(next)
+    setSavingDuration(false)
   }
 
-  const toggleSeal = async () => {
-    if (!user || !conversationId) return
-    const settings = await ensureSettings()
-    if (!settings) return
-    const list = asIdList(settings.seal_user_ids)
-    const next = list.includes(user.id)
-      ? list.filter((id) => id !== user.id)
-      : [...list, user.id]
-    await supabase
-      .from('conversation_settings')
-      .update({ seal_user_ids: next })
-      .eq('conversation_id', conversationId)
-    setSealIds(next)
-    setModal(null)
+  const requestSealToggle = () => {
+    if (!user || !conversationId || savingSeal) return
+    setSealConfirm(mySealOn ? 'off' : 'on')
   }
 
-  const toggleQuiet = async () => {
-    if (!user || !conversationId) return
-    const settings = await ensureSettings()
-    if (!settings) return
-    const list = asIdList(settings.quiet_user_ids)
-    const next = list.includes(user.id)
-      ? list.filter((id) => id !== user.id)
-      : [...list, user.id]
-    await supabase
-      .from('conversation_settings')
-      .update({ quiet_user_ids: next })
-      .eq('conversation_id', conversationId)
-    setQuietIds(next)
-    setModal(null)
+  const confirmSealToggle = async () => {
+    if (!user || !conversationId || !sealConfirm) return
+    setSavingSeal(true)
+    setSealConfirm(null)
+    let next = [...sealUserIds]
+    if (sealConfirm === 'on') {
+      if (!next.includes(user.id)) next.push(user.id)
+    } else next = next.filter((id) => id !== user.id)
+    const error = await saveSettings({ seal_user_ids: next })
+    if (error) {
+      alert(error.message)
+      setSavingSeal(false)
+      return
+    }
+    setSealUserIds(next)
+    setSavingSeal(false)
   }
 
-  const doGhost = async () => {
-    if (!user) return
-    await supabase
-      .from('profiles')
-      .update({ is_offline: true })
-      .eq('id', user.id)
+  const requestQuietToggle = () => {
+    if (!user || !conversationId || savingQuiet) return
+    setQuietConfirm(myQuietOn ? 'off' : 'on')
+  }
+
+  const confirmQuietToggle = async () => {
+    if (!user || !conversationId || !quietConfirm) return
+    setSavingQuiet(true)
+    setQuietConfirm(null)
+    let next = [...quietUserIds]
+    if (quietConfirm === 'on') {
+      if (!next.includes(user.id)) next.push(user.id)
+    } else next = next.filter((id) => id !== user.id)
+    const error = await saveSettings({ quiet_user_ids: next })
+    if (error) {
+      alert(error.message)
+      setSavingQuiet(false)
+      return
+    }
+    setQuietUserIds(next)
+    setSavingQuiet(false)
+  }
+
+  const runStartNewChat = async () => {
+    if (!conversationId || startingNew || !canStartNewChat()) return
+    setStartingNew(true)
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('conversation_id', conversationId)
+    if (error) {
+      await supabase
+        .from('messages')
+        .update({ deleted: true })
+        .eq('conversation_id', conversationId)
+    }
+    setMessages([])
+    setFileCount(0)
+    setVideoCount(0)
+    setChatEndsAt(null)
+    setFirstMsgAt(null)
+    setChatExpired(false)
+    setSealed(false)
+    setWarningLevel(0)
+    setWarningText('')
+    setNewMessage('')
+    setMediaUrls({})
+    hadMessagesRef.current = false
+    setStartingNew(false)
+    if (textAreaRef.current) textAreaRef.current.style.height = 'auto'
+  }
+
+  const acceptSafety = async () => {
     setModal(null)
-    router.push('/home')
+    if (safetyNext === 'newchat') await runStartNewChat()
+    setSafetyNext('enter')
+  }
+
+  const requestNewChat = () => {
+    if (!canStartNewChat()) return
+    setSafetyNext('newchat')
+    setModal('safety')
+  }
+
+  const resolveExpiresAt = async (forceShort: boolean) => {
+    if (forceShort) return new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    const mins = effectiveMinutes
+    if (chatEndsAt) return chatEndsAt
+    const { data: firstRows } = await supabase
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .eq('deleted', false)
+      .order('created_at', { ascending: true })
+      .limit(1)
+    if (firstRows?.[0]?.created_at) {
+      setFirstMsgAt(firstRows[0].created_at)
+      const endsAt = getConversationEnd(firstRows[0].created_at, mins)
+      setChatEndsAt(endsAt)
+      return endsAt
+    }
+    const endsAt = new Date(Date.now() + mins * 60 * 1000).toISOString()
+    setChatEndsAt(endsAt)
+    return endsAt
   }
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !user || !conversationId || chatExpired || blocked)
+    if (!newMessage.trim() || !user || !conversationId || chatExpired || sealed)
       return
-    if (!acceptedSafety) {
-      setShowSafety(true)
-      return
+    const content = newMessage.trim()
+    setNewMessage('')
+    if (textAreaRef.current) textAreaRef.current.style.height = 'auto'
+
+    const myQuestions = messages.filter(
+      (m) => m.sender_id === user.id && m.content?.trim().endsWith('?')
+    ).length
+    const isQuestion = content.endsWith('?')
+    const totalQuestions = isQuestion ? myQuestions + 1 : myQuestions
+    const qThreshold = myQuietOn ? 3 : 6
+    const interrogationDetected = isQuestion && totalQuestions >= qThreshold
+    let useShortExpiry = warningLevel >= 2
+
+    if (interrogationDetected) {
+      const nextLevel = Math.min(warningLevel + 1, 2)
+      setWarningLevel(nextLevel)
+      if (nextLevel === 1) {
+        setWarningText(
+          'You are asking a lot of questions. Please slow down.'
+        )
+      } else {
+        setWarningText(
+          'Too many questions. This chat will end sooner (30 min rule).'
+        )
+        useShortExpiry = true
+      }
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        await fetch('/api/interrogation-strike', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token || ''}`,
+          },
+          body: JSON.stringify({ conversation_id: conversationId }),
+        })
+      } catch {
+        /* non-blocking */
+      }
     }
 
-    const text = newMessage.trim()
-    setNewMessage('')
+    const expiresAt = await resolveExpiresAt(useShortExpiry)
+    if (!firstMsgAt) setFirstMsgAt(new Date().toISOString())
 
-    let content = text
-    let is_encrypted = false
+    let stored = content
+    let isEnc = false
     try {
-      content = await encryptText(conversationId, text)
-      is_encrypted = true
+      stored = await encryptText(conversationId, content)
+      isEnc = true
     } catch {
-      content = text
+      stored = content
+      isEnc = false
     }
 
     const { error } = await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
-      content,
+      content: stored,
       type: 'text',
-      is_encrypted,
-      is_deleted: false,
+      deleted: false,
+      expires_at: expiresAt,
+      is_encrypted: isEnc,
     })
 
     if (error) {
-      setNewMessage(text)
+      alert(error.message)
+      setNewMessage(content)
       return
     }
 
-    if (messages.length === 0) {
-      const settings = await ensureSettings()
-      const map = {
-        ...asDurationMap(settings?.duration_minutes),
-        [user.id]: myDuration,
-      }
-      const values = Object.values(map)
-      const shortest = values.length ? Math.min(...values) : myDuration
-      const expires_at = new Date(
-        Date.now() + shortest * 60 * 1000
-      ).toISOString()
+    if (ghostReply) {
       await supabase
-        .from('conversation_settings')
-        .update({
-          duration_minutes: map,
-          expires_at,
-          first_message_at: new Date().toISOString(),
-        })
-        .eq('conversation_id', conversationId)
-      setChatEndsAt(expires_at)
-    }
-
-    checkInterrogation(text)
-  }
-
-  const checkInterrogation = (text: string) => {
-    const q = (text.match(/\?/g) || []).length
-    if (q >= 3) {
-      setWarningLevel((w) => {
-        const next = w + 1
-        if (next === 1) {
-          setWarningText('You are asking a lot of questions. Please slow down.')
-        } else if (next >= 2) {
-          setWarningText(
-            'Anti-interrogation: chat time reduced. Please respect the other person.'
-          )
-          setMyChatDuration(30)
-        }
-        return next
-      })
+        .from('profiles')
+        .update({ is_offline: true })
+        .eq('id', user.id)
+      setGhostReply(false)
     }
   }
 
   const uploadMedia = async (
-    file: File,
-    type: 'image' | 'video' | 'file'
+    e: React.ChangeEvent<HTMLInputElement>,
+    kind: 'media' | 'file'
   ) => {
-    if (!user || !conversationId || chatExpired || blocked) return
-    if (!acceptedSafety) {
-      setShowSafety(true)
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !user || !conversationId || chatExpired || sealed) return
+
+    const isVideo = file.type.startsWith('video/')
+    const isImage = file.type.startsWith('image/')
+    let type: 'image' | 'video' | 'file' = 'file'
+    if (kind === 'media') {
+      if (isVideo) type = 'video'
+      else if (isImage) type = 'image'
+      else {
+        alert('Choose a photo or video')
+        return
+      }
+    }
+
+    if (type === 'video' && videoCount >= 1) {
+      alert('Video limit reached (1)')
       return
     }
-    if (type !== 'video' && fileCount >= 4) return
-    if (type === 'video' && videoCount >= 1) return
+    if ((type === 'image' || type === 'file') && fileCount >= 4) {
+      alert('File/photo limit reached (4)')
+      return
+    }
 
-    const ext = file.name.split('.').pop() || 'bin'
-    const path = `${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const expiresAt = await resolveExpiresAt(warningLevel >= 2)
+    const path = `${conversationId}/${Date.now()}-${file.name.replace(
+      /[^a-zA-Z0-9._-]/g,
+      '_'
+    )}`
 
-    let body: Blob | ArrayBuffer = file
-    let is_encrypted = false
+    let uploadBody: Blob = file
+    let isEnc = false
     try {
       const buf = await file.arrayBuffer()
       const enc = await encryptBytes(conversationId, new Uint8Array(buf))
-      body = enc
-      is_encrypted = true
+      const encBytes =
+        enc instanceof Uint8Array
+          ? enc
+          : new Uint8Array(enc as ArrayBuffer)
+      const copy = new Uint8Array(encBytes.byteLength)
+      copy.set(encBytes)
+      uploadBody = new Blob([copy], { type: 'application/octet-stream' })
+      isEnc = true
     } catch {
-      body = file
+      uploadBody = file
+      isEnc = false
     }
 
     const { error: upErr } = await supabase.storage
       .from('chat-photos')
-      .upload(path, body, {
-        contentType: file.type || 'application/octet-stream',
+      .upload(path, uploadBody, {
+        contentType: isEnc
+          ? 'application/octet-stream'
+          : file.type || 'application/octet-stream',
         upsert: false,
       })
 
-    if (upErr) return
+    if (upErr) {
+      alert(upErr.message)
+      return
+    }
 
     const {
       data: { publicUrl },
     } = supabase.storage.from('chat-photos').getPublicUrl(path)
 
-    await supabase.from('messages').insert({
+    const { error } = await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
       content: publicUrl,
       type,
-      is_encrypted,
-      is_deleted: false,
+      deleted: false,
+      expires_at: expiresAt,
+      is_encrypted: isEnc,
     })
-  }
 
-  const deleteMessage = async (id: string) => {
-    if (!user) return
-    await supabase
-      .from('messages')
-      .update({ is_deleted: true, content: '' })
-      .eq('id', id)
-      .eq('sender_id', user.id)
-    setMessages((prev) => prev.filter((m) => m.id !== id))
-    setMsgMenu(null)
-    setActiveMsg(null)
-  }
+    if (error) alert(error.message)
 
-  const saveEditMessage = async () => {
-    if (!activeMsg || !user || !editText.trim() || !conversationId) return
-    let content = editText.trim()
-    let is_encrypted = false
-    try {
-      content = await encryptText(conversationId, content)
-      is_encrypted = true
-    } catch {
-      /* keep plain */
+    if (ghostReply) {
+      await supabase
+        .from('profiles')
+        .update({ is_offline: true })
+        .eq('id', user.id)
+      setGhostReply(false)
     }
-    await supabase
-      .from('messages')
-      .update({ content, is_encrypted })
-      .eq('id', activeMsg.id)
-      .eq('sender_id', user.id)
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === activeMsg.id
-          ? { ...m, content: editText.trim(), is_encrypted }
-          : m
-      )
-    )
-    setMsgMenu(null)
-    setActiveMsg(null)
   }
 
   const clearChat = async () => {
-    if (!conversationId || !user) return
+    if (!conversationId) return
     await supabase
       .from('messages')
-      .update({ is_deleted: true, content: '' })
+      .update({ deleted: true })
       .eq('conversation_id', conversationId)
     setMessages([])
+    setSealed(true)
     setModal(null)
   }
 
   const confirmBlockUser = async () => {
     if (!user || !targetUser) return
-    const { data: { session } } = await supabase.auth.getSession()
-    await fetch('/api/block', {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    const res = await fetch('/api/block', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session?.access_token}`,
+        Authorization: `Bearer ${session?.access_token || ''}`,
       },
       body: JSON.stringify({ blocked_id: targetUser.id }),
     })
-    setBlocked(true)
-    setModal(null)
+    const data = await res.json()
+    if (data.error) alert(data.error)
+    else {
+      setBlocked(true)
+      setModal(null)
+      router.push('/home')
+    }
   }
 
   const confirmReportUser = async () => {
-    if (!user || !targetUser || !reportType || !reportReason.trim()) return
-    const { data: { session } } = await supabase.auth.getSession()
-    await fetch('/api/report', {
+    if (!user || !targetUser || !reportType || reportReason.trim().length < 3)
+      return
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    const snapshot = messages.slice(-20).map((m) => ({
+      id: m.id,
+      sender_id: m.sender_id,
+      type: m.type,
+      content:
+        m.type === 'text'
+          ? String(m.content || '').slice(0, 200)
+          : `[${m.type}]`,
+    }))
+    const res = await fetch('/api/report', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session?.access_token}`,
+        Authorization: `Bearer ${session?.access_token || ''}`,
       },
       body: JSON.stringify({
         reported_id: targetUser.id,
         conversation_id: conversationId,
-        reason: `${reportType}: ${reportReason}`,
+        reason: `[${reportType}] ${reportReason.trim()}`,
         message_id: reportMessageId,
+        message_snapshot: snapshot,
       }),
     })
-    setModal(null)
-    setReportReason('')
-    setReportType('')
-    setReportMessageId(null)
+    const data = await res.json()
+    if (data.error) alert(data.error)
+    else {
+      setModal(null)
+      setReportType('')
+      setReportReason('')
+      setReportMessageId(null)
+      alert('Report submitted')
+    }
   }
 
-  const startNewChat = async () => {
-    if (otherSealed || iSealed) return
-    setStartingNew(true)
-    setChatExpired(false)
-    setMessages([])
-    setChatEndsAt(null)
-    setWarningLevel(0)
-    setWarningText('')
-    setAcceptedSafety(false)
-    setShowSafety(true)
-    setStartingNew(false)
+  const openMsgMenu = (msg: any) => {
+    setActiveMsg(msg)
+    setEditText(msg.type === 'text' ? msg.content || '' : '')
+    setMsgMenu('menu')
   }
+
+  const startLongPress = (msg: any) => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    longPressTimer.current = setTimeout(() => openMsgMenu(msg), 500)
+  }
+
+  const endLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  const vanishOneMessage = async (msg: any) => {
+    await supabase.from('messages').update({ deleted: true }).eq('id', msg.id)
+    setMsgMenu(null)
+    setActiveMsg(null)
+  }
+
+  const saveEditMessage = async () => {
+    if (!activeMsg || activeMsg.type !== 'text' || !editText.trim()) return
+    let stored = editText.trim()
+    let isEnc = false
+    try {
+      stored = await encryptText(conversationId, editText.trim())
+      isEnc = true
+    } catch {
+      stored = editText.trim()
+    }
+    await supabase
+      .from('messages')
+      .update({ content: stored, is_encrypted: isEnc })
+      .eq('id', activeMsg.id)
+    setMsgMenu(null)
+    setActiveMsg(null)
+  }
+
+  const srcFor = (msg: any) => mediaUrls[msg.id] || msg.content
 
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading chat...</p>
-      </div>
-    )
-  }
-
-  if (!targetUser) {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
-        <div className="text-center">
-          <p className="text-zinc-400 mb-4">User not found or username expired</p>
-          <button
-            onClick={() => router.push('/search')}
-            className="bg-cyan-500 text-black px-6 py-3 rounded-xl font-medium"
-          >
-            Back to Search
-          </button>
-        </div>
+        <p className="text-zinc-400">Loading...</p>
       </div>
     )
   }
 
   if (blocked) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
-        <div className="text-center">
-          <p className="text-zinc-400 mb-4">Chat unavailable</p>
-          <button
-            onClick={() => router.push('/home')}
-            className="bg-cyan-500 text-black px-6 py-3 rounded-xl font-medium"
-          >
-            Go Home
-          </button>
-        </div>
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
+        <p className="text-zinc-400 mb-4">Chat unavailable</p>
+        <button
+          onClick={() => router.push('/home')}
+          className="text-cyan-400"
+        >
+          ← Home
+        </button>
       </div>
     )
   }
-    return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
-      <div
-        className="flex-1 flex flex-col max-w-lg mx-auto w-full"
-        style={{
-          background:
-            'radial-gradient(ellipse at top, #0c1222 0%, #000000 55%, #000000 100%)',
-        }}
-      >
-        {/* Header */}
-        <div className="sticky top-0 z-20 bg-black/90 border-b border-zinc-800 px-3 pt-3 pb-2">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="min-w-0 flex-1">
-              <p className="text-xs text-zinc-500">Chatting with</p>
-              <p className="text-lg font-semibold text-cyan-400 truncate">
-                {targetUser.avatar_icon || '🎭'} {targetUsername}
-              </p>
-              <p className="text-[11px] text-zinc-500 leading-snug">
-                No last seen. No read receipts. Text encrypted
-              </p>
-              <p className="text-[11px] text-zinc-500">
-                Chat length (from first message)
-              </p>
-            </div>
-            <div className="text-right shrink-0">
-              <p className="text-[11px] text-zinc-400">
-                {fileCount}/4 files · {videoCount}/1 video
-              </p>
+
+  return (
+    <div className="min-h-screen bg-black text-white flex flex-col h-[100dvh]">
+      <div className="shrink-0 border-b border-zinc-800 bg-black/95 px-3 py-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-zinc-500">Chatting with</p>
+            <p className="text-xl font-semibold text-cyan-400 truncate">
+              {targetUser?.avatar_icon || '🎭'} {targetUsername}
+            </p>
+            <p className="text-sm text-zinc-500 leading-snug">
+              No last seen. No read receipts. Text encrypted.
+            </p>
+            <p className="text-sm text-zinc-500">
+              Chat length (from first message) · your pick:{' '}
+              {myDuration === 30 ? '30m' : myDuration === 60 ? '1h' : '3h'}
+              {chatEndsAt
+                ? ` · ends ~${new Date(chatEndsAt).toLocaleTimeString()}`
+                : ''}
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+              {DURATION_OPTIONS.map((d) => (
+                <button
+                  key={d.minutes}
+                  type="button"
+                  disabled={savingDuration}
+                  onClick={() => pickMyDuration(d.minutes)}
+                  className={`text-sm px-2.5 py-1.5 rounded-lg border ${
+                    myDuration === d.minutes
+                      ? 'bg-cyan-500 text-black border-cyan-400'
+                      : 'bg-zinc-900 border-zinc-700 text-zinc-300'
+                  }`}
+                >
+                  {d.label}
+                </button>
+              ))}
+              <span className="text-zinc-600 text-sm">|</span>
+              <button
+                type="button"
+                onClick={() => setModal('clear')}
+                className="text-sm px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-medium"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setReportMessageId(null)
+                  setReportMessagePreview('')
+                  setReportType('')
+                  setReportReason('')
+                  setModal('report')
+                }}
+                className="text-sm px-2.5 py-1.5 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-medium"
+              >
+                Report
+              </button>
+              <button
+                type="button"
+                onClick={() => setModal('block')}
+                className="text-sm px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium"
+              >
+                Block
+              </button>
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-1.5 mb-2">
-            {DURATION_OPTIONS.map((opt) => (
-              <button
-                key={opt.minutes}
-                type="button"
-                onClick={() => setMyChatDuration(opt.minutes)}
-                disabled={chatExpired}
-                className={`text-xs px-2.5 py-1 rounded-lg border transition ${
-                  myDuration === opt.minutes
-                    ? 'bg-cyan-500 text-black border-cyan-400 font-semibold'
-                    : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setModal('clear')}
-              className="text-xs px-2.5 py-1 rounded-lg bg-orange-600/90 text-white font-medium"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setReportMessageId(null)
-                setModal('report')
-              }}
-              className="text-xs px-2.5 py-1 rounded-lg bg-yellow-600 text-white font-medium"
-            >
-              Report
-            </button>
-            <button
-              type="button"
-              onClick={() => setModal('block')}
-              className="text-xs px-2.5 py-1 rounded-lg bg-red-600 text-white font-medium"
-            >
-              Block
-            </button>
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <p className="text-sm text-zinc-400">
+              {fileCount}/4 files · {videoCount}/1 video
+            </p>
             <button
               type="button"
               onClick={() => setHeaderOpen((v) => !v)}
-              className="text-xs px-2.5 py-1 rounded-lg bg-cyan-700 text-white font-medium ml-auto"
+              className="text-sm px-2.5 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/15 text-cyan-300 font-medium hover:bg-cyan-500/25"
             >
-              More
+              {headerOpen ? 'Less' : 'More'}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/home')}
+              className="text-base font-medium text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-xl"
+            >
+              ← Back
             </button>
           </div>
-
-          {headerOpen && (
-            <div className="flex flex-wrap gap-1.5 mb-1">
-              <button
-                type="button"
-                onClick={() => setModal('seal')}
-                className={`text-xs px-3 py-1.5 rounded-lg font-medium border ${
-                  iSealed
-                    ? 'bg-cyan-500 text-black border-cyan-400'
-                    : 'bg-zinc-900 text-cyan-300 border-zinc-700'
-                }`}
-              >
-                Seal
-              </button>
-              <button
-                type="button"
-                onClick={() => setModal('quiet')}
-                className={`text-xs px-3 py-1.5 rounded-lg font-medium border ${
-                  iQuiet
-                    ? 'bg-cyan-500 text-black border-cyan-400'
-                    : 'bg-zinc-900 text-cyan-300 border-zinc-700'
-                }`}
-              >
-                Quiet
-              </button>
-              <button
-                type="button"
-                onClick={() => setModal('ghost')}
-                className="text-xs px-3 py-1.5 rounded-lg font-medium border bg-zinc-900 text-cyan-300 border-zinc-700"
-              >
-                Ghost
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="text-xs px-3 py-1.5 rounded-lg font-semibold bg-zinc-100 text-black ml-auto"
-              >
-                ← Back
-              </button>
-            </div>
-          )}
         </div>
 
-        {warningText && (
-          <div className="mx-3 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-100 text-sm">
-            {warningText}
+        {headerOpen && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={savingSeal}
+              onClick={requestSealToggle}
+              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
+                mySealOn
+                  ? 'bg-cyan-500 text-black border-cyan-400'
+                  : 'bg-zinc-900 border-zinc-700'
+              }`}
+            >
+              Seal {mySealOn ? 'ON' : 'OFF'}
+            </button>
+            <button
+              type="button"
+              disabled={savingQuiet}
+              onClick={requestQuietToggle}
+              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
+                myQuietOn
+                  ? 'bg-violet-500 text-white border-violet-400'
+                  : 'bg-zinc-900 border-zinc-700'
+              }`}
+            >
+              Quiet {myQuietOn ? 'ON' : 'OFF'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModal('ghost')}
+              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
+                ghostReply
+                  ? 'bg-emerald-600 text-white border-emerald-400'
+                  : 'bg-zinc-900 border-zinc-700'
+              }`}
+            >
+              Ghost {ghostReply ? 'armed' : ''}
+            </button>
           </div>
         )}
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-          {chatExpired ? (
-            <div className="flex flex-col items-center justify-center min-h-[40vh] text-center px-4">
-              <p className="text-2xl font-semibold text-cyan-400 mb-2">
-                This chat has vanished
-              </p>
-              <p className="text-sm text-zinc-500 mb-6">
-                Messages are gone. Nothing left to read.
-              </p>
-              {!otherSealed && !iSealed && (
-                <button
-                  type="button"
-                  onClick={startNewChat}
-                  disabled={startingNew}
-                  className="w-full max-w-xs bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl mb-3"
-                >
-                  {startingNew ? 'Please wait...' : 'Start New Chat'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="w-full max-w-xs bg-zinc-800 hover:bg-zinc-700 text-white py-3 rounded-xl mb-2 border border-zinc-700"
-              >
-                Go Home
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push('/search')}
-                className="w-full max-w-xs text-cyan-400 text-sm py-2"
-              >
-                Search users
-              </button>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="flex items-center justify-center min-h-[40vh]">
-              <p className="text-zinc-500 text-center text-sm">
-                No messages yet. Say something.
-              </p>
-            </div>
-          ) : (
-            messages.map((msg) => {
-              const mine = msg.sender_id === user?.id
-              const displayUrl =
-                mediaUrls[msg.id] ||
-                (msg.is_encrypted ? '' : msg.content)
+        {warningText && (
+          <p className="mt-2 text-sm text-amber-300/95">{warningText}</p>
+        )}
+      </div>
 
+      <div
+        className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col relative"
+        style={{
+          backgroundColor: '#000000',
+          backgroundImage: `
+            radial-gradient(ellipse 120% 80% at 50% -30%, rgba(34,211,238,0.22), transparent 55%),
+            radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6,182,212,0.08), transparent 50%),
+            radial-gradient(ellipse 50% 30% at 10% 90%, rgba(34,211,238,0.06), transparent 45%),
+            radial-gradient(1.5px 1.5px at 8% 12%, rgba(165,243,252,0.9), transparent),
+            radial-gradient(1px 1px at 22% 28%, rgba(34,211,238,0.7), transparent),
+            radial-gradient(1.5px 1.5px at 35% 8%, rgba(207,250,254,0.8), transparent),
+            radial-gradient(1px 1px at 48% 22%, rgba(34,211,238,0.55), transparent),
+            radial-gradient(2px 2px at 62% 15%, rgba(165,243,252,0.75), transparent),
+            radial-gradient(1px 1px at 78% 30%, rgba(34,211,238,0.6), transparent),
+            radial-gradient(1.5px 1.5px at 92% 18%, rgba(207,250,254,0.7), transparent),
+            radial-gradient(1px 1px at 12% 48%, rgba(34,211,238,0.5), transparent),
+            radial-gradient(1.5px 1.5px at 28% 62%, rgba(165,243,252,0.65), transparent),
+            radial-gradient(1px 1px at 44% 55%, rgba(34,211,238,0.45), transparent),
+            radial-gradient(2px 2px at 58% 72%, rgba(207,250,254,0.55), transparent),
+            radial-gradient(1px 1px at 72% 58%, rgba(34,211,238,0.5), transparent),
+            radial-gradient(1.5px 1.5px at 88% 68%, rgba(165,243,252,0.6), transparent),
+            radial-gradient(1px 1px at 18% 82%, rgba(34,211,238,0.4), transparent),
+            radial-gradient(1.5px 1.5px at 38% 88%, rgba(207,250,254,0.5), transparent),
+            radial-gradient(1px 1px at 66% 92%, rgba(34,211,238,0.45), transparent),
+            radial-gradient(2px 2px at 84% 85%, rgba(165,243,252,0.55), transparent)
+          `,
+        }}
+      >
+        {messages.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center px-4 relative z-10">
+            <p className="text-center text-zinc-400 text-sm leading-relaxed max-w-xs">
+              {chatExpired
+                ? 'This chat has Vanished.'
+                : sealed
+                  ? 'This chat was cleared.'
+                  : 'Nothing here yet. When you speak, it can vanish.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 relative z-10">
+            {messages.map((msg) => {
+              const mine = msg.sender_id === user?.id
+              const mediaSrc = srcFor(msg)
               return (
                 <div
                   key={msg.id}
                   className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+                  onTouchStart={() => startLongPress(msg)}
+                  onTouchEnd={endLongPress}
+                  onMouseDown={() => startLongPress(msg)}
+                  onMouseUp={endLongPress}
+                  onMouseLeave={endLongPress}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    setActiveMsg(msg)
-                    setEditText(msg.type === 'text' ? msg.content : '')
-                    setMsgMenu('menu')
-                  }}
-                  onTouchStart={() => {
-                    const t = window.setTimeout(() => {
-                      setActiveMsg(msg)
-                      setEditText(msg.type === 'text' ? msg.content : '')
-                      setMsgMenu('menu')
-                    }, 500)
-                    const clear = () => window.clearTimeout(t)
-                    window.addEventListener('touchend', clear, { once: true })
+                    openMsgMenu(msg)
                   }}
                 >
                   <div
-                    className={`relative max-w-[85%] px-3.5 py-2.5 text-[15px] leading-relaxed ${
+                    className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
                       mine
-                        ? 'bg-cyan-600/90 text-white rounded-2xl rounded-br-md'
-                        : 'bg-zinc-800 text-zinc-100 rounded-2xl rounded-bl-md'
+                        ? 'bg-cyan-600 text-white rounded-br-md shadow-[0_0_24px_rgba(34,211,238,0.25)]'
+                        : 'bg-black/75 text-zinc-100 rounded-bl-md border border-cyan-500/20 backdrop-blur-sm'
                     }`}
                   >
-                    {msg.type === 'text' && (
-                      <p className="whitespace-pre-wrap break-words">
-                        {msg.content}
-                      </p>
+                    {msg.type === 'image' && (
+                      <div>
+                        <img
+                          src={mediaSrc}
+                          alt=""
+                          className="max-w-[220px] max-h-[280px] w-auto h-auto object-contain rounded-lg mb-1"
+                        />
+                        <a
+                          href={mediaSrc}
+                          download
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline opacity-90"
+                        >
+                          Download
+                        </a>
+                      </div>
                     )}
-                    {msg.type === 'image' && displayUrl && (
-                      <img
-                        src={displayUrl}
-                        alt=""
-                        className="max-w-[220px] max-h-[280px] rounded-lg object-cover"
-                      />
-                    )}
-                    {msg.type === 'video' && displayUrl && (
-                      <video
-                        src={displayUrl}
-                        controls
-                        className="max-w-[220px] max-h-[280px] rounded-lg"
-                      />
+                    {msg.type === 'video' && (
+                      <div>
+                        <video
+                          src={mediaSrc}
+                          controls
+                          className="max-w-[220px] max-h-[280px] w-auto rounded-lg mb-1"
+                        />
+                        <a
+                          href={mediaSrc}
+                          download
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline opacity-90"
+                        >
+                          Download
+                        </a>
+                      </div>
                     )}
                     {msg.type === 'file' && (
                       <a
-                        href={displayUrl || msg.content}
+                        href={mediaSrc}
                         target="_blank"
                         rel="noreferrer"
-                        className="underline text-sm"
+                        className="text-sm underline break-all"
                       >
-                        Download file
+                        📎 File — open / download
                       </a>
+                    )}
+                    {msg.type === 'text' && (
+                      <p className="text-[15px] whitespace-pre-wrap break-words leading-relaxed">
+                        {msg.content}
+                      </p>
                     )}
                   </div>
                 </div>
               )
-            })
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input */}
-        {!chatExpired && (
-          <div className="sticky bottom-0 bg-black/95 border-t border-zinc-800 p-3">
-            <div className="flex items-end gap-2">
-              <label className="cursor-pointer shrink-0 bg-zinc-800 hover:bg-zinc-700 w-11 h-11 rounded-xl flex items-center justify-center text-lg">
-                📷
-                <input
-                  type="file"
-                  accept="image/*,video/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (!f) return
-                    if (f.type.startsWith('video/')) uploadMedia(f, 'video')
-                    else uploadMedia(f, 'image')
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-              <label className="cursor-pointer shrink-0 bg-zinc-800 hover:bg-zinc-700 w-11 h-11 rounded-xl flex items-center justify-center text-lg">
-                📎
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,.txt,.ppt,.pptx,.zip"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    if (!f) return
-                    uploadMedia(f, 'file')
-                    e.target.value = ''
-                  }}
-                />
-              </label>
-              <textarea
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Type a message..."
-                rows={1}
-                className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none max-h-32"
-              />
-              <button
-                type="button"
-                onClick={sendMessage}
-                className="shrink-0 bg-cyan-500 hover:bg-cyan-400 text-black font-medium px-4 py-2.5 rounded-xl"
-              >
-                Send
-              </button>
-            </div>
+            })}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
 
-      {/* Safety modal */}
-      {showSafety && !acceptedSafety && !chatExpired && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-3xl p-6">
-            <h2 className="text-xl font-semibold mb-3">Before you start</h2>
+      {(chatExpired || sealed) && messages.length === 0 && (
+        <div className="shrink-0 p-4 border-t border-zinc-900 bg-black space-y-2">
+          <p className="text-center text-zinc-300 text-sm font-medium mb-1">
+            {chatExpired ? 'This chat has Vanished.' : 'This chat was cleared.'}
+          </p>
+          {canStartNewChat() ? (
+            <>
+              <button
+                onClick={requestNewChat}
+                disabled={startingNew}
+                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl disabled:opacity-50"
+              >
+                {startingNew ? 'Please wait...' : 'Start a new chat'}
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/home')}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Go home
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/search')}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Search users
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-center text-zinc-500 text-sm mb-2">
+                This chat cannot be reopened.
+              </p>
+              <button
+                type="button"
+                onClick={() => router.push('/home')}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Go home
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/search')}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
+              >
+                Search users
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {!chatExpired && !sealed && (
+        <div className="shrink-0 bg-black border-t border-cyan-500/10 p-2">
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={() => mediaInputRef.current?.click()}
+              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-900 border border-zinc-700 flex items-center justify-center text-xl"
+              title="Photo / Video"
+            >
+              📷
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="shrink-0 h-11 w-11 rounded-xl bg-zinc-900 border border-zinc-700 flex items-center justify-center text-xl"
+              title="File"
+            >
+              📎
+            </button>
+            <input
+              ref={mediaInputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={(e) => uploadMedia(e, 'media')}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => uploadMedia(e, 'file')}
+            />
+            <textarea
+              ref={textAreaRef}
+              value={newMessage}
+              onChange={(e) => {
+                setNewMessage(e.target.value)
+                requestAnimationFrame(growTextarea)
+              }}
+              placeholder="Type a message..."
+              rows={1}
+              className="flex-1 min-w-0 p-2.5 rounded-xl bg-zinc-900 border border-zinc-700 focus:outline-none focus:border-cyan-400 text-[15px] resize-none overflow-hidden"
+              style={{ maxHeight: 160 }}
+            />
+            <button
+              onClick={sendMessage}
+              className="shrink-0 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold px-4 h-11 rounded-xl"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
+      {modal === 'safety' && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/20 rounded-3xl p-6">
+            <h2 className="text-xl font-semibold mb-3">Before you continue</h2>
             <ul className="text-sm text-zinc-300 space-y-2 mb-4 list-disc pl-5">
               <li>Chats are temporary and may disappear after a limited time.</li>
               <li>Do not share passwords, codes, or money details.</li>
@@ -1093,214 +1372,239 @@ export default function ChatPage() {
               SECRETS YOU CANNOT AFFORD TO EXPOSE.
             </p>
             <button
-              type="button"
-              onClick={() => {
-                setAcceptedSafety(true)
-                setShowSafety(false)
-              }}
+              onClick={acceptSafety}
               className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl"
             >
-              I understand — Start
+              I understand — Continue
             </button>
           </div>
         </div>
       )}
 
-      {/* Modals */}
-      {modal && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-5">
-            {modal === 'clear' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Clear chat?</h3>
-                <p className="text-sm text-zinc-400 mb-4">
-                  Messages will disappear for both of you right away.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={clearChat}
-                    className="flex-1 bg-orange-600 py-2.5 rounded-xl"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'block' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">
-                  Block {targetUsername}?
-                </h3>
-                <p className="text-sm text-zinc-400 mb-4">
-                  You will not find each other in search.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmBlockUser}
-                    className="flex-1 bg-red-600 py-2.5 rounded-xl"
-                  >
-                    Block
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'report' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">
-                  Report {targetUsername}
-                </h3>
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {REPORT_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setReportType(type)}
-                      className={`text-xs px-2.5 py-1 rounded-lg border ${
-                        reportType === type
-                          ? 'bg-yellow-600 border-yellow-500 text-white'
-                          : 'bg-zinc-800 border-zinc-700 text-zinc-300'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-zinc-400 mb-1">Explain (required)</p>
-                <textarea
-                  placeholder="What happened?"
-                  value={reportReason}
-                  onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
-                  rows={3}
-                  className="w-full p-3 mb-2 rounded-xl bg-zinc-800 border border-zinc-700 text-sm resize-none"
-                />
-                <p className="text-[11px] text-zinc-500 mb-4">
-                  {reportReason.length}/400
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setModal(null)
-                      setReportMessageId(null)
-                      setReportType('')
-                      setReportReason('')
-                    }}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmReportUser}
-                    className="flex-1 bg-yellow-600 py-2.5 rounded-xl font-medium"
-                  >
-                    Submit
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'seal' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Seal this chat</h3>
-                <p className="text-sm text-zinc-400 mb-4">
-                  When the chat ends, the other person will not see “Start New
-                  Chat”. They will not be told that you sealed it.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={toggleSeal}
-                    className="flex-1 bg-cyan-500 text-black font-medium py-2.5 rounded-xl"
-                  >
-                    {iSealed ? 'Unseal' : 'Seal'}
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'quiet' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Quiet mode</h3>
-                <p className="text-sm text-zinc-400 mb-4">
-                  Stricter anti-interrogation on your side. The other person is
-                  not notified.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={toggleQuiet}
-                    className="flex-1 bg-cyan-500 text-black font-medium py-2.5 rounded-xl"
-                  >
-                    {iQuiet ? 'Turn off Quiet' : 'Turn on Quiet'}
-                  </button>
-                </div>
-              </>
-            )}
-            {modal === 'ghost' && (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Ghost</h3>
-                <p className="text-sm text-zinc-400 mb-4">
-                  You go offline. Others cannot find you in search. You can turn
-                  this off later in Profile.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setModal(null)}
-                    className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={doGhost}
-                    className="flex-1 bg-cyan-500 text-black font-medium py-2.5 rounded-xl"
-                  >
-                    Go offline
-                  </button>
-                </div>
-              </>
-            )}
+      {modal === 'clear' && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">Clear this chat?</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              Messages vanish for both of you right away.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={clearChat}
+                className="flex-1 bg-orange-600 py-2.5 rounded-xl font-medium"
+              >
+                Clear chat
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Message long-press menu */}
+      {modal === 'block' && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              Block {targetUsername}?
+            </h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              They will not find you in search or chat with you.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBlockUser}
+                className="flex-1 bg-red-600 py-2.5 rounded-xl font-medium"
+              >
+                Block
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'report' && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold mb-2">
+              Report {targetUsername}
+            </h3>
+            {reportMessagePreview && (
+              <p className="text-xs text-zinc-500 mb-2 line-clamp-2">
+                Message: {reportMessagePreview}
+              </p>
+            )}
+            <p className="text-xs text-zinc-400 mb-2">Type</p>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {REPORT_TYPES.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setReportType(type)}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border ${
+                    reportType === type
+                      ? 'bg-yellow-600 border-yellow-400 text-white'
+                      : 'bg-zinc-900 border-zinc-600 text-zinc-300'
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-zinc-400 mb-1">Explain (required)</p>
+            <textarea
+              placeholder="What happened?"
+              value={reportReason}
+              onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
+              rows={3}
+              className="w-full p-3 mb-2 rounded-xl bg-zinc-900 border border-zinc-700 text-sm resize-none"
+            />
+            <p className="text-[11px] text-zinc-500 mb-4">
+              {reportReason.length}/400
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setModal(null)
+                  setReportMessageId(null)
+                  setReportType('')
+                  setReportReason('')
+                }}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReportUser}
+                className="flex-1 bg-yellow-600 py-2.5 rounded-xl font-medium"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'ghost' && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">Ghost mode</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              After your next message is sent, you go offline. Others cannot find
+              you in Search until you turn offline off in Profile.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setGhostReply(true)
+                  setModal(null)
+                }}
+                className="flex-1 bg-emerald-600 py-2.5 rounded-xl font-medium"
+              >
+                Enable Ghost
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sealConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              {sealConfirm === 'on' ? 'Turn Seal on?' : 'Turn Seal off?'}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              {sealConfirm === 'on'
+                ? 'When this chat ends, the other person will not see “Start a new chat” on their side. They are not told that you used Seal.'
+                : 'You stop using Seal for this chat.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSealConfirm(null)}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSealToggle}
+                className="flex-1 bg-cyan-600 py-2.5 rounded-xl font-medium"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quietConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">
+              {quietConfirm === 'on' ? 'Turn Quiet on?' : 'Turn Quiet off?'}
+            </h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              {quietConfirm === 'on'
+                ? 'Anti-interrogation becomes stricter for you. The other person is not notified.'
+                : 'Quiet mode off for you.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setQuietConfirm(null)}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmQuietToggle}
+                className="flex-1 bg-violet-600 py-2.5 rounded-xl font-medium"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {msgMenu && activeMsg && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-4">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-4 w-full max-w-sm">
             {msgMenu === 'menu' && (
               <>
+                <p className="text-sm text-zinc-400 mb-3 line-clamp-2">
+                  {activeMsg.type === 'text'
+                    ? activeMsg.content
+                    : `[${activeMsg.type}]`}
+                </p>
                 {activeMsg.sender_id === user?.id &&
                   activeMsg.type === 'text' && (
                     <button
                       onClick={() => setMsgMenu('edit')}
-                      className="w-full text-left py-3 border-b border-zinc-800 text-cyan-400"
+                      className="w-full text-left py-3 border-b border-zinc-800"
                     >
-                      Edit message
+                      Edit
                     </button>
                   )}
                 {activeMsg.sender_id === user?.id && (
                   <button
-                    onClick={() => deleteMessage(activeMsg.id)}
-                    className="w-full text-left py-3 border-b border-zinc-800 text-red-400"
+                    onClick={() => vanishOneMessage(activeMsg)}
+                    className="w-full text-left py-3 border-b border-zinc-800 text-orange-400"
                   >
                     Vanish this message
                   </button>
@@ -1308,6 +1612,13 @@ export default function ChatPage() {
                 <button
                   onClick={() => {
                     setReportMessageId(activeMsg.id)
+                    setReportMessagePreview(
+                      activeMsg.type === 'text'
+                        ? activeMsg.content
+                        : `[${activeMsg.type}]`
+                    )
+                    setReportType('')
+                    setReportReason('')
                     setMsgMenu(null)
                     setModal('report')
                   }}
