@@ -94,11 +94,9 @@ async function mediaDisplayUrl(
     const res = await fetch(url)
     if (!res.ok) return url
     const buf = await res.arrayBuffer()
-    const plain = await decryptBytes(convId, new Uint8Array(buf))
-    const bytes =
-      plain instanceof Uint8Array
-        ? plain
-        : new Uint8Array(plain as ArrayBuffer)
+    // decryptBytes takes ArrayBuffer, returns ArrayBuffer
+    const plain = await decryptBytes(convId, buf)
+    const bytes = new Uint8Array(plain)
     const copy = new Uint8Array(bytes.byteLength)
     copy.set(bytes)
     const mime = guessMimeFromUrl(url)
@@ -803,13 +801,10 @@ export default function ChatPage() {
     let isEnc = false
     try {
       const buf = await file.arrayBuffer()
-      const enc = await encryptBytes(conversationId, new Uint8Array(buf))
-      const encBytes =
-        enc instanceof Uint8Array
-          ? enc
-          : new Uint8Array(enc as ArrayBuffer)
-      const copy = new Uint8Array(encBytes.byteLength)
-      copy.set(encBytes)
+      // encryptBytes takes ArrayBuffer, returns Uint8Array
+      const enc = await encryptBytes(conversationId, buf)
+      const copy = new Uint8Array(enc.byteLength)
+      copy.set(enc)
       uploadBody = new Blob([copy], { type: 'application/octet-stream' })
       isEnc = true
     } catch {
