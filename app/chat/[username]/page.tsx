@@ -1253,7 +1253,6 @@ export default function ChatPage() {
       </div>
 
       {(chatExpired || sealed) && messages.length === 0 && (
-        <div className="      {(chatExpired || sealed) && messages.length === 0 && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 shadow-[0_0_40px_rgba(34,211,238,0.15)]">
             <p className="text-center text-2xl font-semibold text-cyan-400 mb-2">
@@ -1311,7 +1310,9 @@ export default function ChatPage() {
         </div>
       )}
 
-t border-cyan-500/10 p-2">
+      {!chatExpired && !sealed && (
+        <div className="shrink-0 bg-black border-t border-cyan-500/10 p-2">
+
           <div className="flex items-end gap-2">
             <button
               type="button"
