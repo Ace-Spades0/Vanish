@@ -19,8 +19,8 @@ function getExpiryLabel(profile: any, lang: Lang): string | null {
   const msLeft = end - Date.now()
   if (msLeft <= 0) {
     return lang === 'sw'
-      ? 'Imeisha — chagua jina jipya'
-      : 'Expired — pick a new username'
+      ? 'Imeisha — anza tena'
+      : 'Expired — Get Started again'
   }
   const hours = Math.floor(msLeft / (1000 * 60 * 60))
   const mins = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60))
@@ -53,13 +53,13 @@ export default function HomePage() {
   const copy = {
     en: {
       startChat: 'Start a vanishing chat',
-      pickUsername: 'Pick a username',
+      needName: 'Get a temporary name',
       vanishLink: 'Go Vanish link',
       vanishLinkHelp: 'One chat with you, then the link dies',
       letters: 'Letters',
       lettersHelp: 'One-time notes',
       myAccount: 'My account',
-      myAccountHelp: 'Profile, logout, delete',
+      myAccountHelp: 'Icon, offline, leave',
       blocked: 'Blocked',
       blockedNone: 'No blocked users',
       blockedN: (n: number) => `${n} blocked`,
@@ -78,13 +78,13 @@ export default function HomePage() {
     },
     sw: {
       startChat: 'Anza gumzo linalotoweka',
-      pickUsername: 'Chagua jina la utumizi',
+      needName: 'Pata jina la muda',
       vanishLink: 'Kiungo cha Go Vanish',
       vanishLinkHelp: 'Gumzo moja nawe, kisha kiungo kinakufa',
       letters: 'Barua',
       lettersHelp: 'Ujumbe wa mara moja',
       myAccount: 'Akaunti yangu',
-      myAccountHelp: 'Wasifu, tokoka, futa',
+      myAccountHelp: 'Ikoni, nje ya mtandao, ondoka',
       blocked: 'Waliouzuiwa',
       blockedNone: 'Hakuna aliyezuiwa',
       blockedN: (n: number) => `Wamezuiwa ${n}`,
@@ -114,9 +114,7 @@ export default function HomePage() {
     }
     if (status === 'suspended') {
       const until = suspended_until ? new Date(suspended_until).getTime() : null
-      if (until && until <= Date.now()) {
-        return false
-      }
+      if (until && until <= Date.now()) return false
       router.push('/appeal')
       return true
     }
@@ -161,11 +159,13 @@ export default function HomePage() {
         return
       }
       setUser(user)
+
       let { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
+
       if (user.id === ADMIN_ID) {
         const needsRepair =
           !profileData ||
@@ -189,6 +189,7 @@ export default function HomePage() {
           profileData = fixed
         }
       }
+
       if (profileData?.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
@@ -213,6 +214,7 @@ export default function HomePage() {
           return
         }
       }
+
       if (profileData?.username) {
         if (profileData.is_permanent_username) {
           setProfile(profileData)
@@ -227,11 +229,12 @@ export default function HomePage() {
       } else {
         setProfile(null)
       }
-      const currentLang = getLang()
-      setExpiryLabel(getExpiryLabel(profileData, currentLang))
+
+      setExpiryLabel(getExpiryLabel(profileData, getLang()))
       await loadBlockedUsers(user.id)
       await loadLetterCount(user.id)
       setLoading(false)
+
       channel = supabase
         .channel(`profile-status-${user.id}`)
         .on(
@@ -281,7 +284,7 @@ export default function HomePage() {
         data: { session },
       } = await supabase.auth.getSession()
       if (!session) {
-        setInviteMsg('Please login again')
+        setInviteMsg('Session expired — Get Started again')
         return
       }
       const res = await fetch('/api/create-invite', {
@@ -423,21 +426,15 @@ export default function HomePage() {
           <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500 mb-2">
             {copy.username}
           </p>
-          <h1 className="text-4xl font-bold text-cyan-400 tracking-tight">
-            {profile?.username || t.noUsername || '—'}
+          <h1 className="text-4xl font-bold text-cyan-400 tracking-[0.15em] font-mono">
+            {profile?.username || '—'}
           </h1>
           {expiryLabel && (
             <p className="text-sm text-zinc-400 mt-2">{expiryLabel}</p>
           )}
-          {profile?.bio && (
-            <p className="text-sm text-zinc-500 mt-2 max-w-[240px]">
-              {profile.bio}
-            </p>
-          )}
           {profile?.is_offline && (
             <p className="text-xs text-amber-400 mt-2">{copy.offline}</p>
           )}
-
           <p className="mt-4 text-sm text-zinc-500 italic tracking-wide max-w-[280px]">
             {copy.homeLine}
           </p>
@@ -445,10 +442,10 @@ export default function HomePage() {
           <div className="w-full mt-10">
             {!profile?.username ? (
               <button
-                onClick={() => router.push('/username')}
+                onClick={() => router.push('/auth')}
                 className="w-full py-4 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-black font-semibold transition"
               >
-                {copy.pickUsername}
+                {copy.needName}
               </button>
             ) : (
               <button

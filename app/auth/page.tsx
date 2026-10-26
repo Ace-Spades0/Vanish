@@ -1,143 +1,187 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { supabase } from '@/lib/supabase'
 import { Turnstile } from '@marsidev/react-turnstile'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
 
-const TEMP_EMAIL_DOMAINS = [
-  'tempmail.com',
-  'mailinator.com',
-  'guerrillamail.com',
-  '10minutemail.com',
-  'yopmail.com',
-  'trashmail.com',
-  'getnada.com',
-  'temp-mail.org',
-  'moakt.com',
-  'emailondeck.com',
-]
-
-function isTempEmail(email: string) {
-  const domain = email.trim().toLowerCase().split('@')[1]
-  return TEMP_EMAIL_DOMAINS.includes(domain)
+function randomCode() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  let s = ''
+  for (let i = 0; i < 6; i++) {
+    s += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return s
 }
 
 export default function AuthPage() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const [mode, setMode] = useState<'login' | 'forgot'>('login')
-  const [captchaToken, setCaptchaToken] = useState('')
+  const [checking, setChecking] = useState(true)
   const [acceptedTerms, setAcceptedTerms] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState('')
+  const [assignedName, setAssignedName] = useState('')
   const [lang, setLangState] = useState<Lang>('en')
   const router = useRouter()
   const t = translations[lang]
 
-  useState(() => {
+  useEffect(() => {
     setLangState(getLang())
-  })
-
-  const handleSignUp = async () => {
-    setLoading(true)
-    setMessage('')
-    if (!acceptedTerms) {
-      setMessage('Please accept Terms of Service and Privacy & Security')
-      setLoading(false)
-      return
-    }
-    if (password.length < 6) {
-      setMessage('Password must be at least 6 characters')
-      setLoading(false)
-      return
-    }
-    if (isTempEmail(email)) {
-      setMessage('Temporary emails are not allowed. Please use a real email.')
-      setLoading(false)
-      return
-    }
-    const { error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: captchaToken ? { captchaToken } : undefined,
-    })
-    if (error) setMessage(error.message)
-    else setMessage('Account created! Please check your email to confirm.')
-    setLoading(false)
-  }
-
-  const handleLogin = async () => {
-    setLoading(true)
-    setMessage('')
-    if (!acceptedTerms) {
-      setMessage('Please accept Terms of Service and Privacy & Security')
-      setLoading(false)
-      return
-    }
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    })
-    if (error) {
-      setMessage(error.message)
-      setLoading(false)
-      return
-    }
-    const uid = data.user?.id
-    if (uid) {
-      const { data: p } = await supabase
-        .from('profiles')
-        .select('status, suspended_until')
-        .eq('id', uid)
-        .maybeSingle()
-      if (p?.status === 'banned') {
-        await supabase.auth.signOut()
-        setMessage('This account is restricted.')
-        setLoading(false)
-        return
-      }
-      if (p?.status === 'suspended') {
-        const until = p.suspended_until
-          ? new Date(p.suspended_until).getTime()
-          : null
-        if (!until || until > Date.now()) {
-          router.push('/appeal')
-          setLoading(false)
+    const init = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('username, username_claimed_at, is_permanent_username, status')
+          .eq('id', user.id)
+          .maybeSingle()
+        if (profile?.status === 'banned') {
+          await supabase.auth.signOut()
+          setChecking(false)
           return
         }
+        if (profile?.status === 'suspended') {
+          router.push('/appeal')
+          return
+        }
+        if (profile?.is_permanent_username && profile.username) {
+          router.push('/home')
+          return
+        }
+        if (profile?.username && profile.username_claimed_at) {
+          const hours =
+            (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+            3600000
+          if (hours < 24) {
+            router.push('/home')
+            return
+          }
+        }
       }
+      setChecking(false)
     }
-    setMessage('Login successful!')
-    router.push('/home')
-    setLoading(false)
-  }
-
-  const handleForgotPassword = async () => {
-    setLoading(true)
-    setMessage('')
-    if (!email.trim()) {
-      setMessage('Please enter your email')
-      setLoading(false)
-      return
-    }
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo:
-        typeof window !== 'undefined'
-          ? `${window.location.origin}/auth`
-          : undefined,
-    })
-    if (error) setMessage(error.message)
-    else setMessage('Check your email for the reset link.')
-    setLoading(false)
-  }
+    init()
+  }, [])
 
   const changeLang = (l: Lang) => {
     setLang(l)
     setLangState(l)
+  }
+
+  const assignUniqueUsername = async (userId: string) => {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const code = randomCode()
+      if (code === 'LESTAT') continue
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', code)
+        .maybeSingle()
+      if (existing && existing.id !== userId) continue
+
+      const { error } = await supabase.from('profiles').upsert({
+        id: userId,
+        username: code,
+        username_claimed_at: new Date().toISOString(),
+        is_permanent_username: false,
+        is_offline: false,
+        status: 'active',
+      })
+      if (!error) return code
+    }
+    throw new Error('Could not assign a free name. Try again.')
+  }
+
+  const handleGetStarted = async () => {
+    setLoading(true)
+    setMessage('')
+    setAssignedName('')
+
+    if (!acceptedTerms) {
+      setMessage('Please accept Terms of Service and Privacy & Security')
+      setLoading(false)
+      return
+    }
+
+    try {
+      let {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        const { data, error } = await supabase.auth.signInAnonymously(
+          process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && captchaToken
+            ? { options: { captchaToken } }
+            : undefined
+        )
+        if (error) {
+          setMessage(
+            error.message +
+              (error.message.toLowerCase().includes('anonymous')
+                ? ' — Enable Anonymous sign-ins in Supabase Auth settings.'
+                : '')
+          )
+          setLoading(false)
+          return
+        }
+        user = data.user
+      }
+
+      if (!user) {
+        setMessage('Could not start session')
+        setLoading(false)
+        return
+      }
+
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('username, username_claimed_at, is_permanent_username, status')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (existing?.status === 'banned') {
+        await supabase.auth.signOut()
+        setMessage('This identity is restricted.')
+        setLoading(false)
+        return
+      }
+      if (existing?.status === 'suspended') {
+        router.push('/appeal')
+        setLoading(false)
+        return
+      }
+
+      let name = existing?.username || ''
+      const stillValid =
+        existing?.is_permanent_username ||
+        (existing?.username_claimed_at &&
+          (Date.now() - new Date(existing.username_claimed_at).getTime()) /
+            3600000 <
+            24)
+
+      if (!name || !stillValid) {
+        name = await assignUniqueUsername(user.id)
+      }
+
+      setAssignedName(name)
+      setMessage('Your temporary name is ready.')
+      setTimeout(() => router.push('/home'), 900)
+    } catch (e: any) {
+      setMessage(e?.message || 'Something went wrong')
+    }
+    setLoading(false)
+  }
+
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <p className="text-zinc-400">Loading...</p>
+      </div>
+    )
   }
 
   return (
@@ -176,106 +220,51 @@ export default function AuthPage() {
         </div>
 
         <h1 className="text-3xl font-bold mb-2 text-center">{t.appName}</h1>
-        <p className="text-zinc-400 text-center mb-8">{t.tagline}</p>
+        <p className="text-zinc-400 text-center mb-2">{t.tagline}</p>
+        <p className="text-zinc-500 text-center text-sm mb-8">
+          No email. No password. We assign a temporary 6-character name.
+        </p>
 
-        {mode === 'login' ? (
-          <>
-            <input
-              type="email"
-              placeholder={t.email}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3 mb-4 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
+        <label className="flex items-start gap-2 mb-4 text-sm text-zinc-400 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={acceptedTerms}
+            onChange={(e) => setAcceptedTerms(e.target.checked)}
+            className="mt-1"
+          />
+          <span>{t.acceptTerms}</span>
+        </label>
+
+        {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && (
+          <div className="mb-4 flex justify-center">
+            <Turnstile
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+              onSuccess={setCaptchaToken}
             />
-            <div className="relative mb-4">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder={t.password}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400"
-              >
-                {showPassword ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            <label className="flex items-start gap-2 mb-4 text-sm text-zinc-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={acceptedTerms}
-                onChange={(e) => setAcceptedTerms(e.target.checked)}
-                className="mt-1"
-              />
-              <span>{t.acceptTerms}</span>
-            </label>
-            {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && (
-              <div className="mb-4 flex justify-center">
-                <Turnstile
-                  siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
-                  onSuccess={setCaptchaToken}
-                />
-              </div>
-            )}
-            <button
-              onClick={handleSignUp}
-              disabled={loading}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg mb-3 transition"
-            >
-              {loading ? t.pleaseWait : t.signUp}
-            </button>
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-lg transition"
-            >
-              {loading ? t.pleaseWait : t.login}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('forgot')
-                setMessage('')
-              }}
-              className="w-full mt-3 text-sm text-zinc-400 hover:text-cyan-400"
-            >
-              {t.forgotPassword}
-            </button>
-          </>
-        ) : (
-          <>
-            <input
-              type="email"
-              placeholder={t.email}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3 mb-6 rounded-lg bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-cyan-400"
-            />
-            <button
-              onClick={handleForgotPassword}
-              disabled={loading}
-              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg mb-3 transition"
-            >
-              {loading ? t.pleaseWait : t.sendResetLink}
-            </button>
-            <button
-              onClick={() => {
-                setMode('login')
-                setMessage('')
-              }}
-              className="w-full bg-zinc-700 hover:bg-zinc-600 text-white font-medium py-3 rounded-lg transition"
-            >
-              {t.backToLogin}
-            </button>
-          </>
+          </div>
+        )}
+
+        <button
+          onClick={handleGetStarted}
+          disabled={loading}
+          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg transition disabled:opacity-50"
+        >
+          {loading ? t.pleaseWait : t.getStarted}
+        </button>
+
+        {assignedName && (
+          <p className="mt-6 text-center text-2xl font-bold tracking-[0.2em] text-cyan-400">
+            {assignedName}
+          </p>
         )}
 
         {message && (
-          <p className="mt-6 text-center text-sm text-cyan-400">{message}</p>
+          <p className="mt-4 text-center text-sm text-cyan-400">{message}</p>
         )}
+
+        <p className="mt-6 text-[11px] text-zinc-500 text-center leading-relaxed">
+          Clearing browser data creates a new identity. Names last 24 hours.
+        </p>
 
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
           <button

@@ -87,21 +87,16 @@ export default function LandingPage() {
         </h1>
         <p className="text-xl md:text-2xl text-zinc-400 mb-3">{t.tagline}</p>
         <p className="text-zinc-500 max-w-md mb-10 text-sm md:text-base">
-          {t.subtitle}
+          No email. No password. Get a temporary 6-character name and talk
+          privately.
         </p>
 
-        <div className="flex flex-col sm:flex-row gap-4 w-full max-w-xs">
+        <div className="w-full max-w-xs">
           <button
             onClick={() => router.push('/auth')}
             className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3.5 rounded-xl transition"
           >
             {t.getStarted}
-          </button>
-          <button
-            onClick={() => router.push('/auth')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-xl transition border border-zinc-700"
-          >
-            {t.login}
           </button>
         </div>
 
@@ -118,8 +113,10 @@ export default function LandingPage() {
           </div>
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6">
             <div className="text-3xl mb-3">🎭</div>
-            <h3 className="font-semibold mb-2">{t.dailyUsernames}</h3>
-            <p className="text-zinc-400 text-sm">{t.dailyUsernamesDesc}</p>
+            <h3 className="font-semibold mb-2">Temporary names</h3>
+            <p className="text-zinc-400 text-sm">
+              A random 6-character name. Fully temporary identity.
+            </p>
           </div>
         </div>
 

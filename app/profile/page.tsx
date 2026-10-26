@@ -67,14 +67,11 @@ export default function ProfilePage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
   const [username, setUsername] = useState('')
-  const [bio, setBio] = useState('')
   const [isOffline, setIsOffline] = useState(false)
   const [avatarIcon, setAvatarIcon] = useState('')
   const [message, setMessage] = useState('')
-  const [passwordMessage, setPasswordMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [sendingPassword, setSendingPassword] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const [iconTab, setIconTab] = useState(ICON_CATEGORIES[0].id)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -98,16 +95,19 @@ export default function ProfilePage() {
         .eq('id', user.id)
         .maybeSingle()
       if (!profile) {
-        router.push('/home')
+        router.push('/auth')
         return
       }
-      if (profile.status === 'suspended' || profile.status === 'banned') {
+      if (profile.status === 'suspended') {
+        router.push('/appeal')
+        return
+      }
+      if (profile.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
         return
       }
       setUsername(profile.username || '')
-      setBio(profile.bio || '')
       setIsOffline(!!profile.is_offline)
       setAvatarIcon(profile.avatar_icon || '')
       setLoading(false)
@@ -124,38 +124,24 @@ export default function ProfilePage() {
     if (!user) return
     setSaving(true)
     setMessage('')
-    const cleanBio = (bio || '').slice(0, 20)
     const { error } = await supabase
       .from('profiles')
       .update({
-        bio: cleanBio,
         is_offline: isOffline,
         avatar_icon: avatarIcon || null,
       })
       .eq('id', user.id)
     if (error) setMessage(error.message)
-    else setMessage('Profile saved')
+    else setMessage('Saved')
     setSaving(false)
   }
 
-  const sendPasswordChangeEmail = async () => {
-    if (!user?.email) return
-    setSendingPassword(true)
-    setPasswordMessage('')
-    const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-      redirectTo: `${window.location.origin}/auth`,
-    })
-    if (error) setPasswordMessage(error.message)
-    else setPasswordMessage('Check your email for the reset link.')
-    setSendingPassword(false)
-  }
-
-  const handleLogout = async () => {
+  const handleLeave = async () => {
     await supabase.auth.signOut()
-    router.push('/auth')
+    router.push('/')
   }
 
-  const deleteAccount = async () => {
+  const wipeIdentity = async () => {
     if (!user) return
     setDeleting(true)
     const {
@@ -175,11 +161,11 @@ export default function ProfilePage() {
     const data = await res.json().catch(() => ({}))
     setDeleting(false)
     if (!res.ok) {
-      alert(data.error || 'Could not delete account')
+      alert(data.error || 'Could not wipe identity')
       return
     }
     await supabase.auth.signOut()
-    router.push('/auth')
+    router.push('/')
   }
 
   const activeCategory =
@@ -231,10 +217,11 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <h1 className="text-2xl font-bold mb-1">{t.profile || 'My account'}</h1>
-        <p className="text-zinc-500 text-sm mb-6">
-          {username ? `@${username}` : 'No username'}
+        <h1 className="text-2xl font-bold mb-1">My account</h1>
+        <p className="text-zinc-500 text-sm mb-1 tracking-[0.15em] font-mono">
+          {username || '—'}
         </p>
+        <p className="text-xs text-zinc-600 mb-6">Temporary name · no email</p>
 
         <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-5 space-y-5 shadow-2xl">
           <div>
@@ -245,7 +232,9 @@ export default function ProfilePage() {
               <div className="w-14 h-14 rounded-2xl bg-black/50 border border-cyan-500/30 flex items-center justify-center text-3xl">
                 {avatarIcon || '🎭'}
               </div>
-              <p className="text-sm text-zinc-400">Pick a category, then an icon</p>
+              <p className="text-sm text-zinc-400">
+                Pick a category, then an icon
+              </p>
             </div>
             <div className="flex gap-1 overflow-x-auto pb-2 mb-2">
               {ICON_CATEGORIES.map((cat) => (
@@ -288,23 +277,11 @@ export default function ProfilePage() {
             </button>
           </div>
 
-          <div>
-            <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">
-              Bio (20 chars)
-            </p>
-            <input
-              value={bio}
-              onChange={(e) => setBio(e.target.value.slice(0, 20))}
-              maxLength={20}
-              className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
-              placeholder="Short bio"
-            />
-            <p className="text-[11px] text-zinc-500 mt-1">{bio.length}/20</p>
-          </div>
-
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">{t.goOffline || 'Go offline'}</p>
+              <p className="text-sm font-medium">
+                {t.goOffline || 'Go offline'}
+              </p>
               <p className="text-xs text-zinc-500">
                 {t.goOfflineHelp || 'Hidden from search when offline'}
               </p>
@@ -336,42 +313,18 @@ export default function ProfilePage() {
           )}
         </div>
 
-        <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
-          <h2 className="text-lg font-semibold mb-2">
-            {t.changePassword || 'Change password'}
-          </h2>
-          <p className="text-sm text-zinc-400 mb-4">
-            {t.changePasswordHelp || 'We will email you a reset link.'}
-          </p>
-          <button
-            onClick={sendPasswordChangeEmail}
-            disabled={sendingPassword}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-medium py-3 rounded-2xl border border-zinc-700 transition"
-          >
-            {sendingPassword
-              ? t.pleaseWait || 'Please wait...'
-              : t.sendPasswordEmail || 'Send reset email'}
-          </button>
-          {passwordMessage && (
-            <p className="mt-4 text-center text-sm text-cyan-400">
-              {passwordMessage}
-            </p>
-          )}
-        </div>
-
-        {/* Logout + Delete — always visible */}
         <div className="mt-6 space-y-3">
           <button
-            onClick={handleLogout}
+            onClick={handleLeave}
             className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl border border-zinc-700 transition"
           >
-            {t.logout || 'Logout'}
+            Leave
           </button>
           <button
             onClick={() => setShowDeleteModal(true)}
             className="w-full bg-red-600/90 hover:bg-red-500 text-white font-medium py-3.5 rounded-2xl transition"
           >
-            {t.deleteAccount || 'Delete account'}
+            Wipe identity
           </button>
         </div>
       </div>
@@ -379,26 +332,24 @@ export default function ProfilePage() {
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
-            <h3 className="text-lg font-semibold mb-2">
-              {t.deleteAccountTitle || 'Delete account?'}
-            </h3>
+            <h3 className="text-lg font-semibold mb-2">Wipe this identity?</h3>
             <p className="text-zinc-400 text-sm mb-5">
-              {t.deleteAccountDesc ||
-                'This permanently deletes your account. This cannot be undone.'}
+              Removes your temporary name and data for this session. This cannot
+              be undone.
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowDeleteModal(false)}
                 className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl transition"
               >
-                {t.cancel || 'Cancel'}
+                Cancel
               </button>
               <button
-                onClick={deleteAccount}
+                onClick={wipeIdentity}
                 disabled={deleting}
                 className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition"
               >
-                {deleting ? t.deleting || 'Deleting...' : t.delete || 'Delete'}
+                {deleting ? '…' : 'Wipe'}
               </button>
             </div>
           </div>
