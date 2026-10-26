@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
+import { getLang, setLang, type Lang } from '@/lib/i18n'
 
 const copy = {
   en: {
@@ -11,60 +11,67 @@ const copy = {
     updated: 'Last updated: October 2026',
     s1t: '1. Our commitment',
     s1p:
-      'Go Vanish is built for temporary, private conversation. We aim to keep only what is needed to run accounts, deliver messages for a short time, and keep the platform safe. We do not build advertising profiles about you.',
+      'Go Vanish is built for temporary, private conversation. We do not require email or a password. We aim to keep only what is needed to run temporary identities, deliver messages for a short time, and keep the platform safe. We do not build advertising profiles about you.',
     s2t: '2. Data we collect',
     s2p:
-      'We collect as little as practical. We do not ask for your real name, phone book, or location for chatting.',
-    s2a: 'Account',
-    s2a1: 'Email and password (so you can sign in and recover access)',
-    s2a2: 'A temporary username (and, if you choose, a short bio and anonymous icon)',
+      'We collect as little as practical. We do not ask for your real name, email, phone book, or location for chatting.',
+    s2a: 'Identity',
+    s2a1:
+      'A technical session identity (so the app can deliver your chats) — not an email login',
+    s2a2:
+      'A temporary 6-character username, and if you choose an anonymous icon and offline status',
     s2b: 'While you use Go Vanish',
-    s2b1: 'Messages and limited media inside a chat — only for the life of that chat (about 3 hours from the first message, or earlier if cleared or limited for safety)',
+    s2b1:
+      'Messages and limited media inside a chat — only for the life of that chat (about 3 hours from the first message, or earlier if cleared or limited for safety)',
     s2b2: 'One-time letters until they are read or expire',
     s2b3: 'Invite links you create, until used or expired',
     s2c: 'Safety',
-    s2c1: 'Reports, blocks, and limited safety logs when needed to handle abuse',
+    s2c1:
+      'Reports, blocks, and limited safety logs when needed to handle abuse',
     s2note:
-      'We do not require a public permanent identity. Daily usernames are temporary by design.',
+      'There is no public permanent identity. Names are temporary. Leaving or wiping identity clears that session’s name and related data as described in the app.',
     s3t: '3. How we use information',
-    s3l1: 'To create and secure your account',
+    s3l1: 'To create and run a temporary identity',
     s3l2: 'To deliver chats, letters, and invites',
     s3l3: 'To apply time limits and auto-delete ephemeral content',
-    s3l4: 'To process blocks, reports, and account safety actions',
+    s3l4: 'To process blocks, reports, and safety actions',
     s3l5: 'To operate and improve reliability of the service',
     s4t: '4. Data retention',
-    s4l1: 'Chat messages: removed after the chat lifetime (about 3 hours from the first message), or sooner if cleared',
+    s4l1:
+      'Chat messages: removed after the chat lifetime (about 3 hours from the first message), or sooner if cleared',
     s4l2: 'Letters: removed after read or expiry',
     s4l3: 'Invite links: removed after use or expiry',
-    s4l4: 'Account data: kept while your account exists; removed when you delete your account (except limited safety records we may need to keep briefly)',
-    s4l5: 'Reports / safety logs: kept only as long as needed for safety and abuse handling',
+    s4l4:
+      'Identity data: kept while your temporary session exists; removed when you Leave or Wipe identity (except limited safety records we may need briefly)',
+    s4l5:
+      'Reports / safety logs: kept only as long as needed for safety and abuse handling',
     s5t: '5. Sharing information',
     s5p:
-      'We do not sell your personal information. We do not sell your messages, email, or username for marketing.',
+      'We do not sell your personal information. We do not sell your messages or username for marketing.',
     s5no: 'No sale of data',
     s5nop:
-      'We do not sell, rent, or trade your personal data to data brokers or advertisers.',
+      'We do not sell, rent, or trade your data to data brokers or advertisers.',
     s5who: 'Who may process data for us',
     s5whop:
-      'To run Go Vanish we use trusted infrastructure providers (for example hosting, database, and authentication). They process data only to provide those services, not to sell it. We do not publish internal system diagrams or security configuration in this policy.',
+      'To run Go Vanish we use trusted infrastructure providers (for example hosting and database). They process data only to provide those services, not to sell it.',
     s5law: 'Legal and safety',
     s5lawp:
       'We may share limited information if required by law, or when needed to protect users from serious harm or clear abuse, based on reports and our safety process.',
     s6t: '6. We do not track you for ads or behavior profiles',
     s6p:
       'We do not track your usage patterns to build marketing profiles. We do not read your private messages for advertising. We do not sell behavioral data. Safety tools (such as reports) are for protection, not advertising.',
-    s7t: '7. Your choices and rights',
-    s7l1: 'Delete your account from the app',
+    s7t: '7. Your choices',
+    s7l1: 'Leave or Wipe identity (clears chats, letters, and temporary name)',
     s7l2: 'Clear a chat',
     s7l3: 'Block or report another user',
     s7l4: 'Go offline so others cannot find you in search',
-    s7l5: 'Request help about your data through the contact channel below',
+    s7l5: 'Request help through the contact channel below',
     s8t: '8. Children’s privacy',
     s8p:
       'Go Vanish is not for children under 16. If you believe a minor is using the service, please report it.',
     s9t: '9. Security',
     s9p:
-      'We use reasonable technical and organizational measures to protect accounts and data. No online service is perfectly secure. Use a strong password and protect your email.',
+      'We use reasonable technical measures to protect the service. No online service is perfectly secure. Clearing browser data creates a new identity. Do not share secrets you cannot afford to expose.',
     s10t: '10. Changes',
     s10p:
       'We may update this Privacy & Security page. Continued use after changes means you accept the updated policy.',
@@ -78,63 +85,60 @@ const copy = {
     updated: 'Imesasishwa: Oktoba 2026',
     s1t: '1. Ahadi yetu',
     s1p:
-      'Go Vanish imeundwa kwa mazungumzo ya muda mfupi na ya faragha. Tunahifadhi tu kinachohitajika kuendesha akaunti, kupeleka ujumbe kwa muda mfupi, na kulinda jukwaa. Hatuundi wasifu wa matangazo kukuhusu.',
+      'Go Vanish imeundwa kwa mazungumzo ya muda na faragha. Hatuhitaji barua pepe wala nenosiri. Tunahifadhi tu kinachohitajika kwa utambulisho wa muda, ujumbe wa muda mfupi, na usalama. Hatuundi wasifu wa matangazo.',
     s2t: '2. Data tunayokusanya',
     s2p:
-      'Tunakusanya kidogo iwezekanavyo. Hatuombi jina lako halisi, orodha ya simu, wala eneo lako ili kuzungumza.',
-    s2a: 'Akaunti',
-    s2a1: 'Barua pepe na nenosiri (kuingia na kurejesha ufikiaji)',
-    s2a2: 'Jina la muda (na bio fupi au aikoni ya siri ukichagua)',
+      'Tunakusanya kidogo iwezekanavyo. Hatuombi jina halisi, barua pepe, orodha ya simu, wala eneo.',
+    s2a: 'Utambulisho',
+    s2a1: 'Kikao cha kiufundi (si kuingia kwa barua pepe)',
+    s2a2: 'Jina la herufi 6 la muda, na aikoni au hali ya nje ya mtandao ukichagua',
     s2b: 'Unapotumia Go Vanish',
-    s2b1: 'Ujumbe na midia ndani ya gumzo — kwa maisha ya gumzo hilo tu (karibu saa 3 kutoka ujumbe wa kwanza, au mapema ikifutwa)',
-    s2b2: 'Barua za mara moja hadi zisomeswe au zimeisha muda',
+    s2b1: 'Ujumbe na midia kwa maisha ya gumzo tu',
+    s2b2: 'Barua za mara moja hadi zisomeswe au zimeisha',
     s2b3: 'Viungo vya mwaliko hadi vitumiwe au vimwishike',
     s2c: 'Usalama',
-    s2c1: 'Ripoti, vizuizi, na kumbukumbu chache za usalama inapohitajika',
+    s2c1: 'Ripoti, vizuizi, na kumbukumbu chache za usalama',
     s2note:
-      'Hatuhitaji utambulisho wa kudumu wa umma. Majina ya kila siku ni ya muda kwa makusudi.',
+      'Hakuna utambulisho wa kudumu wa umma. Kuondoka au kufuta utambulisho hufuta jina na data zinazohusiana.',
     s3t: '3. Jinsi tunavyotumia taarifa',
-    s3l1: 'Kuunda na kulinda akaunti yako',
+    s3l1: 'Kuendesha utambulisho wa muda',
     s3l2: 'Kupeleka gumzo, barua, na mialiko',
-    s3l3: 'Kutumia muda na kufuta maudhui ya muda',
-    s3l4: 'Kushughulikia vizuizi, ripoti, na usalama',
-    s3l5: 'Kuendesha na kuboresha huduma',
+    s3l3: 'Muda na kufuta maudhui ya muda',
+    s3l4: 'Vizuizi, ripoti, na usalama',
+    s3l5: 'Kuendesha huduma',
     s4t: '4. Uhifadhi wa data',
-    s4l1: 'Ujumbe: hufutwa baada ya maisha ya gumzo (karibu saa 3), au mapema',
-    s4l2: 'Barua: baada ya kusomwa au muda kuisha',
-    s4l3: 'Mialiko: baada ya kutumika au muda kuisha',
-    s4l4: 'Akaunti: wakati akaunti ipo; hufutwa unapofuta akaunti',
-    s4l5: 'Ripoti / usalama: muda unaohitajika tu',
+    s4l1: 'Ujumbe: baada ya maisha ya gumzo au mapema',
+    s4l2: 'Barua: baada ya kusomwa au muda',
+    s4l3: 'Mialiko: baada ya kutumika au muda',
+    s4l4: 'Utambulisho: wakati kikao kipo; hufutwa unapoondoka au kufuta',
+    s4l5: 'Ripoti: muda unaohitajika tu',
     s5t: '5. Kushiriki taarifa',
-    s5p:
-      'Hatuuzi taarifa zako binafsi. Hatuuzi ujumbe, barua pepe, wala jina lako kwa matangazo.',
+    s5p: 'Hatuuzi taarifa zako wala ujumbe kwa matangazo.',
     s5no: 'Hakuna uuzaji wa data',
-    s5nop:
-      'Hatuuzi, kukodisha, wala kubadilishana data yako na madalali wa data au watangazaji.',
-    s5who: 'Wanaoweza kuchakata data kwa niaba yetu',
+    s5nop: 'Hatuuzi data yako kwa madalali au watangazaji.',
+    s5who: 'Watoa huduma',
     s5whop:
-      'Tunatumia watoa huduma wa miundombinu wanaoaminika (kwa mfano uwekaji, hifadhidata, uthibitishaji). Wanachakata data ili kutoa huduma hizo tu, si kuiuza. Hatuachili maelezo ya ndani ya usalama katika sera hii.',
+      'Tunatumia miundombinu inayoaminika ili kuendesha huduma, si kuuza data.',
     s5law: 'Sheria na usalama',
-    s5lawp:
-      'Tunaweza kushiriki taarifa chache ikiwa inahitajika kisheria, au kulinda watumiaji dhidi ya madhara makubwa.',
+    s5lawp: 'Tunaweza kushiriki taarifa chache inapohitajika kisheria au usalama.',
     s6t: '6. Hatukufuatilii kwa matangazo',
     s6p:
-      'Hatufuatilii mifumo yako ya matumizi kujenga wasifu wa masoko. Hatusomi ujumbe wako wa faragha kwa matangazo. Hatuuzi data ya tabia. Zana za usalama ni kwa ulinzi, si matangazo.',
-    s7t: '7. Chaguo na haki zako',
-    s7l1: 'Futa akaunti yako',
+      'Hatufuatilii tabia kwa matangazo. Hatusomi ujumbe kwa masoko. Zana za usalama ni kwa ulinzi.',
+    s7t: '7. Chaguo zako',
+    s7l1: 'Ondoka au futa utambulisho',
     s7l2: 'Futa gumzo',
-    s7l3: 'Zuia au ripoti mtumiaji',
-    s7l4: 'Nenda nje ya mtandao ili usipatikane kwenye utafutaji',
-    s7l5: 'Omba msaada kuhusu data yako',
+    s7l3: 'Zuia au ripoti',
+    s7l4: 'Nenda nje ya mtandao',
+    s7l5: 'Omba msaada',
     s8t: '8. Faragha ya watoto',
     s8p: 'Go Vanish si kwa watoto chini ya miaka 16.',
     s9t: '9. Usalama',
     s9p:
-      'Tunatumia hatua zinazofaa za ulinzi. Hakuna huduma iliyo salama kikamilifu mtandaoni.',
+      'Tunatumia hatua zinazofaa. Hakuna huduma salama kikamilifu. Usishiriki siri hatari.',
     s10t: '10. Mabadiliko',
-    s10p: 'Tunaweza kusasisha ukurasa huu. Kuendelea kutumia kunamaanisha unakubali sera mpya.',
+    s10p: 'Tunaweza kusasisha ukurasa huu.',
     s11t: '11. Mawasiliano',
-    s11p: 'Maswali ya faragha: kupitia kituo cha msaada kwenye programu.',
+    s11p: 'Maswali: kituo cha msaada kwenye programu.',
   },
 }
 
@@ -185,16 +189,13 @@ export default function PrivacyPage() {
             </button>
           </div>
         </div>
-
         <h1 className="text-3xl font-bold mb-2">{c.title}</h1>
         <p className="text-zinc-400 text-sm mb-10">{c.updated}</p>
-
         <div className="space-y-8 text-zinc-300 leading-relaxed">
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s1t}</h2>
             <p>{c.s1p}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s2t}</h2>
             <p className="mb-3">{c.s2p}</p>
@@ -215,7 +216,6 @@ export default function PrivacyPage() {
             </ul>
             <p className="text-zinc-400 text-sm">{c.s2note}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s3t}</h2>
             <ul className="list-disc pl-6 space-y-2">
@@ -226,7 +226,6 @@ export default function PrivacyPage() {
               <li>{c.s3l5}</li>
             </ul>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s4t}</h2>
             <ul className="list-disc pl-6 space-y-2">
@@ -237,7 +236,6 @@ export default function PrivacyPage() {
               <li>{c.s4l5}</li>
             </ul>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s5t}</h2>
             <p className="mb-4">{c.s5p}</p>
@@ -248,12 +246,10 @@ export default function PrivacyPage() {
             <p className="text-white font-medium mb-1">{c.s5law}</p>
             <p>{c.s5lawp}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s6t}</h2>
             <p>{c.s6p}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s7t}</h2>
             <ul className="list-disc pl-6 space-y-2">
@@ -264,22 +260,18 @@ export default function PrivacyPage() {
               <li>{c.s7l5}</li>
             </ul>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s8t}</h2>
             <p>{c.s8p}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s9t}</h2>
             <p>{c.s9p}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s10t}</h2>
             <p>{c.s10p}</p>
           </section>
-
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s11t}</h2>
             <p>{c.s11p}</p>
@@ -289,6 +281,3 @@ export default function PrivacyPage() {
     </div>
   )
 }
-
-
-

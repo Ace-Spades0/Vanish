@@ -11,16 +11,16 @@ const copy = {
     updated: 'Last updated: October 2026',
     s1t: '1. Acceptance of Terms',
     s1p:
-      'By creating an account or using Go Vanish, you agree to these Terms of Service. If you do not agree, do not use the platform.',
+      'By using Go Vanish (including Get Started), you agree to these Terms of Service. If you do not agree, do not use the platform.',
     s2t: '2. Eligibility',
     s2p:
       'You must be at least 16 years old to use Go Vanish. By using the service, you confirm that you meet this age requirement.',
     s3t: '3. Nature of the Service',
     s3p:
-      'Go Vanish is a temporary and private messaging platform. Usernames are temporary by default. Messages are designed to disappear after a limited time. One-time letters and invite links are also temporary. The service is not a permanent archive of conversations.',
-    s4t: '4. Accounts',
+      'Go Vanish is a temporary and private messaging platform. Access does not require email or a password. You receive a temporary 6-character username. Messages are designed to disappear after a limited time. One-time letters and invite links are also temporary. The service is not a permanent archive of conversations.',
+    s4t: '4. Temporary identity',
     s4p:
-      'You are responsible for your login credentials and for activity under your account. You may delete your account. We may suspend or terminate accounts that break these Terms or harm other users.',
+      'Your identity on Go Vanish is temporary. You are responsible for what you send under your temporary name. You may Leave or Wipe identity, which clears related chats, letters, and that name as described in the app. Clearing browser data may also end your session. We may suspend or block identities that break these Terms or harm other users.',
     s5t: '5. Acceptable use',
     s5p: 'You agree not to use Go Vanish to:',
     s5l1: 'Harass, threaten, or harm others',
@@ -30,13 +30,13 @@ const copy = {
     s5l5: 'Bypass blocks, bans, or safety limits',
     s6t: '6. Safety tools',
     s6p:
-      'Users may block and report others. We may act on reports, including warnings, limits, suspension, or ban. Anti-interrogation and time limits exist to reduce pressure and abuse; details may appear in-product and in related policies.',
+      'Users may block and report others. We may act on reports, including warnings, limits, suspension, or ban of an identity. Anti-interrogation and time limits exist to reduce pressure and abuse.',
     s7t: '7. Content',
     s7p:
-      'You are responsible for what you send. Ephemeral design does not make illegal or abusive content allowed. We may remove access or accounts when needed for safety or law.',
+      'You are responsible for what you send. Ephemeral design does not make illegal or abusive content allowed. We may remove access when needed for safety or law.',
     s8t: '8. Disclaimer',
     s8p:
-      'Go Vanish is provided “as is”. We do not guarantee uninterrupted service, perfect delivery, or that every message will disappear in every edge case. Use the platform at your own risk.',
+      'Go Vanish is provided “as is”. We do not guarantee uninterrupted service, perfect delivery, or that every message will disappear in every edge case. No online service can guarantee perfect security. Do not share secrets you cannot afford to expose. Use the platform at your own risk.',
     s9t: '9. Limitation of liability',
     s9p1:
       'To the maximum extent permitted by law, Go Vanish and its operators are ',
@@ -61,15 +61,15 @@ const copy = {
     updated: 'Imesasishwa: Oktoba 2026',
     s1t: '1. Kukubali masharti',
     s1p:
-      'Kwa kuunda akaunti au kutumia Go Vanish, unakubali Masharti haya. Usikubali — usitumie jukwaa.',
+      'Kwa kutumia Go Vanish (pamoja na Get Started), unakubali Masharti haya. Usikubali — usitumie jukwaa.',
     s2t: '2. Ustahiki',
     s2p: 'Lazima uwe na angalau miaka 16 kutumia Go Vanish.',
     s3t: '3. Asili ya huduma',
     s3p:
-      'Go Vanish ni jukwaa la ujumbe wa muda na faragha. Majina ni ya muda. Ujumbe hupotea baada ya muda. Si kumbukumbu ya kudumu.',
-    s4t: '4. Akaunti',
+      'Go Vanish ni jukwaa la ujumbe wa muda na faragha. Haitaji barua pepe wala nenosiri. Unapata jina la herufi 6 la muda. Ujumbe hupotea baada ya muda. Si kumbukumbu ya kudumu.',
+    s4t: '4. Utambulisho wa muda',
     s4p:
-      'Unawajibika kwa nenosiri lako na shughuli za akaunti yako. Unaweza kufuta akaunti. Tunaweza kusimamisha akaunti zinazokiuka masharti.',
+      'Utambulisho wako ni wa muda. Unawajibika kwa unachotuma. Unaweza Kuondoka au Kufuta utambulisho. Tunaweza kusimamisha utambulisho unaokiuka masharti.',
     s5t: '5. Matumizi yanayokubalika',
     s5p: 'Unakubali kutotumia Go Vanish kwa:',
     s5l1: 'Unyanyasaji au vitisho',
@@ -79,13 +79,13 @@ const copy = {
     s5l5: 'Kupeleka vizuizi au marufuku',
     s6t: '6. Zana za usalama',
     s6p:
-      'Watumiaji wanaweza kuzuia na kuripoti. Tunaweza kuchukua hatua ikiwa ni pamoja na kusimamisha akaunti.',
+      'Watumiaji wanaweza kuzuia na kuripoti. Tunaweza kuchukua hatua ikiwa ni pamoja na kusimamisha utambulisho.',
     s7t: '7. Maudhui',
     s7p:
       'Unawajibika kwa unachotuma. Ujumbe wa muda hauruhusu maudhui haramu.',
     s8t: '8. Kanusho',
     s8p:
-      'Go Vanish inatolewa “kama ilivyo”. Hatuahidi huduma isiyokatizwa kila wakati.',
+      'Go Vanish inatolewa “kama ilivyo”. Hatuahidi huduma isiyokatizwa. Usishiriki siri hatari.',
     s9t: '9. Kikomo cha dhima',
     s9p1: 'Kwa kiwango kinachoruhusiwa na sheria, Go Vanish ',
     s9bold1: 'haiwajibiki',
@@ -148,10 +148,8 @@ export default function TermsPage() {
             </button>
           </div>
         </div>
-
         <h1 className="text-3xl font-bold mb-2">{c.title}</h1>
         <p className="text-zinc-400 text-sm mb-10">{c.updated}</p>
-
         <div className="space-y-8 text-zinc-300 leading-relaxed">
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">{c.s1t}</h2>

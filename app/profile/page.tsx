@@ -74,8 +74,8 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false)
   const [lang, setLangState] = useState<Lang>('en')
   const [iconTab, setIconTab] = useState(ICON_CATEGORIES[0].id)
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [modal, setModal] = useState<'leave' | 'wipe' | null>(null)
+  const [working, setWorking] = useState(false)
   const t = translations[lang]
 
   useEffect(() => {
@@ -85,7 +85,7 @@ export default function ProfilePage() {
         data: { user },
       } = await supabase.auth.getUser()
       if (!user) {
-        router.push('/auth')
+        router.push('/')
         return
       }
       setUser(user)
@@ -104,7 +104,7 @@ export default function ProfilePage() {
       }
       if (profile.status === 'banned') {
         await supabase.auth.signOut()
-        router.push('/auth')
+        router.push('/')
         return
       }
       setUsername(profile.username || '')
@@ -136,36 +136,32 @@ export default function ProfilePage() {
     setSaving(false)
   }
 
-  const handleLeave = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
-  }
-
-  const wipeIdentity = async () => {
+  /** Full cleanup: chats/letters/identity via API, then landing */
+  const runFullExit = async () => {
     if (!user) return
-    setDeleting(true)
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) {
-      setDeleting(false)
-      return
+    setWorking(true)
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        await fetch('/api/delete-account', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        })
+      }
+      await supabase.auth.signOut()
+      setModal(null)
+      router.replace('/')
+    } catch {
+      await supabase.auth.signOut()
+      router.replace('/')
+    } finally {
+      setWorking(false)
     }
-    const res = await fetch('/api/delete-account', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    })
-    const data = await res.json().catch(() => ({}))
-    setDeleting(false)
-    if (!res.ok) {
-      alert(data.error || 'Could not wipe identity')
-      return
-    }
-    await supabase.auth.signOut()
-    router.push('/')
   }
 
   const activeCategory =
@@ -315,13 +311,13 @@ export default function ProfilePage() {
 
         <div className="mt-6 space-y-3">
           <button
-            onClick={handleLeave}
+            onClick={() => setModal('leave')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3.5 rounded-2xl border border-zinc-700 transition"
           >
             Leave
           </button>
           <button
-            onClick={() => setShowDeleteModal(true)}
+            onClick={() => setModal('wipe')}
             className="w-full bg-red-600/90 hover:bg-red-500 text-white font-medium py-3.5 rounded-2xl transition"
           >
             Wipe identity
@@ -329,27 +325,35 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      {modal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-zinc-900 border border-zinc-700 rounded-3xl p-5 w-full max-w-sm shadow-2xl">
-            <h3 className="text-lg font-semibold mb-2">Wipe this identity?</h3>
-            <p className="text-zinc-400 text-sm mb-5">
-              Removes your temporary name and data for this session. This cannot
-              be undone.
+            <h3 className="text-lg font-semibold mb-2">
+              {modal === 'leave' ? 'Leave Go Vanish?' : 'Wipe this identity?'}
+            </h3>
+            <p className="text-zinc-400 text-sm mb-3">
+              This will permanently clear your chat history, one-time letters,
+              and temporary name for this identity. You will return to the
+              landing page. To use the app again you must Get Started and
+              receive a new name.
+            </p>
+            <p className="text-amber-400/90 text-xs mb-5 font-medium">
+              This cannot be undone.
             </p>
             <div className="flex gap-2">
               <button
-                onClick={() => setShowDeleteModal(false)}
+                onClick={() => setModal(null)}
+                disabled={working}
                 className="flex-1 bg-zinc-700 hover:bg-zinc-600 py-2.5 rounded-xl transition"
               >
                 Cancel
               </button>
               <button
-                onClick={wipeIdentity}
-                disabled={deleting}
-                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition"
+                onClick={runFullExit}
+                disabled={working}
+                className="flex-1 bg-red-600 hover:bg-red-500 py-2.5 rounded-xl transition font-medium"
               >
-                {deleting ? '…' : 'Wipe'}
+                {working ? '…' : modal === 'leave' ? 'Leave & clear' : 'Wipe'}
               </button>
             </div>
           </div>
