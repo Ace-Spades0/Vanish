@@ -4,22 +4,20 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-const ADMIN_IDS = ['a78d8a8e-de03-4159-a3c2-b5788e7cf5b7']
+const STORAGE_KEY = 'govanish_admin_ok'
 
 export default function ReportsDashboard() {
   const router = useRouter()
+  const [user, setUser] = useState<any>(null)
+  const [unlocked, setUnlocked] = useState(false)
+  const [secretInput, setSecretInput] = useState('')
+  const [gateMessage, setGateMessage] = useState('')
   const [reports, setReports] = useState<any[]>([])
   const [logs, setLogs] = useState<any[]>([])
-  const [appeals, setAppeals] = useState<any[]>([])
-  const [appealNames, setAppealNames] = useState<Record<string, string>>({})
   const [names, setNames] = useState<Record<string, string>>({})
-  const [tab, setTab] = useState<'reports' | 'logs' | 'appeals'>('reports')
+  const [tab, setTab] = useState<'reports' | 'logs'>('reports')
   const [loading, setLoading] = useState(true)
   const [actionMessage, setActionMessage] = useState('')
-  const [reviewingId, setReviewingId] = useState<string | null>(null)
-  const [openSnapshotId, setOpenSnapshotId] = useState<string | null>(null)
-  const [appealBusy, setAppealBusy] = useState<string | null>(null)
-  const [suspendBusy, setSuspendBusy] = useState(false)
 
   const loadNames = async (ids: string[]) => {
     const unique = Array.from(new Set(ids.filter(Boolean)))
@@ -42,56 +40,29 @@ export default function ReportsDashboard() {
     return `${username} (${id.slice(0, 8)}…)`
   }
 
-  const riskColor = (risk?: string) => {
-    if (risk === 'high') return 'text-red-400'
-    if (risk === 'medium') return 'text-yellow-400'
-    if (risk === 'low') return 'text-emerald-400'
-    return 'text-zinc-400'
-  }
-
-  const loadReports = async () => {
-    const { data } = await supabase
+  const loadData = async () => {
+    const { data: reportRows } = await supabase
       .from('reports')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50)
-    const list = data || []
-    setReports(list)
+
+    setReports(reportRows || [])
+
     const ids: string[] = []
-    list.forEach((r) => {
+    ;(reportRows || []).forEach((r: any) => {
       if (r.reporter_id) ids.push(r.reporter_id)
       if (r.reported_id) ids.push(r.reported_id)
     })
     await loadNames(ids)
-  }
 
-  const loadLogs = async () => {
-    const { data, error } = await supabase
+    const { data: logRows } = await supabase
       .from('safety_logs')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50)
-    if (error) {
-      setLogs([])
-      return
-    }
-    setLogs(data || [])
-  }
 
-  const loadAppeals = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    const res = await fetch('/api/admin/appeals', {
-      headers: { Authorization: `Bearer ${session?.access_token || ''}` },
-    })
-    const data = await res.json()
-    if (data.error) {
-      setActionMessage(data.error)
-      return
-    }
-    setAppeals(data.appeals || [])
-    setAppealNames(data.names || {})
+    setLogs(logRows || [])
   }
 
   useEffect(() => {
@@ -99,124 +70,107 @@ export default function ReportsDashboard() {
       const {
         data: { user },
       } = await supabase.auth.getUser()
+
       if (!user) {
-        router.push('/auth')
+        setLoading(false)
+        setGateMessage('Open Get Started first, then come back to this page.')
         return
       }
-      if (!ADMIN_IDS.includes(user.id)) {
-        router.push('/home')
+
+      setUser(user)
+
+      const envIds = (process.env.NEXT_PUBLIC_ADMIN_IDS || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+      if (envIds.includes(user.id)) {
+        setUnlocked(true)
+        await loadData()
+        setLoading(false)
         return
       }
-      await loadReports()
-      await loadLogs()
-      await loadAppeals()
+
+      if (
+        typeof window !== 'undefined' &&
+        sessionStorage.getItem(STORAGE_KEY) === '1'
+      ) {
+        setUnlocked(true)
+        await loadData()
+        setLoading(false)
+        return
+      }
+
       setLoading(false)
     }
     init()
   }, [])
 
-  const runAiReview = async (reportId: string) => {
-    setReviewingId(reportId)
-    setActionMessage('')
+  const unlock = async () => {
+    setGateMessage('')
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    const res = await fetch('/api/admin/ai-review', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session?.access_token || ''}`,
-      },
-      body: JSON.stringify({ report_id: reportId }),
-    })
-    const data = await res.json()
-    if (data.error) setActionMessage(data.error)
-    else {
-      setActionMessage(`AI: ${data.risk} (${data.engine})`)
-      await loadReports()
-    }
-    setReviewingId(null)
-  }
-
-  /** ONLY via service-role API — never client profiles.update */
-  const setSuspension = async (
-    profileId: string,
-    mode: 'timed' | 'permanent' | 'clear',
-    hours?: number
-  ) => {
-    if (!profileId) {
-      setActionMessage('No user id on this report')
+    if (!session) {
+      setGateMessage('Get Started first, then unlock Admin.')
       return
     }
-    setSuspendBusy(true)
-    setActionMessage('Working…')
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (!session?.access_token) {
-        setActionMessage('Not logged in')
-        setSuspendBusy(false)
-        return
-      }
-      const res = await fetch('/api/admin/suspend', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          profile_id: profileId,
-          mode,
-          hours: hours || 24,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.error) {
-        setActionMessage(data.error || `Suspend failed (${res.status})`)
-      } else {
-        setActionMessage(
-          mode === 'clear'
-            ? 'User unsuspended'
-            : mode === 'permanent'
-              ? 'User banned'
-              : `Suspended ${hours || 24}h — check profiles in Supabase`
-        )
-      }
-    } catch (e: any) {
-      setActionMessage(e?.message || 'Network error calling /api/admin/suspend')
+
+    const res = await fetch('/api/admin/verify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ secret: secretInput }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setGateMessage(data.error || 'Invalid secret')
+      return
     }
-    setSuspendBusy(false)
+
+    sessionStorage.setItem(STORAGE_KEY, '1')
+    setUnlocked(true)
+    setLoading(true)
+    await loadData()
+    setLoading(false)
   }
 
-  const decideAppeal = async (
-    appealId: string,
-    action: 'approve' | 'reject'
+  const suspendUser = async (
+    reportedId: string,
+    hours: number | null,
+    permanent: boolean
   ) => {
-    setAppealBusy(appealId)
     setActionMessage('')
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    const res = await fetch('/api/admin/appeals', {
+    if (!session) {
+      setActionMessage('Session expired')
+      return
+    }
+
+    const res = await fetch('/api/admin/suspend', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session?.access_token || ''}`,
+        Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ appeal_id: appealId, action }),
+      body: JSON.stringify({
+        user_id: reportedId,
+        hours,
+        permanent,
+        admin_secret: secretInput || undefined,
+      }),
     })
-    const data = await res.json()
-    if (data.error) setActionMessage(data.error)
-    else {
-      setActionMessage(
-        action === 'approve'
-          ? 'Appeal approved — user unsuspended'
-          : 'Appeal rejected'
-      )
-      await loadAppeals()
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setActionMessage(data.error || 'Suspend failed')
+      return
     }
-    setAppealBusy(null)
+    setActionMessage(permanent ? 'Banned' : `Suspended ${hours}h`)
+    await loadData()
   }
 
   if (loading) {
@@ -227,11 +181,70 @@ export default function ReportsDashboard() {
     )
   }
 
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+          <h1 className="text-xl font-semibold mb-2">Admin</h1>
+          <p className="text-sm text-zinc-400 mb-4">{gateMessage}</p>
+          <button
+            onClick={() => router.push('/auth')}
+            className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
+          >
+            Get Started
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="w-full mt-3 text-sm text-zinc-500"
+          >
+            Landing
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h1 className="text-xl font-semibold mb-2">Admin unlock</h1>
+          <p className="text-sm text-zinc-400 mb-4">
+            Enter the Admin secret (from Vercel env ADMIN_SECRET). This page
+            does not create a username.
+          </p>
+          <input
+            type="password"
+            value={secretInput}
+            onChange={(e) => setSecretInput(e.target.value)}
+            placeholder="Admin secret"
+            className="w-full p-3 mb-3 rounded-xl bg-zinc-800 border border-zinc-700"
+          />
+          <button
+            onClick={unlock}
+            className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
+          >
+            Unlock
+          </button>
+          {gateMessage && (
+            <p className="mt-3 text-sm text-red-400 text-center">{gateMessage}</p>
+          )}
+          <button
+            onClick={() => router.push('/home')}
+            className="w-full mt-4 text-sm text-zinc-500"
+          >
+            ← Home
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-black text-white px-4 py-8">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Admin</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold">Admin · Reports</h1>
           <button
             onClick={() => router.push('/home')}
             className="text-sm text-cyan-400"
@@ -240,75 +253,27 @@ export default function ReportsDashboard() {
           </button>
         </div>
 
-        <div className="flex flex-wrap gap-2 mb-6">
-          {(['reports', 'appeals', 'logs'] as const).map((k) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              className={`px-4 py-2 rounded-xl text-sm font-medium capitalize ${
-                tab === k ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
-              }`}
-            >
-              {k}
-            </button>
-          ))}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setTab('reports')}
+            className={`px-4 py-2 rounded-xl text-sm ${
+              tab === 'reports' ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
+            }`}
+          >
+            Reports
+          </button>
+          <button
+            onClick={() => setTab('logs')}
+            className={`px-4 py-2 rounded-xl text-sm ${
+              tab === 'logs' ? 'bg-cyan-500 text-black' : 'bg-zinc-800'
+            }`}
+          >
+            Safety logs
+          </button>
         </div>
 
         {actionMessage && (
-          <p className="mb-4 text-sm text-cyan-400 break-words">
-            {actionMessage}
-          </p>
-        )}
-
-        {tab === 'appeals' && (
-          <>
-            {appeals.length === 0 ? (
-              <p className="text-zinc-500 text-center mt-16">No appeals yet.</p>
-            ) : (
-              <div className="space-y-4">
-                {appeals.map((a) => (
-                  <div
-                    key={a.id}
-                    className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"
-                  >
-                    <p className="text-xs text-zinc-500 mb-1">
-                      {a.created_at
-                        ? new Date(a.created_at).toLocaleString()
-                        : '—'}{' '}
-                      · <span className="text-cyan-400">{a.status}</span>
-                    </p>
-                    <p className="text-sm mb-2">
-                      User:{' '}
-                      <span className="text-yellow-400">
-                        {appealNames[a.user_id] || a.user_id}
-                      </span>
-                    </p>
-                    <p className="text-sm text-zinc-200 whitespace-pre-wrap mb-3">
-                      {a.message}
-                    </p>
-                    {a.status === 'pending' && (
-                      <div className="flex gap-2">
-                        <button
-                          disabled={appealBusy === a.id}
-                          onClick={() => decideAppeal(a.id, 'approve')}
-                          className="text-xs font-semibold bg-emerald-600 px-3 py-1.5 rounded-lg disabled:opacity-50"
-                        >
-                          Approve (unsuspend)
-                        </button>
-                        <button
-                          disabled={appealBusy === a.id}
-                          onClick={() => decideAppeal(a.id, 'reject')}
-                          className="text-xs font-semibold bg-red-700 px-3 py-1.5 rounded-lg disabled:opacity-50"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+          <p className="mb-4 text-sm text-cyan-400">{actionMessage}</p>
         )}
 
         {tab === 'reports' && (
@@ -323,104 +288,37 @@ export default function ReportsDashboard() {
                     className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"
                   >
                     <p className="text-sm text-zinc-400 mb-1">
+                      Reporter: {displayUser(r.reporter_id)}
+                    </p>
+                    <p className="text-sm text-zinc-400 mb-1">
+                      Reported: {displayUser(r.reported_id)}
+                    </p>
+                    <p className="text-sm text-zinc-300 mb-1">
+                      Type: {r.reason || r.report_type || '—'}
+                    </p>
+                    <p className="text-xs text-zinc-500 mb-3">
                       {r.created_at
                         ? new Date(r.created_at).toLocaleString()
                         : '—'}
                     </p>
-                    <p className="text-sm mb-1">
-                      <span className="text-zinc-500">Reporter: </span>
-                      <span className="text-cyan-400">
-                        {displayUser(r.reporter_id)}
-                      </span>
-                    </p>
-                    <p className="text-sm mb-2">
-                      <span className="text-zinc-500">Reported: </span>
-                      <span className="text-yellow-400">
-                        {displayUser(r.reported_id)}
-                      </span>
-                    </p>
-                    <p className="text-sm text-zinc-200 mb-2 whitespace-pre-wrap">
-                      {r.reason}
-                    </p>
-                    <div className="mb-3 p-3 rounded-xl bg-black/40 border border-zinc-800">
-                      <p
-                        className={`text-sm font-medium ${riskColor(r.ai_risk)}`}
-                      >
-                        AI:{' '}
-                        {r.ai_status === 'done'
-                          ? r.ai_risk || '—'
-                          : r.ai_status || 'pending'}
-                      </p>
-                      {r.ai_summary && (
-                        <p className="text-xs text-zinc-400 mt-1 whitespace-pre-wrap">
-                          {r.ai_summary}
-                        </p>
-                      )}
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        <button
-                          type="button"
-                          disabled={reviewingId === r.id}
-                          onClick={() => runAiReview(r.id)}
-                          className="text-xs font-semibold bg-cyan-600 px-3 py-1.5 rounded-lg disabled:opacity-50"
-                        >
-                          {reviewingId === r.id ? '…' : 'Re-run AI'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenSnapshotId((id) =>
-                              id === r.id ? null : r.id
-                            )
-                          }
-                          className="text-xs font-semibold bg-zinc-700 px-3 py-1.5 rounded-lg"
-                        >
-                          Snapshot
-                        </button>
-                      </div>
-                      {openSnapshotId === r.id && (
-                        <pre className="mt-2 text-[10px] text-zinc-400 overflow-x-auto max-h-40">
-                          {JSON.stringify(r.message_snapshot || [], null, 2)}
-                        </pre>
-                      )}
-                    </div>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        type="button"
-                        disabled={suspendBusy}
-                        onClick={() =>
-                          setSuspension(r.reported_id, 'timed', 24)
-                        }
-                        className="text-xs bg-yellow-700 px-2 py-1 rounded-lg disabled:opacity-50"
+                        onClick={() => suspendUser(r.reported_id, 24, false)}
+                        className="text-xs bg-amber-600 px-3 py-1.5 rounded-lg"
                       >
                         Suspend 24h
                       </button>
                       <button
-                        type="button"
-                        disabled={suspendBusy}
-                        onClick={() =>
-                          setSuspension(r.reported_id, 'timed', 168)
-                        }
-                        className="text-xs bg-orange-700 px-2 py-1 rounded-lg disabled:opacity-50"
+                        onClick={() => suspendUser(r.reported_id, 168, false)}
+                        className="text-xs bg-orange-600 px-3 py-1.5 rounded-lg"
                       >
                         Suspend 7d
                       </button>
                       <button
-                        type="button"
-                        disabled={suspendBusy}
-                        onClick={() =>
-                          setSuspension(r.reported_id, 'permanent')
-                        }
-                        className="text-xs bg-red-700 px-2 py-1 rounded-lg disabled:opacity-50"
+                        onClick={() => suspendUser(r.reported_id, null, true)}
+                        className="text-xs bg-red-600 px-3 py-1.5 rounded-lg"
                       >
                         Ban
-                      </button>
-                      <button
-                        type="button"
-                        disabled={suspendBusy}
-                        onClick={() => setSuspension(r.reported_id, 'clear')}
-                        className="text-xs bg-emerald-700 px-2 py-1 rounded-lg disabled:opacity-50"
-                      >
-                        Unsuspend
                       </button>
                     </div>
                   </div>
@@ -433,7 +331,9 @@ export default function ReportsDashboard() {
         {tab === 'logs' && (
           <>
             {logs.length === 0 ? (
-              <p className="text-zinc-500 text-center mt-16">No safety logs.</p>
+              <p className="text-zinc-500 text-center mt-16">
+                No safety logs found.
+              </p>
             ) : (
               <div className="space-y-4">
                 {logs.map((log) => (
@@ -444,7 +344,16 @@ export default function ReportsDashboard() {
                     <p className="text-cyan-400 font-medium mb-2">
                       {log.payload?.action || 'safety_event'}
                     </p>
-                    <pre className="text-xs text-zinc-300 bg-black/40 p-3 rounded-xl overflow-x-auto">
+                    <p className="text-sm text-zinc-400 mb-1">
+                      Conversation: {log.conversation_id || '—'}
+                    </p>
+                    <p className="text-sm text-zinc-400 mb-1">
+                      Time:{' '}
+                      {log.created_at
+                        ? new Date(log.created_at).toLocaleString()
+                        : '—'}
+                    </p>
+                    <pre className="mt-3 text-xs text-zinc-300 bg-black/40 p-3 rounded-xl overflow-x-auto">
                       {JSON.stringify(log.payload || {}, null, 2)}
                     </pre>
                   </div>
