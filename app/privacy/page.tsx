@@ -51,9 +51,6 @@ const copy = {
     s5no: 'No sale of data',
     s5nop:
       'We do not sell, rent, or trade your data to data brokers or advertisers.',
-    s5who: 'Who may process data for us',
-    s5whop:
-      'To run Go Vanish we use trusted infrastructure providers (for example hosting and database). They process data only to provide those services, not to sell it.',
     s5law: 'Legal and safety',
     s5lawp:
       'We may share limited information if required by law, or when needed to protect users from serious harm or clear abuse, based on reports and our safety process.',
@@ -116,9 +113,6 @@ const copy = {
     s5p: 'Hatuuzi taarifa zako wala ujumbe kwa matangazo.',
     s5no: 'Hakuna uuzaji wa data',
     s5nop: 'Hatuuzi data yako kwa madalali au watangazaji.',
-    s5who: 'Watoa huduma',
-    s5whop:
-      'Tunatumia miundombinu inayoaminika ili kuendesha huduma, si kuuza data.',
     s5law: 'Sheria na usalama',
     s5lawp: 'Tunaweza kushiriki taarifa chache inapohitajika kisheria au usalama.',
     s6t: '6. Hatukufuatilii kwa matangazo',
@@ -241,8 +235,6 @@ export default function PrivacyPage() {
             <p className="mb-4">{c.s5p}</p>
             <p className="text-white font-semibold mb-1">{c.s5no}</p>
             <p className="mb-4">{c.s5nop}</p>
-            <p className="text-white font-medium mb-1">{c.s5who}</p>
-            <p className="mb-4">{c.s5whop}</p>
             <p className="text-white font-medium mb-1">{c.s5law}</p>
             <p>{c.s5lawp}</p>
           </section>
