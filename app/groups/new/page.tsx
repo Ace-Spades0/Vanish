@@ -14,6 +14,7 @@ const OPTIONS = [
 export default function NewGroupPage() {
   const router = useRouter()
   const [duration, setDuration] = useState(180)
+  const [maxMembers, setMaxMembers] = useState(10)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
@@ -71,7 +72,10 @@ export default function NewGroupPage() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ duration_minutes: duration }),
+      body: JSON.stringify({
+        duration_minutes: duration,
+        max_members: maxMembers,
+      }),
     })
 
     const data = await res.json().catch(() => ({}))
@@ -103,13 +107,13 @@ export default function NewGroupPage() {
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6">
         <h1 className="text-2xl font-semibold mb-2">New vanishing group</h1>
         <p className="text-sm text-zinc-400 mb-6">
-          You are admin. If you leave or wipe identity, the group dies. Set when
-          it vanishes.
+          You are admin. If you leave or wipe identity, the group dies.
         </p>
+
         <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
           Group dies after
         </p>
-        <div className="flex flex-wrap gap-2 mb-6">
+        <div className="flex flex-wrap gap-2 mb-5">
           {OPTIONS.map((o) => (
             <button
               key={o.minutes}
@@ -125,6 +129,19 @@ export default function NewGroupPage() {
             </button>
           ))}
         </div>
+
+        <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+          Max members (2–100)
+        </p>
+        <input
+          type="number"
+          min={2}
+          max={100}
+          value={maxMembers}
+          onChange={(e) => setMaxMembers(Number(e.target.value) || 2)}
+          className="w-full p-3 mb-6 rounded-xl bg-zinc-800 border border-zinc-700"
+        />
+
         <button
           onClick={create}
           disabled={creating}
