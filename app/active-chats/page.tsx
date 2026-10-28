@@ -11,235 +11,113 @@ type ActiveChat = {
   lastAt: string
 }
 
-function pickOtherId(row: any, userId: string): string | null {
-  if (!row) return null
-  const candidates = [
-    row.user_a,
-    row.user_b,
-    row.user1,
-    row.user2,
-    row.participant_a,
-    row.participant_b,
-    row.member_a,
-    row.member_b,
-    row.owner_id,
-    row.created_by,
-    row.user_id,
-    row.other_user_id,
-  ].filter(Boolean)
-
-  if (Array.isArray(row.participant_ids)) {
-    const found = row.participant_ids.find((id: string) => id && id !== userId)
-    if (found) return found
-  }
-  if (Array.isArray(row.members)) {
-    const found = row.members.find((id: string) => id && id !== userId)
-    if (found) return found
-  }
-
-  for (const id of candidates) {
-    if (id && id !== userId) return id
-  }
-  return null
-}
-
-function isStillActive(row: any, lastAt?: string) {
-  const now = Date.now()
-  if (row?.died_at) return false
-  if (row?.sealed === true && row?.cleared_at) return false
-  if (row?.expires_at && new Date(row.expires_at).getTime() <= now) return false
-  if (row?.ends_at && new Date(row.ends_at).getTime() <= now) return false
-  // If no expiry on conversation, keep if last activity within 3 hours
-  if (!row?.expires_at && !row?.ends_at && lastAt) {
-    const age = now - new Date(lastAt).getTime()
-    if (age > 3 * 60 * 60 * 1000) return false
-  }
-  return true
-}
-
 export default function ActiveChatsPage() {
   const router = useRouter()
+  const [userId, setUserId] = useState<string | null>(null)
   const [chats, setChats] = useState<ActiveChat[]>([])
   const [loading, setLoading] = useState(true)
   const [ending, setEnding] = useState<string | null>(null)
-  const [debug, setDebug] = useState('')
+  const [message, setMessage] = useState('')
 
-  const loadChats = async (userId: string) => {
-    const byConv: Record<
-      string,
-      { lastAt: string; otherId: string | null }
-    > = {}
+  const loadChats = async (uid: string) => {
+    setMessage('')
 
-    // 1) Messages I sent
-    const { data: sent, error: sentErr } = await supabase
-      .from('messages')
-      .select('conversation_id, sender_id, created_at, expires_at, deleted')
-      .eq('sender_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(300)
-
-    if (sentErr) {
-      setDebug(sentErr.message)
-    }
-
-    for (const m of sent || []) {
-      if (!m.conversation_id) continue
-      if (m.deleted) continue
-      if (m.expires_at && new Date(m.expires_at).getTime() <= Date.now()) continue
-      if (!byConv[m.conversation_id]) {
-        byConv[m.conversation_id] = {
-          lastAt: m.created_at,
-          otherId: null,
-        }
-      }
-    }
-
-    // 2) Messages in those conversations (find the other person)
-    const convIds = Object.keys(byConv)
-    if (convIds.length > 0) {
-      const { data: related } = await supabase
-        .from('messages')
-        .select('conversation_id, sender_id, created_at, expires_at, deleted')
-        .in('conversation_id', convIds)
-        .order('created_at', { ascending: false })
-        .limit(500)
-
-      for (const m of related || []) {
-        if (!m.conversation_id || m.deleted) continue
-        if (m.expires_at && new Date(m.expires_at).getTime() <= Date.now()) {
-          continue
-        }
-        const slot = byConv[m.conversation_id]
-        if (!slot) {
-          byConv[m.conversation_id] = {
-            lastAt: m.created_at,
-            otherId: m.sender_id !== userId ? m.sender_id : null,
-          }
-        } else {
-          if (new Date(m.created_at).getTime() > new Date(slot.lastAt).getTime()) {
-            slot.lastAt = m.created_at
-          }
-          if (!slot.otherId && m.sender_id !== userId) {
-            slot.otherId = m.sender_id
-          }
-        }
-      }
-    }
-
-    // 3) Also try conversations table (any schema)
-    const { data: allConvs } = await supabase
+    // Same idea as before: conversations where I am either side
+    const { data: convs, error } = await supabase
       .from('conversations')
       .select('*')
-      .limit(100)
+      .or(`user_a.eq.${uid},user_b.eq.${uid}`)
+      .order('updated_at', { ascending: false })
+      .limit(50)
 
-    for (const c of allConvs || []) {
-      const otherId = pickOtherId(c, userId)
-      const involvesMe =
-        otherId ||
-        c.user_a === userId ||
-        c.user_b === userId ||
-        c.user1 === userId ||
-        c.user2 === userId ||
-        (Array.isArray(c.participant_ids) && c.participant_ids.includes(userId))
+    let rows = convs || []
 
-      if (!involvesMe || !c.id) continue
+    // Fallback if user_a / user_b names differ in your project
+    if (error || rows.length === 0) {
+      const { data: all, error: err2 } = await supabase
+        .from('conversations')
+        .select('*')
+        .limit(80)
 
-      const lastAt = c.updated_at || c.last_message_at || c.created_at
-      if (!isStillActive(c, lastAt)) continue
-
-      if (!byConv[c.id]) {
-        byConv[c.id] = {
-          lastAt: lastAt || new Date().toISOString(),
-          otherId: otherId,
-        }
-      } else if (otherId && !byConv[c.id].otherId) {
-        byConv[c.id].otherId = otherId
+      if (err2) {
+        setMessage(error?.message || err2.message)
+        setChats([])
+        return
       }
-    }
 
-    // 4) Resolve usernames
-    const otherIds = Array.from(
-      new Set(
-        Object.values(byConv)
-          .map((v) => v.otherId)
-          .filter(Boolean) as string[]
-      )
-    )
-
-    let nameMap: Record<string, string> = {}
-    if (otherIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, username')
-        .in('id', otherIds)
-      ;(profiles || []).forEach((p) => {
-        nameMap[p.id] = p.username || 'Unknown'
+      rows = (all || []).filter((c: any) => {
+        const a = c.user_a ?? c.user1 ?? c.participant_a
+        const b = c.user_b ?? c.user2 ?? c.participant_b
+        if (a === uid || b === uid) return true
+        if (Array.isArray(c.participant_ids)) {
+          return c.participant_ids.includes(uid)
+        }
+        return false
       })
     }
 
-    // 5) For conversations still missing otherId, read conversation row
-    for (const cid of Object.keys(byConv)) {
-      if (byConv[cid].otherId) continue
-      const { data: c } = await supabase
-        .from('conversations')
-        .select('*')
-        .eq('id', cid)
-        .maybeSingle()
-      const otherId = pickOtherId(c, userId)
-      if (otherId) {
-        byConv[cid].otherId = otherId
-        if (!nameMap[otherId]) {
-          const { data: p } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('id', otherId)
-            .maybeSingle()
-          nameMap[otherId] = p?.username || 'Unknown'
-        }
-      }
-    }
+    const now = Date.now()
+    const alive = rows.filter((c: any) => {
+      if (c.died_at) return false
+      if (c.expires_at && new Date(c.expires_at).getTime() <= now) return false
+      if (c.ends_at && new Date(c.ends_at).getTime() <= now) return false
+      return true
+    })
 
-    const list: ActiveChat[] = Object.entries(byConv)
-      .map(([conversationId, v]) => ({
-        conversationId,
-        otherId: v.otherId || '',
-        otherUsername: v.otherId
-          ? nameMap[v.otherId] || 'Unknown'
-          : 'Unknown',
-        lastAt: v.lastAt,
-      }))
-      .filter((c) => c.otherUsername && c.otherUsername !== 'Unknown')
-      .sort(
-        (a, b) =>
-          new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()
-      )
-
-    // If we filtered everyone as Unknown, still show with id so user sees something
-    if (list.length === 0) {
-      const fallback: ActiveChat[] = Object.entries(byConv)
-        .map(([conversationId, v]) => ({
-          conversationId,
-          otherId: v.otherId || '',
-          otherUsername: v.otherId
-            ? nameMap[v.otherId] || 'User'
-            : 'Chat',
-          lastAt: v.lastAt,
-        }))
-        .sort(
-          (a, b) =>
-            new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()
-        )
-      setChats(fallback)
-      if (fallback.length === 0 && !sentErr) {
-        setDebug(
-          'No active conversations found from messages. Open a chat and send a message, then return here.'
-        )
-      }
+    if (alive.length === 0) {
+      setChats([])
       return
     }
 
-    setChats(list)
-    setDebug('')
+    const otherIds = alive
+      .map((c: any) => {
+        const a = c.user_a ?? c.user1 ?? c.participant_a
+        const b = c.user_b ?? c.user2 ?? c.participant_b
+        if (a === uid) return b
+        if (b === uid) return a
+        if (Array.isArray(c.participant_ids)) {
+          return c.participant_ids.find((id: string) => id !== uid)
+        }
+        return null
+      })
+      .filter(Boolean) as string[]
+
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, username')
+      .in('id', otherIds.length ? otherIds : ['00000000-0000-0000-0000-000000000000'])
+
+    const nameMap: Record<string, string> = {}
+    ;(profiles || []).forEach((p) => {
+      nameMap[p.id] = p.username || 'Unknown'
+    })
+
+    const mapped: ActiveChat[] = alive
+      .map((c: any) => {
+        const a = c.user_a ?? c.user1 ?? c.participant_a
+        const b = c.user_b ?? c.user2 ?? c.participant_b
+        let otherId = a === uid ? b : b === uid ? a : null
+        if (!otherId && Array.isArray(c.participant_ids)) {
+          otherId = c.participant_ids.find((id: string) => id !== uid) || null
+        }
+        return {
+          conversationId: c.id,
+          otherId: otherId || '',
+          otherUsername: otherId ? nameMap[otherId] || 'Unknown' : 'Unknown',
+          lastAt:
+            c.updated_at ||
+            c.last_message_at ||
+            c.created_at ||
+            new Date().toISOString(),
+        }
+      })
+      .filter((c) => c.otherId && c.otherUsername !== 'Unknown')
+      .sort(
+        (x, y) =>
+          new Date(y.lastAt).getTime() - new Date(x.lastAt).getTime()
+      )
+
+    setChats(mapped)
   }
 
   useEffect(() => {
@@ -251,13 +129,20 @@ export default function ActiveChatsPage() {
         router.replace('/')
         return
       }
+      setUserId(user.id)
       await loadChats(user.id)
       setLoading(false)
     }
     init()
   }, [router])
 
+  const openChat = (username: string) => {
+    if (!username || username === 'Unknown') return
+    router.push(`/chat/${username}`)
+  }
+
   const endChat = async (conversationId: string) => {
+    if (!userId) return
     setEnding(conversationId)
     const now = new Date().toISOString()
 
@@ -266,15 +151,9 @@ export default function ActiveChatsPage() {
       .update({ expires_at: now })
       .eq('id', conversationId)
 
-    // Best-effort extra flags if columns exist (ignore errors)
-    await supabase
-      .from('conversations')
-      .update({ died_at: now })
-      .eq('id', conversationId)
-
     await supabase
       .from('messages')
-      .update({ deleted: true, expires_at: now })
+      .update({ deleted: true })
       .eq('conversation_id', conversationId)
 
     setChats((prev) => prev.filter((c) => c.conversationId !== conversationId))
@@ -301,11 +180,12 @@ export default function ActiveChatsPage() {
 
         <h1 className="text-2xl font-bold mb-2">Active chats</h1>
         <p className="text-zinc-500 text-sm mb-6">
-          Chats that have not vanished yet. Tap a name to open.
+          Chats that have not vanished yet. Tap a name to open. End chat closes
+          it for the conversation.
         </p>
 
-        {debug && (
-          <p className="text-xs text-amber-400 mb-4 break-words">{debug}</p>
+        {message && (
+          <p className="text-xs text-amber-400 mb-4 break-words">{message}</p>
         )}
 
         {chats.length === 0 ? (
@@ -327,11 +207,7 @@ export default function ActiveChatsPage() {
               >
                 <button
                   type="button"
-                  onClick={() => {
-                    if (c.otherUsername && c.otherUsername !== 'Chat') {
-                      router.push(`/chat/${c.otherUsername}`)
-                    }
-                  }}
+                  onClick={() => openChat(c.otherUsername)}
                   className="flex-1 text-left min-w-0"
                 >
                   <p className="text-cyan-400 font-semibold text-lg truncate">
