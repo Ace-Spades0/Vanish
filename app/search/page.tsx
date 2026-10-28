@@ -40,144 +40,84 @@ export default function SearchPage() {
   const copy = {
     en: {
       back: '← Back',
-      searchTitle: 'Search',
+      searchTitle: 'Start a vanishing chat',
       searchHelp: 'Find someone by their exact username',
-      placeholder: 'Enter username',
+      enterUsername: 'Enter username',
       searching: 'Searching...',
-      searchBtn: 'Search',
+      search: 'Search',
       foundUser: 'Found user',
-      startChat: 'Start Chat',
-      loading: 'Loading...',
-      enterUsername: 'Please enter a username',
-      notFound: 'User not found',
-      ownUsername: 'That is your own username',
-      notAvailable: 'User not available',
-      offline: 'User is offline',
+      startChatBtn: 'Start Chat',
+      activeChats: 'Active chats',
+      groupBtn: 'Vanishing group',
+      groupHelp: 'Create a temporary group with a one-time vanish link',
       beforeTitle: 'Before you start',
       safety1: 'Chats are temporary and may disappear after a limited time.',
       safety2: 'Do not share passwords, codes, or money details.',
       safety3: 'If someone pressures or threatens you, use Report or Block.',
       safety4: 'You can leave or clear the chat at any time.',
-      safety5:
-        'Your vanish timer is private. The chat ends at the shorter of both timers.',
-      activeChats: 'Active chats',
       caps: 'NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.',
       cancel: 'Cancel',
       understand: 'I understand — Start',
     },
     sw: {
       back: '← Rudi',
-      searchTitle: 'Tafuta',
-      searchHelp: 'Tafuta mtu kwa jina lake kamili la utumizi',
-      placeholder: 'Weka jina la utumizi',
+      searchTitle: 'Anza gumzo la kutoweka',
+      searchHelp: 'Tafuta mtu kwa jina lake kamili',
+      enterUsername: 'Weka jina la mtumiaji',
       searching: 'Inatafuta...',
-      searchBtn: 'Tafuta',
+      search: 'Tafuta',
       foundUser: 'Mtumiaji amepatikana',
-      startChat: 'Anza gumzo',
-      loading: 'Inapakia...',
-      enterUsername: 'Tafadhali weka jina la utumizi',
-      notFound: 'Mtumiaji hajapatikana',
-      ownUsername: 'Hilo ni jina lako mwenyewe',
-      notAvailable: 'Mtumiaji hapopatikani',
-      offline: 'Mtumiaji yuko nje ya mtandao',
+      startChatBtn: 'Anza Gumzo',
+      activeChats: 'Gumzo hai',
+      groupBtn: 'Kikundi cha kutoweka',
+      groupHelp: 'Unda kikundi cha muda na kiungo cha mara moja',
       beforeTitle: 'Kabla ya kuanza',
-      safety1: 'Gumzo ni la muda na linaweza kutoweka baada ya muda mdogo.',
-      safety2: 'Usishiriki nenosiri, nambari za siri, au maelezo ya pesa.',
-      safety3: 'Mtu akikushinikiza au kukutishia, tumia Ripoti au Zuia.',
+      safety1: 'Gumzo ni la muda na linaweza kutoweka.',
+      safety2: 'Usishiriki nenosiri, nambari, au maelezo ya pesa.',
+      safety3: 'Kama kuna shinikizo, tumia Ripoti au Zuia.',
       safety4: 'Unaweza kuondoka au kufuta gumzo wakati wowote.',
-      safety5:
-        'Kipima muda chako ni siri. Gumzo linaisha kwa muda mfupi kati ya wawili.',
-      activeChats: 'Gumzo zinazoendelea',
-      caps: 'HAKUNA HUDUMA MTANDAONI INAYOHAKIKISHA USALAMA KAMILI. USISHIRIKI SIRI USIZOWEZA KUBEBWA KAMA ZIKIFICHULIWA.',
+      caps: 'HAKUNA HUDUMA MTANDAO INAYOHAKIKISHA USALAMA KAMILI. USISHIRIKI SIRI USIZOWEZA KUHIMILI KUFICHULIWA.',
       cancel: 'Ghairi',
-      understand: 'Nimeelewa — Anza',
+      understand: 'Naelewa — Anza',
     },
   }[lang]
 
   useEffect(() => {
     setLangState(getLang())
 
-    let channel: any = null
-
     const checkUser = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
       if (!user) {
-        router.push('/auth')
+        await supabase.auth.signOut()
+        router.replace('/')
         return
       }
       setCurrentUser(user)
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select(
-          'id, username, username_claimed_at, is_permanent_username, status, suspended_until'
-        )
+        .select('id, username, username_claimed_at, is_permanent_username, status')
         .eq('id', user.id)
         .maybeSingle()
 
-      if (profile?.status === 'banned') {
-        await supabase.auth.signOut()
-        router.push('/auth')
+      if (profile?.status === 'banned' || profile?.status === 'suspended') {
+        router.replace('/appeal')
         return
       }
 
-      if (profile?.status === 'suspended') {
-        const until = profile.suspended_until
-          ? new Date(profile.suspended_until).getTime()
-          : null
-        if (!(until && until <= Date.now())) {
-          await supabase.auth.signOut()
-          router.push('/auth')
-          return
-        }
-      }
-
-      if (!isUsernameActive(profile || {})) {
-        router.push('/username')
+      if (!isUsernameActive({ ...profile, id: user.id })) {
+        await supabase.auth.signOut()
+        router.replace('/')
         return
       }
 
       setChecking(false)
-
-      channel = supabase
-        .channel(`search-profile-status-${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'profiles',
-            filter: `id=eq.${user.id}`,
-          },
-          async (payload) => {
-            const row = payload.new as any
-            if (row?.status === 'banned') {
-              await supabase.auth.signOut()
-              router.push('/auth')
-              return
-            }
-            if (row?.status === 'suspended') {
-              const until = row.suspended_until
-                ? new Date(row.suspended_until).getTime()
-                : null
-              if (!(until && until <= Date.now())) {
-                await supabase.auth.signOut()
-                router.push('/auth')
-              }
-            }
-          }
-        )
-        .subscribe()
     }
 
     checkUser()
-
-    return () => {
-      if (channel) supabase.removeChannel(channel)
-    }
-  }, [])
+  }, [router])
 
   const changeLang = (next: Lang) => {
     setLang(next)
@@ -189,107 +129,64 @@ export default function SearchPage() {
     setResult(null)
     setLoading(true)
 
-    const q = searchText.trim()
-    if (!q) {
-      setMessage(copy.enterUsername)
+    if (!searchText.trim()) {
+      setMessage(lang === 'sw' ? 'Weka jina la mtumiaji' : 'Please enter a username')
       setLoading(false)
       return
     }
 
-    let found: any = null
-    let error: any = null
+    const q = searchText.trim().toLowerCase()
 
-    if (q.toLowerCase() === 'lestat') {
-      const res = await supabase
-        .from('profiles')
-        .select(
-          'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
-        )
-        .eq('id', ADMIN_ID)
-        .maybeSingle()
-      found = res.data
-      error = res.error
-      if (!found && !error) {
-        const res2 = await supabase
-          .from('profiles')
-          .select(
-            'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
-          )
-          .ilike('username', 'lestat')
-          .maybeSingle()
-        found = res2.data
-        error = res2.error
-      }
-    } else {
-      const res = await supabase
-        .from('profiles')
-        .select(
-          'id, username, bio, avatar_icon, is_offline, is_permanent_username, username_claimed_at, status'
-        )
-        .ilike('username', q)
-        .maybeSingle()
-      found = res.data
-      error = res.error
-    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, username, bio, avatar_icon, is_offline, username_claimed_at, is_permanent_username, status')
+      .ilike('username', q)
+      .maybeSingle()
 
-    if (error) {
-      setMessage(error.message)
+    if (!profile || !isUsernameActive(profile)) {
+      setMessage(lang === 'sw' ? 'Mtumiaji hajapatikana' : 'User not found')
       setLoading(false)
       return
     }
 
-    if (!found) {
-      setMessage(copy.notFound)
+    if (profile.id === currentUser?.id) {
+      setMessage(lang === 'sw' ? 'Huwezi kujichagua mwenyewe' : 'You cannot chat with yourself')
       setLoading(false)
       return
     }
 
-    if (found.id === currentUser?.id) {
-      setMessage(copy.ownUsername)
+    if (profile.is_offline) {
+      setMessage(lang === 'sw' ? 'Mtumiaji yuko nje ya mtandao' : 'User is offline')
       setLoading(false)
       return
     }
 
-    if (found.status === 'suspended' || found.status === 'banned') {
-      setMessage(copy.notAvailable)
+    if (profile.status === 'banned' || profile.status === 'suspended') {
+      setMessage(lang === 'sw' ? 'Mtumiaji haipatikani' : 'User not available')
       setLoading(false)
       return
     }
 
-    if (found.is_offline === true && found.username?.toLowerCase() !== 'lestat') {
-      setMessage(copy.offline)
+    const { data: blocked } = await supabase
+      .from('blocks')
+      .select('id')
+      .or(
+        `and(blocker_id.eq.${currentUser.id},blocked_id.eq.${profile.id}),and(blocker_id.eq.${profile.id},blocked_id.eq.${currentUser.id})`
+      )
+      .maybeSingle()
+
+    if (blocked) {
+      setMessage(lang === 'sw' ? 'Mtumiaji haipatikani' : 'User not available')
       setLoading(false)
       return
     }
 
-    if (!isUsernameActive(found)) {
-      setMessage(copy.notFound)
-      setLoading(false)
-      return
-    }
-
-    if (currentUser) {
-      const { data: blocks } = await supabase
-        .from('blocks')
-        .select('id')
-        .or(
-          `and(blocker_id.eq.${currentUser.id},blocked_id.eq.${found.id}),and(blocker_id.eq.${found.id},blocked_id.eq.${currentUser.id})`
-        )
-        .limit(1)
-
-      if (blocks && blocks.length > 0) {
-        setMessage(copy.notAvailable)
-        setLoading(false)
-        return
-      }
-    }
-
-    setResult(found)
+    setResult(profile)
     setLoading(false)
   }
 
-  const openSafetyThenChat = () => {
-    if (!result?.username) return
+  const openSafety = () => {
+    if (!result) return
     setShowSafety(true)
   }
 
@@ -302,65 +199,61 @@ export default function SearchPage() {
   if (checking) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">{copy.loading}</p>
+        <p className="text-zinc-400">Loading...</p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-black text-white relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[480px] h-[480px] bg-cyan-500/10 blur-[120px] rounded-full" />
-      </div>
-
-      <div className="relative z-10 max-w-md mx-auto px-4 py-10">
-        <div className="flex justify-between items-center mb-8">
+    <div className="min-h-screen bg-black text-white px-4 py-8">
+      <div className="max-w-md mx-auto">
+        <div className="flex justify-between items-center mb-6">
           <button
             onClick={() => router.push('/home')}
-            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
+            className="text-sm text-zinc-400 hover:text-white"
           >
             {copy.back}
           </button>
-          <div className="flex gap-1">
+          <div className="flex gap-2 text-xs">
             <button
               onClick={() => changeLang('en')}
-              className={`text-xs px-2.5 py-1 rounded-full border ${
-                lang === 'en'
-                  ? 'bg-cyan-500 text-black border-cyan-400'
-                  : 'border-zinc-700 text-zinc-500'
-              }`}
+              className={lang === 'en' ? 'text-cyan-400' : 'text-zinc-500'}
             >
               EN
             </button>
             <button
               onClick={() => changeLang('sw')}
-              className={`text-xs px-2.5 py-1 rounded-full border ${
-                lang === 'sw'
-                  ? 'bg-cyan-500 text-black border-cyan-400'
-                  : 'border-zinc-700 text-zinc-500'
-              }`}
+              className={lang === 'sw' ? 'text-cyan-400' : 'text-zinc-500'}
             >
               SW
             </button>
           </div>
         </div>
 
-        <h1 className="text-3xl font-bold mb-2">
-          {t.search || copy.searchTitle}
-        </h1>
-        <p className="text-zinc-500 text-sm mb-6">{copy.searchHelp}</p>
+        <h1 className="text-2xl font-bold mb-1">{copy.searchTitle}</h1>
+        <p className="text-zinc-400 text-sm mb-6">{copy.searchHelp}</p>
+
+        {/* Vanishing group — inside Start vanishing chat */}
+        <button
+          type="button"
+          onClick={() => router.push('/groups/new')}
+          className="w-full mb-6 p-4 rounded-2xl bg-zinc-900 border border-cyan-700/50 hover:border-cyan-500 transition text-left"
+        >
+          <p className="text-cyan-400 font-semibold text-base">{copy.groupBtn}</p>
+          <p className="text-zinc-500 text-xs mt-1">{copy.groupHelp}</p>
+        </button>
 
         <button
           type="button"
-          onClick={() => router.push('/chats')}
-          className="w-full mb-4 bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/30 text-cyan-300 font-medium py-3 rounded-xl transition"
+          onClick={() => router.push('/active-chats')}
+          className="w-full mb-6 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-sm text-zinc-300 hover:border-zinc-500 transition"
         >
           {copy.activeChats}
         </button>
 
         <input
           type="text"
-          placeholder={copy.placeholder}
+          placeholder={copy.enterUsername}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -372,7 +265,7 @@ export default function SearchPage() {
           disabled={loading}
           className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-xl transition disabled:opacity-50"
         >
-          {loading ? copy.searching : copy.searchBtn}
+          {loading ? copy.searching : copy.search}
         </button>
 
         {message && (
@@ -392,10 +285,10 @@ export default function SearchPage() {
               <div className="mb-4" />
             )}
             <button
-              onClick={openSafetyThenChat}
+              onClick={openSafety}
               className="w-full bg-zinc-700 hover:bg-zinc-600 text-white py-2.5 rounded-xl transition"
             >
-              {copy.startChat}
+              {copy.startChatBtn}
             </button>
           </div>
         )}
@@ -412,7 +305,6 @@ export default function SearchPage() {
               <li>{copy.safety2}</li>
               <li>{copy.safety3}</li>
               <li>{copy.safety4}</li>
-              <li>{copy.safety5}</li>
             </ul>
             <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
               {copy.caps}
