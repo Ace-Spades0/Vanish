@@ -276,7 +276,7 @@ export default function GroupRoomPage() {
       setError(data.error)
       return
     }
-    router.replace('/search')
+    router.replace('/home')
   }
 
   const saveSettings = async (duration_minutes?: number) => {
@@ -406,10 +406,10 @@ export default function GroupRoomPage() {
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 gap-4">
         <p className="text-red-400 text-center">{error}</p>
         <button
-          onClick={() => router.push('/search')}
-          className="text-sm text-zinc-400 hover:text-white transition"
+          onClick={() => router.push('/home')}
+          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
         >
-          ← Back
+          ← Back to Home
         </button>
       </div>
     )
@@ -426,21 +426,19 @@ export default function GroupRoomPage() {
       }}
     >
       <div className="border-b border-cyan-900/40 bg-black/60 backdrop-blur-md p-3 space-y-2">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push('/search')}
-            className="text-sm text-zinc-400 hover:text-white transition shrink-0"
-          >
-            ← Back
-          </button>
-          <div className="flex-1 min-w-0">
-            <p className="text-cyan-400 font-semibold text-lg truncate">
-              Vanishing group
-            </p>
-            <p className="text-[11px] text-zinc-500">
-              Temporary · Media view-only · Max 12 members
-            </p>
-          </div>
+        <button
+          onClick={() => router.push('/home')}
+          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full mb-2 transition"
+        >
+          ← Back to Home
+        </button>
+        <div className="min-w-0">
+          <p className="text-cyan-400 font-semibold text-lg truncate">
+            Vanishing group
+          </p>
+          <p className="text-[11px] text-zinc-500">
+            Temporary · Media view-only · Max 12 members
+          </p>
         </div>
 
         {isAdmin && (
@@ -474,7 +472,6 @@ export default function GroupRoomPage() {
                 value={maxMembersEdit}
                 onChange={(e) => setMaxMembersEdit(Number(e.target.value) || 2)}
                 className="w-16 text-[11px] p-1 rounded-lg bg-zinc-900 border border-zinc-700"
-                title="Max members"
               />
               <button
                 type="button"

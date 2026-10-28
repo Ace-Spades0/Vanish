@@ -227,10 +227,10 @@ export default function ActiveChatsPage() {
     <div className="min-h-screen bg-black text-white px-4 py-8">
       <div className="max-w-md mx-auto">
         <button
-          onClick={() => router.push('/search')}
-          className="text-sm text-zinc-400 hover:text-white transition mb-6"
+          onClick={() => router.push('/home')}
+          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full mb-8 transition"
         >
-          ← Back
+          ← Back to Home
         </button>
 
         <h1 className="text-2xl font-bold mb-2">Active chats</h1>
