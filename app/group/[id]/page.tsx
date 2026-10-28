@@ -43,7 +43,7 @@ export default function GroupRoomPage() {
   const [reportReason, setReportReason] = useState('')
   const [reportMessageId, setReportMessageId] = useState<string | null>(null)
   const [msgMenuId, setMsgMenuId] = useState<string | null>(null)
-  const [maxMembersEdit, setMaxMembersEdit] = useState(10)
+  const [maxMembersEdit, setMaxMembersEdit] = useState(12)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const mediaRef = useRef<HTMLInputElement>(null)
@@ -97,7 +97,7 @@ export default function GroupRoomPage() {
       }
 
       setGroup(g)
-      setMaxMembersEdit(g.max_members || 20)
+      setMaxMembersEdit(Math.min(12, g.max_members || 12))
 
       const { data: msgs } = await supabase
         .from('vanish_group_messages')
@@ -179,38 +179,27 @@ export default function GroupRoomPage() {
     if (!user || !group) return
     setUploading(true)
     setError('')
-
     const path = `${groupId}/${user.id}/${Date.now()}-${file.name.replace(
       /[^a-zA-Z0-9._-]/g,
       '_'
     )}`
-
     const { error: upErr } = await supabase.storage
       .from('chat-photos')
       .upload(path, file, { upsert: false })
-
     if (upErr) {
       setError(upErr.message)
       setUploading(false)
       return
     }
-
     const { data: pub } = supabase.storage.from('chat-photos').getPublicUrl(path)
-    const url = pub?.publicUrl || ''
-
-    const row: any = {
+    const { error: insErr } = await supabase.from('vanish_group_messages').insert({
       group_id: groupId,
       sender_id: user.id,
       body: kind === 'file' ? file.name : '',
       type: kind,
-      media_url: url,
+      media_url: pub?.publicUrl || '',
       media_path: path,
-    }
-
-    const { error: insErr } = await supabase
-      .from('vanish_group_messages')
-      .insert(row)
-
+    })
     if (insErr) setError(insErr.message)
     setUploading(false)
   }
@@ -295,6 +284,9 @@ export default function GroupRoomPage() {
       data: { session },
     } = await supabase.auth.getSession()
     if (!session) return
+    let max = Math.floor(Number(maxMembersEdit) || 12)
+    if (max < 2) max = 2
+    if (max > 12) max = 12
     const res = await fetch('/api/groups/settings', {
       method: 'POST',
       headers: {
@@ -304,7 +296,7 @@ export default function GroupRoomPage() {
       body: JSON.stringify({
         group_id: groupId,
         duration_minutes,
-        max_members: maxMembersEdit,
+        max_members: max,
       }),
     })
     const data = await res.json().catch(() => ({}))
@@ -415,7 +407,7 @@ export default function GroupRoomPage() {
         <p className="text-red-400 text-center">{error}</p>
         <button
           onClick={() => router.push('/search')}
-          className="text-sm font-semibold text-black bg-cyan-500 px-4 py-2.5 rounded-xl"
+          className="text-sm text-zinc-400 hover:text-white transition"
         >
           ← Back
         </button>
@@ -434,10 +426,10 @@ export default function GroupRoomPage() {
       }}
     >
       <div className="border-b border-cyan-900/40 bg-black/60 backdrop-blur-md p-3 space-y-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => router.push('/search')}
-            className="shrink-0 text-sm font-semibold text-black bg-cyan-500 hover:bg-cyan-400 px-4 py-2.5 rounded-xl"
+            className="text-sm text-zinc-400 hover:text-white transition shrink-0"
           >
             ← Back
           </button>
@@ -446,7 +438,7 @@ export default function GroupRoomPage() {
               Vanishing group
             </p>
             <p className="text-[11px] text-zinc-500">
-              Temporary · Media view-only · No permanent save
+              Temporary · Media view-only · Max 12 members
             </p>
           </div>
         </div>
@@ -478,7 +470,7 @@ export default function GroupRoomPage() {
               <input
                 type="number"
                 min={2}
-                max={100}
+                max={12}
                 value={maxMembersEdit}
                 onChange={(e) => setMaxMembersEdit(Number(e.target.value) || 2)}
                 className="w-16 text-[11px] p-1 rounded-lg bg-zinc-900 border border-zinc-700"
@@ -529,17 +521,15 @@ export default function GroupRoomPage() {
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => {
-              setModal('report-group')
-              setReportMessageId(null)
-            }}
-            className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl"
-          >
-            Report group
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            setModal('report-group')
+            setReportMessageId(null)
+          }}
+          className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl"
+        >
+          Report group
+        </button>
 
         {info && <p className="text-xs text-cyan-400">{info}</p>}
         {error && <p className="text-xs text-red-400">{error}</p>}
@@ -691,7 +681,7 @@ export default function GroupRoomPage() {
               <p className="font-semibold">Members</p>
               <button
                 onClick={() => setShowMembers(false)}
-                className="text-zinc-400 text-sm"
+                className="text-sm text-zinc-400 hover:text-white transition"
               >
                 Close
               </button>

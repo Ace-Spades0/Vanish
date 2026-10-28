@@ -21,7 +21,6 @@ export default function ActiveChatsPage() {
   const loadChats = async (uid: string) => {
     setHint('')
 
-    // All messages RLS allows you to see (sent by you OR by the other person)
     const { data: msgs, error: msgErr } = await supabase
       .from('messages')
       .select(
@@ -73,7 +72,6 @@ export default function ActiveChatsPage() {
       }
     }
 
-    // Merge conversation rows if present (both participants)
     const { data: convRows } = await supabase
       .from('conversations')
       .select('*')
@@ -230,7 +228,7 @@ export default function ActiveChatsPage() {
       <div className="max-w-md mx-auto">
         <button
           onClick={() => router.push('/search')}
-          className="mb-6 text-sm font-medium text-cyan-400 hover:text-cyan-300 px-3 py-2 rounded-xl border border-cyan-700/50 bg-zinc-900"
+          className="text-sm text-zinc-400 hover:text-white transition mb-6"
         >
           ← Back
         </button>

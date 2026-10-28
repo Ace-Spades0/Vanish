@@ -14,7 +14,7 @@ const OPTIONS = [
 export default function NewGroupPage() {
   const router = useRouter()
   const [duration, setDuration] = useState(180)
-  const [maxMembers, setMaxMembers] = useState(10)
+  const [maxMembers, setMaxMembers] = useState(12)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
@@ -66,6 +66,10 @@ export default function NewGroupPage() {
       return
     }
 
+    let max = Math.floor(Number(maxMembers) || 12)
+    if (max < 2) max = 2
+    if (max > 12) max = 12
+
     const res = await fetch('/api/groups/create', {
       method: 'POST',
       headers: {
@@ -74,7 +78,7 @@ export default function NewGroupPage() {
       },
       body: JSON.stringify({
         duration_minutes: duration,
-        max_members: maxMembers,
+        max_members: max,
       }),
     })
 
@@ -105,9 +109,17 @@ export default function NewGroupPage() {
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6">
+        <button
+          onClick={() => router.push('/search')}
+          className="text-sm text-zinc-400 hover:text-white transition mb-5"
+        >
+          ← Back
+        </button>
+
         <h1 className="text-2xl font-semibold mb-2">New vanishing group</h1>
         <p className="text-sm text-zinc-400 mb-6">
-          You are admin. If you leave or wipe identity, the group dies.
+          You are admin. Maximum 12 members. If you leave or wipe identity, the
+          group dies.
         </p>
 
         <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
@@ -131,12 +143,12 @@ export default function NewGroupPage() {
         </div>
 
         <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
-          Max members (2–100)
+          Max members (2–12)
         </p>
         <input
           type="number"
           min={2}
-          max={100}
+          max={12}
           value={maxMembers}
           onChange={(e) => setMaxMembers(Number(e.target.value) || 2)}
           className="w-full p-3 mb-6 rounded-xl bg-zinc-800 border border-zinc-700"
@@ -152,12 +164,6 @@ export default function NewGroupPage() {
         {error && (
           <p className="mt-4 text-center text-sm text-red-400">{error}</p>
         )}
-        <button
-          onClick={() => router.push('/search')}
-          className="w-full mt-4 text-sm text-zinc-400 hover:text-white"
-        >
-          ← Back
-        </button>
       </div>
     </div>
   )

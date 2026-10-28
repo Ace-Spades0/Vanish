@@ -20,7 +20,13 @@ export async function POST(req: Request) {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { global: { headers: { Authorization: authHeader } } }
+      {
+        global: {
+          headers: {
+            Authorization: authHeader,
+          },
+        },
+      }
     )
 
     const {
@@ -34,8 +40,8 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}))
     const duration = Number(body.duration_minutes)
     let max_members = Number(body.max_members)
-    if (!Number.isFinite(max_members) || max_members < 2) max_members = 20
-    if (max_members > 100) max_members = 100
+    if (!Number.isFinite(max_members) || max_members < 2) max_members = 12
+    if (max_members > 12) max_members = 12
     max_members = Math.floor(max_members)
 
     if (![30, 60, 180, 1440].includes(duration)) {

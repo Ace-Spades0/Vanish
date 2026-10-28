@@ -11,7 +11,13 @@ export async function POST(req: Request) {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { global: { headers: { Authorization: authHeader } } }
+      {
+        global: {
+          headers: {
+            Authorization: authHeader,
+          },
+        },
+      }
     )
 
     const {
@@ -49,11 +55,7 @@ export async function POST(req: Request) {
       ).toISOString()
     }
 
-    if (
-      Number.isFinite(max_members) &&
-      max_members >= 2 &&
-      max_members <= 100
-    ) {
+    if (Number.isFinite(max_members) && max_members >= 2 && max_members <= 12) {
       patch.max_members = Math.floor(max_members)
     }
 
