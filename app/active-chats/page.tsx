@@ -21,135 +21,119 @@ export default function ActiveChatsPage() {
   const loadChats = async (uid: string) => {
     setHint('')
 
-    const { data: msgs, error: msgErr } = await supabase
-      .from('messages')
-      .select(
-        'id, conversation_id, sender_id, created_at, expires_at, deleted'
+    // 1. Load conversations that involve this user only
+    //    (supports common column shapes used in your app)
+    const { data: convRows, error: convErr } = await supabase
+      .from('conversations')
+      .select('*')
+      .or(
+        `user_a.eq.${uid},user_b.eq.${uid},user1.eq.${uid},user2.eq.${uid},participant_a.eq.${uid},participant_b.eq.${uid}`
       )
-      .order('created_at', { ascending: false })
-      .limit(500)
+      .is('died_at', null)
+      .limit(50)
 
-    if (msgErr) {
-      setHint(msgErr.message)
-      setChats([])
-      return
-    }
+    if (convErr) {
+      // Fallback: load a small set and filter client-side (in case .or() columns differ)
+      const { data: allConv } = await supabase
+        .from('conversations')
+        .select('*')
+        .limit(100)
 
-    if (!msgs || msgs.length === 0) {
-      setHint(
-        'No messages visible yet. If someone wrote to you and this stays empty, message RLS may block received messages.'
-      )
-      setChats([])
+      const now = Date.now()
+      const filtered = (allConv || []).filter((c: any) => {
+        if (c.died_at) return false
+        if (c.expires_at && new Date(c.expires_at).getTime() <= now) return false
+        const a = c.user_a ?? c.user1 ?? c.participant_a
+        const b = c.user_b ?? c.user2 ?? c.participant_b
+        const inPair = a === uid || b === uid
+        const inList =
+          Array.isArray(c.participant_ids) && c.participant_ids.includes(uid)
+        return inPair || inList
+      })
+
+      await buildChatList(uid, filtered)
       return
     }
 
     const now = Date.now()
-    type Acc = {
-      lastAt: string
-      senders: Set<string>
-    }
-    const map = new Map<string, Acc>()
+    const alive = (convRows || []).filter((c: any) => {
+      if (c.expires_at && new Date(c.expires_at).getTime() <= now) return false
+      return true
+    })
 
-    for (const m of msgs) {
-      if (!m.conversation_id) continue
-      if (m.deleted === true) continue
-      if (m.expires_at && new Date(m.expires_at).getTime() <= now) continue
+    await buildChatList(uid, alive)
+  }
 
-      const existing = map.get(m.conversation_id)
-      if (!existing) {
-        map.set(m.conversation_id, {
-          lastAt: m.created_at,
-          senders: new Set([m.sender_id]),
-        })
-      } else {
-        existing.senders.add(m.sender_id)
-        if (
-          new Date(m.created_at).getTime() >
-          new Date(existing.lastAt).getTime()
-        ) {
-          existing.lastAt = m.created_at
-        }
-      }
-    }
-
-    const { data: convRows } = await supabase
-      .from('conversations')
-      .select('*')
-      .limit(100)
-
-    for (const c of convRows || []) {
-      if (!c?.id) continue
-      if (c.died_at) continue
-      if (c.expires_at && new Date(c.expires_at).getTime() <= now) continue
-
-      const a = c.user_a ?? c.user1 ?? c.participant_a
-      const b = c.user_b ?? c.user2 ?? c.participant_b
-      const inPair = a === uid || b === uid
-      const inList =
-        Array.isArray(c.participant_ids) && c.participant_ids.includes(uid)
-      if (!inPair && !inList) continue
-
-      if (!map.has(c.id)) {
-        const senders = new Set<string>()
-        if (a) senders.add(a)
-        if (b) senders.add(b)
-        if (Array.isArray(c.participant_ids)) {
-          c.participant_ids.forEach((id: string) => senders.add(id))
-        }
-        map.set(c.id, {
-          lastAt:
-            c.updated_at ||
-            c.last_message_at ||
-            c.created_at ||
-            new Date().toISOString(),
-          senders,
-        })
-      } else {
-        const acc = map.get(c.id)!
-        if (a) acc.senders.add(a)
-        if (b) acc.senders.add(b)
-      }
-    }
-
-    if (map.size === 0) {
+  const buildChatList = async (uid: string, convRows: any[]) => {
+    if (!convRows.length) {
       setChats([])
       return
     }
 
-    const otherIds: string[] = []
+    // 2. Resolve the other participant for each conversation
     const pending: {
       conversationId: string
       otherId: string
       lastAt: string
     }[] = []
 
-    map.forEach((acc, conversationId) => {
+    for (const c of convRows) {
+      const a = c.user_a ?? c.user1 ?? c.participant_a ?? null
+      const b = c.user_b ?? c.user2 ?? c.participant_b ?? null
+
       let otherId = ''
-      acc.senders.forEach((id) => {
-        if (id && id !== uid) otherId = id
-      })
-      if (!otherId) return
-      otherIds.push(otherId)
+      if (a && a !== uid) otherId = a
+      else if (b && b !== uid) otherId = b
+      else if (Array.isArray(c.participant_ids)) {
+        otherId = c.participant_ids.find((id: string) => id && id !== uid) || ''
+      }
+
+      if (!otherId) continue
+
       pending.push({
-        conversationId,
+        conversationId: c.id,
         otherId,
-        lastAt: acc.lastAt,
+        lastAt:
+          c.updated_at ||
+          c.last_message_at ||
+          c.created_at ||
+          new Date().toISOString(),
       })
-    })
+    }
 
     if (pending.length === 0) {
       setHint(
-        'Found conversations but could not detect the other user. Check conversations user columns.'
+        'Found conversations but could not detect the other user. Check conversations user columns (user_a/user_b or participant_ids).'
       )
       setChats([])
       return
     }
 
-    const uniqueOthers = Array.from(new Set(otherIds))
+    // 3. Enrich with latest non-deleted, non-expired message time (optional but better UX)
+    const convIds = pending.map((p) => p.conversationId)
+    const { data: msgs } = await supabase
+      .from('messages')
+      .select('conversation_id, created_at, expires_at, deleted')
+      .in('conversation_id', convIds)
+      .order('created_at', { ascending: false })
+      .limit(300)
+
+    const now = Date.now()
+    const lastMsgMap = new Map<string, string>()
+    for (const m of msgs || []) {
+      if (m.deleted === true) continue
+      if (m.expires_at && new Date(m.expires_at).getTime() <= now) continue
+      if (!lastMsgMap.has(m.conversation_id)) {
+        lastMsgMap.set(m.conversation_id, m.created_at)
+      }
+    }
+
+    // 4. Load usernames of the other users
+    const otherIds = Array.from(new Set(pending.map((p) => p.otherId)))
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, username')
-      .in('id', uniqueOthers)
+      .in('id', otherIds)
 
     const nameMap: Record<string, string> = {}
     ;(profiles || []).forEach((p) => {
@@ -161,8 +145,9 @@ export default function ActiveChatsPage() {
         conversationId: p.conversationId,
         otherId: p.otherId,
         otherUsername: nameMap[p.otherId] || 'Unknown',
-        lastAt: p.lastAt,
+        lastAt: lastMsgMap.get(p.conversationId) || p.lastAt,
       }))
+      // Only show chats where the other person still has a username
       .filter((c) => c.otherUsername && c.otherUsername !== 'Unknown')
       .sort(
         (a, b) =>
@@ -170,7 +155,8 @@ export default function ActiveChatsPage() {
       )
 
     setChats(list)
-    if (list.length === 0) {
+
+    if (list.length === 0 && pending.length > 0) {
       setHint(
         'Other users have no active username on profiles, so names could not be shown.'
       )
@@ -203,7 +189,7 @@ export default function ActiveChatsPage() {
 
     await supabase
       .from('conversations')
-      .update({ expires_at: now })
+      .update({ expires_at: now, died_at: now })
       .eq('id', conversationId)
 
     await supabase
@@ -236,7 +222,7 @@ export default function ActiveChatsPage() {
         <h1 className="text-2xl font-bold mb-2">Active chats</h1>
         <p className="text-zinc-500 text-sm mb-6">
           If someone messaged you and the chat is still alive, it appears here.
-          Tap to open. End chat closes it.
+          Tap to open. End chat closes it for both sides.
         </p>
 
         {hint && (
