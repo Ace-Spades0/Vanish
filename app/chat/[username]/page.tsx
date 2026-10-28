@@ -94,7 +94,6 @@ async function mediaDisplayUrl(
     const res = await fetch(url)
     if (!res.ok) return url
     const buf = await res.arrayBuffer()
-    // decryptBytes takes ArrayBuffer, returns ArrayBuffer
     const plain = await decryptBytes(convId, buf)
     const bytes = new Uint8Array(plain)
     const copy = new Uint8Array(bytes.byteLength)
@@ -227,6 +226,29 @@ export default function ChatPage() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }
 
+  // Keep conversation discoverable for both users in Active Chats
+  const touchConversation = async (
+    convId: string,
+    myId: string,
+    otherId: string
+  ) => {
+    try {
+      await supabase.from('conversations').upsert(
+        {
+          id: convId,
+          user_a: myId < otherId ? myId : otherId,
+          user_b: myId < otherId ? otherId : myId,
+          updated_at: new Date().toISOString(),
+          died_at: null,
+          expires_at: null,
+        },
+        { onConflict: 'id' }
+      )
+    } catch {
+      /* table may not exist — ignore */
+    }
+  }
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -296,10 +318,13 @@ export default function ChatPage() {
         return
       }
 
-      const convId = [myProfile!.username, targetProfile.username]
-        .sort()
-        .join('_')
+      const myUsername = myProfile!.username as string
+      const otherUsername = targetProfile.username as string
+      const convId = [myUsername, otherUsername].sort().join('_')
       setConversationId(convId)
+
+      // Register so both users can see this chat in Active Chats
+      await touchConversation(convId, user.id, targetProfile.id)
 
       const { data: settings } = await supabase
         .from('conversation_settings')
@@ -511,8 +536,7 @@ export default function ChatPage() {
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
     }
   }, [targetUsername])
-
-  useEffect(() => {
+    useEffect(() => {
     if (firstMsgAt && user?.id && targetUser?.id) {
       recomputeEnd(firstMsgAt, durationByUser)
     }
@@ -753,6 +777,11 @@ export default function ChatPage() {
       return
     }
 
+    // Keep conversation discoverable for both users
+    if (targetUser?.id) {
+      await touchConversation(conversationId, user.id, targetUser.id)
+    }
+
     if (ghostReply) {
       await supabase
         .from('profiles')
@@ -801,7 +830,6 @@ export default function ChatPage() {
     let isEnc = false
     try {
       const buf = await file.arrayBuffer()
-      // encryptBytes takes ArrayBuffer, returns Uint8Array
       const enc = await encryptBytes(conversationId, buf)
       const copy = new Uint8Array(enc.byteLength)
       copy.set(enc)
@@ -840,7 +868,15 @@ export default function ChatPage() {
       is_encrypted: isEnc,
     })
 
-    if (error) alert(error.message)
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    // Keep conversation discoverable for both users
+    if (targetUser?.id) {
+      await touchConversation(conversationId, user.id, targetUser.id)
+    }
 
     if (ghostReply) {
       await supabase
@@ -853,10 +889,21 @@ export default function ChatPage() {
 
   const clearChat = async () => {
     if (!conversationId) return
+    const now = new Date().toISOString()
     await supabase
       .from('messages')
-      .update({ deleted: true })
+      .update({ deleted: true, expires_at: now })
       .eq('conversation_id', conversationId)
+
+    try {
+      await supabase
+        .from('conversations')
+        .update({ died_at: now, expires_at: now })
+        .eq('id', conversationId)
+    } catch {
+      /* optional */
+    }
+
     setMessages([])
     setSealed(true)
     setModal(null)
@@ -989,8 +1036,7 @@ export default function ChatPage() {
       </div>
     )
   }
-
-  return (
+    return (
     <div className="min-h-screen bg-black text-white flex flex-col h-[100dvh]">
       <div className="shrink-0 border-b border-zinc-800 bg-black/95 px-3 py-2">
         <div className="flex items-start justify-between gap-2">
@@ -1065,7 +1111,7 @@ export default function ChatPage() {
             </button>
             <button
               type="button"
-              onClick={() => router.push('/home')}
+              onClick={() => router.push('/active-chats')}
               className="text-base font-medium text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-xl"
             >
               ← Back
@@ -1312,7 +1358,6 @@ export default function ChatPage() {
 
       {!chatExpired && !sealed && (
         <div className="shrink-0 bg-black border-t border-cyan-500/10 p-2">
-
           <div className="flex items-end gap-2">
             <button
               type="button"
