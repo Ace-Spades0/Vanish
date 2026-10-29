@@ -295,7 +295,6 @@ export default function ChatPage() {
         return
       }
 
-      // conversation id = sorted usernames (matches Active chats)
       const convId = [myProfile!.username, targetProfile.username]
         .sort()
         .join('_')
@@ -671,7 +670,7 @@ export default function ChatPage() {
     const starters =
       text.match(
         /\b(why|how|what|when|where|who|which|do you|are you|can you|did you)\b/gi
-      ) pan || []
+      ) || []
     return q + starters.length
   }
 
@@ -699,8 +698,9 @@ export default function ChatPage() {
 
     const expires_at = await resolveExpiresAt(forceShort)
     if (!firstMsgAt) {
-      setFirstMsgAt(new Date().toISOString())
-      recomputeEnd(new Date().toISOString(), {
+      const nowIso = new Date().toISOString()
+      setFirstMsgAt(nowIso)
+      recomputeEnd(nowIso, {
         ...durationByUser,
         [user.id]: myDuration,
       })
@@ -719,7 +719,6 @@ export default function ChatPage() {
     const { error } = await supabase.from('messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
-
       content,
       type: 'text',
       deleted: false,
@@ -900,9 +899,7 @@ export default function ChatPage() {
     const plain = editText.trim()
     setMessages((prev) =>
       prev.map((m) =>
-        m.id === activeMsg.id
-          ? { ...m, content: plain, is_encrypted }
-          : m
+        m.id === activeMsg.id ? { ...m, content: plain, is_encrypted } : m
       )
     )
     setMsgMenu(null)
@@ -947,7 +944,7 @@ export default function ChatPage() {
       </div>
     )
   }
-    return (
+   return (
     <div className="min-h-screen bg-black text-white flex flex-col h-screen">
       <div className="shrink-0 border-b border-zinc-800 bg-zinc-950/95 p-3 space-y-2">
         <div className="flex items-start justify-between gap-2">
@@ -1607,4 +1604,4 @@ export default function ChatPage() {
       )}
     </div>
   )
-}
+} 
