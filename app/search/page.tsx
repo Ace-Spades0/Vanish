@@ -39,7 +39,7 @@ export default function SearchPage() {
 
   const copy = {
     en: {
-      back: '← Back',
+      back: '← Back to Home',
       searchTitle: 'Start a vanishing chat',
       searchHelp: 'Find someone by their exact username',
       enterUsername: 'Enter username',
@@ -60,7 +60,7 @@ export default function SearchPage() {
       understand: 'I understand — Start',
     },
     sw: {
-      back: '← Rudi',
+      back: '← Rudi Nyumbani',
       searchTitle: 'Anza gumzo la kutoweka',
       searchHelp: 'Tafuta mtu kwa jina lake kamili',
       enterUsername: 'Weka jina la mtumiaji',
@@ -84,7 +84,6 @@ export default function SearchPage() {
 
   useEffect(() => {
     setLangState(getLang())
-
     const checkUser = async () => {
       const {
         data: { user },
@@ -95,27 +94,24 @@ export default function SearchPage() {
         return
       }
       setCurrentUser(user)
-
       const { data: profile } = await supabase
         .from('profiles')
-        .select('id, username, username_claimed_at, is_permanent_username, status')
+        .select(
+          'id, username, username_claimed_at, is_permanent_username, status'
+        )
         .eq('id', user.id)
         .maybeSingle()
-
       if (profile?.status === 'banned' || profile?.status === 'suspended') {
         router.replace('/appeal')
         return
       }
-
       if (!isUsernameActive({ ...profile, id: user.id })) {
         await supabase.auth.signOut()
         router.replace('/')
         return
       }
-
       setChecking(false)
     }
-
     checkUser()
   }, [router])
 
@@ -128,45 +124,49 @@ export default function SearchPage() {
     setMessage('')
     setResult(null)
     setLoading(true)
-
     if (!searchText.trim()) {
-      setMessage(lang === 'sw' ? 'Weka jina la mtumiaji' : 'Please enter a username')
+      setMessage(
+        lang === 'sw' ? 'Weka jina la mtumiaji' : 'Please enter a username'
+      )
       setLoading(false)
       return
     }
-
     const q = searchText.trim().toLowerCase()
-
     const { data: profile } = await supabase
       .from('profiles')
-      .select('id, username, bio, avatar_icon, is_offline, username_claimed_at, is_permanent_username, status')
+      .select(
+        'id, username, bio, avatar_icon, is_offline, username_claimed_at, is_permanent_username, status'
+      )
       .ilike('username', q)
       .maybeSingle()
-
     if (!profile || !isUsernameActive(profile)) {
       setMessage(lang === 'sw' ? 'Mtumiaji hajapatikana' : 'User not found')
       setLoading(false)
       return
     }
-
     if (profile.id === currentUser?.id) {
-      setMessage(lang === 'sw' ? 'Huwezi kujichagua mwenyewe' : 'You cannot chat with yourself')
+      setMessage(
+        lang === 'sw'
+          ? 'Huwezi kujichagua mwenyewe'
+          : 'You cannot chat with yourself'
+      )
       setLoading(false)
       return
     }
-
     if (profile.is_offline) {
-      setMessage(lang === 'sw' ? 'Mtumiaji yuko nje ya mtandao' : 'User is offline')
+      setMessage(
+        lang === 'sw' ? 'Mtumiaji yuko nje ya mtandao' : 'User is offline'
+      )
       setLoading(false)
       return
     }
-
     if (profile.status === 'banned' || profile.status === 'suspended') {
-      setMessage(lang === 'sw' ? 'Mtumiaji haipatikani' : 'User not available')
+      setMessage(
+        lang === 'sw' ? 'Mtumiaji haipatikani' : 'User not available'
+      )
       setLoading(false)
       return
     }
-
     const { data: blocked } = await supabase
       .from('blocks')
       .select('id')
@@ -174,13 +174,13 @@ export default function SearchPage() {
         `and(blocker_id.eq.${currentUser.id},blocked_id.eq.${profile.id}),and(blocker_id.eq.${profile.id},blocked_id.eq.${currentUser.id})`
       )
       .maybeSingle()
-
     if (blocked) {
-      setMessage(lang === 'sw' ? 'Mtumiaji haipatikani' : 'User not available')
+      setMessage(
+        lang === 'sw' ? 'Mtumiaji haipatikani' : 'User not available'
+      )
       setLoading(false)
       return
     }
-
     setResult(profile)
     setLoading(false)
   }
@@ -210,7 +210,7 @@ export default function SearchPage() {
         <div className="flex justify-between items-center mb-6">
           <button
             onClick={() => router.push('/home')}
-            className="text-sm text-zinc-400 hover:text-white"
+            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
           >
             {copy.back}
           </button>
@@ -233,13 +233,14 @@ export default function SearchPage() {
         <h1 className="text-2xl font-bold mb-1">{copy.searchTitle}</h1>
         <p className="text-zinc-400 text-sm mb-6">{copy.searchHelp}</p>
 
-        {/* Vanishing group — inside Start vanishing chat */}
         <button
           type="button"
           onClick={() => router.push('/groups/new')}
           className="w-full mb-6 p-4 rounded-2xl bg-zinc-900 border border-cyan-700/50 hover:border-cyan-500 transition text-left"
         >
-          <p className="text-cyan-400 font-semibold text-base">{copy.groupBtn}</p>
+          <p className="text-cyan-400 font-semibold text-base">
+            {copy.groupBtn}
+          </p>
           <p className="text-zinc-500 text-xs mt-1">{copy.groupHelp}</p>
         </button>
 
