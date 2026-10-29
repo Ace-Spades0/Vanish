@@ -95,7 +95,7 @@ async function mediaDisplayUrl(
     if (!res.ok) return url
     const buf = await res.arrayBuffer()
     const plain = await decryptBytes(convId, buf)
-    const bytes = new Uint8Array(plain)
+    const bytes = plain instanceof Uint8Array ? plain : new Uint8Array(plain)
     const copy = new Uint8Array(bytes.byteLength)
     copy.set(bytes)
     const mime = guessMimeFromUrl(url)
@@ -772,12 +772,17 @@ export default function ChatPage() {
       recomputeEnd(now, durationByUser)
     }
 
-    let uploadBody: ArrayBuffer | Blob = file
+    let uploadBody: Blob | File = file
     let is_encrypted = false
     try {
       const buf = await file.arrayBuffer()
       const enc = await encryptBytes(conversationId, buf)
-      uploadBody = enc
+      const bytes = enc instanceof Uint8Array ? enc : new Uint8Array(enc as ArrayBuffer)
+      const copy = new Uint8Array(bytes.byteLength)
+      copy.set(bytes)
+      uploadBody = new Blob([copy], {
+        type: file.type || 'application/octet-stream',
+      })
       is_encrypted = true
     } catch {
       uploadBody = file
@@ -944,7 +949,7 @@ export default function ChatPage() {
       </div>
     )
   }
-   return (
+    return (
     <div className="min-h-screen bg-black text-white flex flex-col h-screen">
       <div className="shrink-0 border-b border-zinc-800 bg-zinc-950/95 p-3 space-y-2">
         <div className="flex items-start justify-between gap-2">
@@ -1604,4 +1609,4 @@ export default function ChatPage() {
       )}
     </div>
   )
-} 
+}
