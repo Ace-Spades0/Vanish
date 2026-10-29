@@ -21,9 +21,23 @@ const DURATION_OPTIONS = [
   { minutes: 1440, label: '24h' },
 ]
 
+const GROUP_EMOJIS = [
+  '🎭', '👻', '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄',
+  '🐲', '🦇', '🐍', '🦈', '🦉', '🌙', '⭐', '🔥', '⚡', '❄️',
+  '🌊', '🧿', '👁️', '🧠', '🎩', '🕶️', '🎱', '🃏', '🔮', '🗝️',
+  '💀', '👽', '🤖', '🥷', '😈', '🎃', '🪐', '☄️', '🌀', '✦',
+]
+
 function shortTag(username?: string | null) {
   const u = (username || '???').toString()
   return u.slice(-3).toUpperCase()
+}
+
+function emojiFromUsername(username?: string | null, fallbackId?: string) {
+  const s = (username || fallbackId || '?').toString()
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return GROUP_EMOJIS[h % GROUP_EMOJIS.length]
 }
 
 export default function GroupRoomPage() {
@@ -44,6 +58,7 @@ export default function GroupRoomPage() {
   const [uploading, setUploading] = useState(false)
   const [members, setMembers] = useState<any[]>([])
   const [profilesById, setProfilesById] = useState<Record<string, any>>({})
+  const [memberReports, setMemberReports] = useState<any[]>([])
   const [showMembers, setShowMembers] = useState(false)
   const [leaveModal, setLeaveModal] = useState(false)
   const [modal, setModal] = useState<'report-group' | 'report-msg' | null>(null)
@@ -62,6 +77,7 @@ export default function GroupRoomPage() {
   const textRef = useRef<HTMLTextAreaElement>(null)
 
   const isAdmin = !!(user && group && user.id === group.admin_id)
+  const adminReportCount = memberReports.length
 
   const grow = () => {
     const el = textRef.current
@@ -73,6 +89,28 @@ export default function GroupRoomPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const loadMemberReports = async () => {
+    if (!groupId) return
+    const { data } = await supabase
+      .from('reports')
+      .select('*')
+      .or(
+        `conversation_id.eq.${groupId},reason.ilike.%${groupId}%,reason.ilike.%GROUP_ADMIN%`
+      )
+      .order('created_at', { ascending: false })
+      .limit(40)
+    const list = (data || []).filter((r: any) => {
+      const reason = String(r.reason || '')
+      return (
+        r.conversation_id === groupId ||
+        reason.includes(groupId) ||
+        reason.includes('GROUP_ADMIN') ||
+        reason.includes('[GROUP]')
+      )
+    })
+    setMemberReports(list)
+  }
 
   const loadMembers = async (token: string) => {
     const res = await fetch(`/api/groups/members?group_id=${groupId}`, {
@@ -171,6 +209,10 @@ export default function GroupRoomPage() {
       } = await supabase.auth.getSession()
       if (session) {
         await loadMembers(session.access_token)
+      }
+
+      if (g.admin_id === user.id) {
+        await loadMemberReports()
       }
 
       channel = supabase
@@ -462,6 +504,12 @@ export default function GroupRoomPage() {
     setEditText('')
   }
 
+  const openMsgActions = (m: any) => {
+    setMsgMenuId(m.id)
+    setEditOpen(false)
+    setEditText(m.body || '')
+  }
+
   const submitReport = async () => {
     if (!reportType.trim() || !reportReason.trim()) {
       setError('Choose a type and explain')
@@ -473,8 +521,31 @@ export default function GroupRoomPage() {
     if (!session) return
 
     const toLabel = reportTo === 'admin' ? 'GROUP_ADMIN' : 'PLATFORM'
+    const msg = reportMessageId
+      ? messages.find((m) => m.id === reportMessageId)
+      : null
+    const msgSnippet = msg?.body
+      ? String(msg.body).slice(0, 120)
+      : reportMessageId
+        ? `[media:${msg?.type || 'file'}]`
+        : ''
 
     if (modal === 'report-msg' && reportMessageId) {
+      if (reportTo === 'platform') {
+        await fetch('/api/report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            reported_id: msg?.sender_id || group?.admin_id,
+            conversation_id: groupId,
+            reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | msg:${msgSnippet}`,
+          }),
+        })
+      }
+
       const res = await fetch('/api/groups/report-message', {
         method: 'POST',
         headers: {
@@ -485,7 +556,7 @@ export default function GroupRoomPage() {
           group_id: groupId,
           message_id: reportMessageId,
           report_type: reportType,
-          reason: `[to:${toLabel}] ${reportReason}`,
+          reason: `[to:${toLabel}] ${reportReason} | msg:${msgSnippet}`,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -497,8 +568,13 @@ export default function GroupRoomPage() {
         setMessages((prev) => prev.filter((m) => m.id !== reportMessageId))
         setInfo('Critical content removed')
       } else {
-        setInfo('Report sent')
+        setInfo(
+          reportTo === 'admin'
+            ? 'Report sent to group admin'
+            : 'Report sent to platform'
+        )
       }
+      if (isAdmin) await loadMemberReports()
     } else {
       const res = await fetch('/api/report', {
         method: 'POST',
@@ -518,12 +594,17 @@ export default function GroupRoomPage() {
         return
       }
       setInfo('Report sent')
+      if (isAdmin) await loadMemberReports()
     }
     setModal(null)
     setReportType('')
     setReportReason('')
     setReportMessageId(null)
     setMsgMenuId(null)
+  }
+
+  const displayEmoji = (userId: string, username?: string | null) => {
+    return emojiFromUsername(username, userId)
   }
     if (loading) {
     return (
@@ -551,11 +632,15 @@ export default function GroupRoomPage() {
     <div
       className="min-h-screen text-white flex flex-col h-screen"
       style={{
-        background:
-          'radial-gradient(ellipse at top, #0c1a1f 0%, #000000 55%), repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(34,211,238,0.03) 2px, rgba(34,211,238,0.03) 3px)',
+        background: `
+          radial-gradient(ellipse 120% 80% at 50% -20%, rgba(34,211,238,0.18) 0%, transparent 50%),
+          radial-gradient(ellipse 80% 50% at 100% 50%, rgba(8,47,73,0.35) 0%, transparent 45%),
+          radial-gradient(ellipse 60% 40% at 0% 80%, rgba(34,211,238,0.08) 0%, transparent 40%),
+          linear-gradient(180deg, #05080c 0%, #000000 100%)
+        `,
       }}
     >
-      <div className="shrink-0 border-b border-cyan-900/40 bg-black/60 backdrop-blur-md p-3 space-y-2">
+      <div className="shrink-0 border-b border-cyan-500/15 bg-black/50 backdrop-blur-md p-3 space-y-2">
         <button
           type="button"
           onClick={() => setLeaveModal(true)}
@@ -626,10 +711,18 @@ export default function GroupRoomPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setShowMembers(true)}
-                className="text-xs font-medium bg-zinc-800 border border-zinc-600 px-3 py-2 rounded-xl"
+                onClick={() => {
+                  setShowMembers(true)
+                  loadMemberReports()
+                }}
+                className="relative text-xs font-medium bg-zinc-800 border border-zinc-600 px-3 py-2 rounded-xl"
               >
                 Members
+                {adminReportCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-[10px] font-bold flex items-center justify-center">
+                    {adminReportCount > 9 ? '9+' : adminReportCount}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -681,12 +774,11 @@ export default function GroupRoomPage() {
             if (m.deleted) return null
             const mine = m.sender_id === user?.id
             const p = profilesById[m.sender_id]
-            const icon = mine
-              ? myProfile?.avatar_icon || p?.avatar_icon || '🎭'
-              : p?.avatar_icon || '🎭'
-            const tag = shortTag(
-              mine ? myProfile?.username || p?.username : p?.username
-            )
+            const uname = mine
+              ? myProfile?.username || p?.username
+              : p?.username
+            const icon = displayEmoji(m.sender_id, uname)
+            const tag = shortTag(uname)
 
             return (
               <div
@@ -694,20 +786,25 @@ export default function GroupRoomPage() {
                 className={`flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}
               >
                 {!mine && (
-                  <div className="text-xl shrink-0 mt-5" title={p?.username || ''}>
+                  <div className="text-xl shrink-0 mt-6" title={uname || ''}>
                     {icon}
                   </div>
                 )}
                 <div className="max-w-[85%] flex flex-col">
-                  <p className="text-[10px] text-zinc-500 mb-0.5 px-1">
-                    {icon} · {tag}
-                    {mine ? ' · you' : ''}
+                  <p className="text-sm font-semibold text-zinc-200 mb-1 px-1">
+                    <span className="mr-1">{icon}</span>
+                    <span className="text-cyan-300/90">{tag}</span>
+                    {mine ? (
+                      <span className="text-zinc-500 font-normal"> · you</span>
+                    ) : null}
                   </p>
-                  <div
-                    className={`px-3.5 py-2.5 rounded-2xl text-[15px] ${
+                  <button
+                    type="button"
+                    onClick={() => openMsgActions(m)}
+                    className={`text-left px-3.5 py-2.5 rounded-2xl text-[15px] ${
                       mine
                         ? 'bg-cyan-600 text-white rounded-br-md shadow-[0_0_24px_rgba(34,211,238,0.25)]'
-                        : 'bg-black/75 text-zinc-100 rounded-bl-md border border-cyan-500/20'
+                        : 'bg-black/70 text-zinc-100 rounded-bl-md border border-cyan-500/25'
                     }`}
                   >
                     {m.type === 'image' && m.media_url && (
@@ -727,6 +824,7 @@ export default function GroupRoomPage() {
                         controlsList="nodownload noplaybackrate"
                         disablePictureInPicture
                         className="max-w-[220px] max-h-[280px] rounded-xl"
+                        onClick={(e) => e.stopPropagation()}
                       />
                     )}
                     {m.type === 'file' && (
@@ -752,24 +850,10 @@ export default function GroupRoomPage() {
                         : ''}
                       {m.edited_at ? ' · edited' : ''}
                     </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMsgMenuId(m.id)
-                      setEditOpen(false)
-                      setEditText(m.body || '')
-                    }}
-                    className="text-[10px] text-zinc-500 mt-1 px-1 self-start"
-                  >
-                    ···
                   </button>
                 </div>
                 {mine && (
-                  <div
-                    className="text-xl shrink-0 mt-5"
-                    title={myProfile?.username || ''}
-                  >
+                  <div className="text-xl shrink-0 mt-6" title={uname || ''}>
                     {icon}
                   </div>
                 )}
@@ -780,7 +864,7 @@ export default function GroupRoomPage() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="shrink-0 border-t border-cyan-900/30 bg-black/70 backdrop-blur p-3">
+      <div className="shrink-0 border-t border-cyan-500/15 bg-black/70 backdrop-blur p-3">
         <div className="flex gap-2 items-end">
           <input
             ref={mediaRef}
@@ -833,7 +917,7 @@ export default function GroupRoomPage() {
           </button>
         </div>
         <p className="text-[10px] text-zinc-600 mt-1 px-1">
-          Enter = new line · Send button sends
+          Enter = new line · Tap a message to report / edit · Send button sends
         </p>
       </div>
 
@@ -911,7 +995,7 @@ export default function GroupRoomPage() {
                 setEditOpen(false)
               }}
             >
-              Report this message / media
+              Report this message
             </button>
             <button
               type="button"
@@ -929,9 +1013,9 @@ export default function GroupRoomPage() {
 
       {showMembers && isAdmin && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-5 max-h-[70vh] overflow-y-auto">
+          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-5 max-h-[75vh] overflow-y-auto">
             <div className="flex justify-between mb-4">
-              <p className="font-semibold">Members</p>
+              <p className="font-semibold text-base">Members</p>
               <button
                 type="button"
                 onClick={() => setShowMembers(false)}
@@ -940,15 +1024,58 @@ export default function GroupRoomPage() {
                 Close
               </button>
             </div>
+
+            {adminReportCount > 0 && (
+              <div className="mb-4 space-y-2">
+                <p className="text-sm font-semibold text-red-400">
+                  Reports ({adminReportCount})
+                </p>
+                {memberReports.map((r) => {
+                  const reason = String(r.reason || '')
+                  const typeMatch = reason.match(
+                    /(Spam|Harassment|Threats|Scam \/ fraud|Sexual content|Hate \/ abuse|Other)/i
+                  )
+                  const typeLabel = typeMatch ? typeMatch[1] : 'Report'
+                  const msgPart = reason.includes('msg:')
+                    ? reason.split('msg:').slice(1).join('msg:').trim()
+                    : reason
+                  const who =
+                    profilesById[r.reported_id]?.username ||
+                    String(r.reported_id || '').slice(0, 8)
+                  return (
+                    <div
+                      key={r.id}
+                      className="rounded-xl border border-red-500/40 bg-red-950/40 p-3 text-sm"
+                    >
+                      <p className="font-semibold text-red-300">{typeLabel}</p>
+                      <p className="text-zinc-300 mt-1 break-words">{msgPart}</p>
+                      <p className="text-[11px] text-zinc-500 mt-1">
+                        About: {who}
+                        {r.created_at
+                          ? ` · ${new Date(r.created_at).toLocaleString()}`
+                          : ''}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             <div className="space-y-2">
               {members.map((m) => (
                 <div
                   key={m.user_id}
                   className="flex items-center justify-between py-2 border-b border-zinc-800"
                 >
-                  <span className="text-sm">
-                    {m.avatar_icon || '🎭'} {m.username}
-                    {m.is_admin ? ' · Admin' : ''}
+                  <span className="text-base font-semibold">
+                    {displayEmoji(m.user_id, m.username)}{' '}
+                    <span className="text-cyan-300">{m.username}</span>
+                    {m.is_admin ? (
+                      <span className="text-zinc-500 font-normal text-sm">
+                        {' '}
+                        · Admin
+                      </span>
+                    ) : null}
                   </span>
                   {!m.is_admin && (
                     <button
@@ -972,26 +1099,28 @@ export default function GroupRoomPage() {
             <h3 className="text-lg font-semibold mb-3">
               {modal === 'report-group' ? 'Report group' : 'Report message'}
             </h3>
-            <div className="flex gap-2 mb-3">
-              <button
-                type="button"
-                onClick={() => setReportTo('platform')}
-                className={`flex-1 py-2 rounded-xl text-sm ${
-                  reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'
-                }`}
-              >
-                Platform
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportTo('admin')}
-                className={`flex-1 py-2 rounded-xl text-sm ${
-                  reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'
-                }`}
-              >
-                Group admin
-              </button>
-            </div>
+            {modal === 'report-msg' && (
+              <div className="flex gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setReportTo('platform')}
+                  className={`flex-1 py-2 rounded-xl text-sm ${
+                    reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'
+                  }`}
+                >
+                  Platform
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReportTo('admin')}
+                  className={`flex-1 py-2 rounded-xl text-sm ${
+                    reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'
+                  }`}
+                >
+                  Group admin
+                </button>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 mb-3">
               {REPORT_TYPES.map((type) => (
                 <button
