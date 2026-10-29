@@ -13,10 +13,14 @@ export default function GroupInvitePage() {
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState('')
   const [accepted, setAccepted] = useState(false)
-  const [preview, setPreview] = useState<any>(null)
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     const init = async () => {
+      if (typeof window !== 'undefined' && codeParam) {
+        sessionStorage.setItem('vanish_return_to', `/g/${codeParam}`)
+      }
+
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -87,7 +91,7 @@ export default function GroupInvitePage() {
         return
       }
 
-      setPreview({ invite, group })
+      setReady(true)
       setLoading(false)
     }
 
@@ -125,6 +129,9 @@ export default function GroupInvitePage() {
       return
     }
 
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('vanish_return_to')
+    }
     router.replace(`/group/${data.group_id}`)
   }
 
@@ -153,12 +160,6 @@ export default function GroupInvitePage() {
             One-time style join. Chats and media here are temporary.
           </p>
 
-          {preview?.group && (
-            <p className="text-cyan-400 text-sm mb-4">
-              Group id: {String(preview.group.id).slice(0, 8)}…
-            </p>
-          )}
-
           {error ? (
             <div className="space-y-4">
               <p className="text-red-400 text-sm">{error}</p>
@@ -175,7 +176,10 @@ export default function GroupInvitePage() {
               <ul className="text-sm text-zinc-300 space-y-2 list-disc pl-5">
                 <li>Messages and media can disappear after the group ends.</li>
                 <li>Do not share passwords, codes, or money details.</li>
-                <li>You can leave the group. Admin leave can end the group for everyone.</li>
+                <li>
+                  You can leave the group. If the admin leaves, the group can end
+                  for everyone.
+                </li>
                 <li>Report harmful content if needed.</li>
               </ul>
               <p className="text-[11px] font-semibold text-cyan-300/95 uppercase tracking-wide leading-relaxed">
@@ -195,7 +199,7 @@ export default function GroupInvitePage() {
 
               <button
                 type="button"
-                disabled={!accepted || joining}
+                disabled={!accepted || joining || !ready}
                 onClick={join}
                 className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl"
               >
