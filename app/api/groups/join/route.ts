@@ -5,107 +5,141 @@ export async function POST(req: Request) {
   try {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
+      return NextResponse.json({ error: 'You must be logged in' }, { status: 401 })
+    }
+
+    const body = await req.json().catch(() => ({}))
+    const raw = String(body.code || body.invite_code || '').trim()
+    if (!raw) {
+      return NextResponse.json({ error: 'Invite code required' }, { status: 400 })
+    }
+
+    const code = raw.includes('/g/')
+      ? (raw.split('/g/')[1] || '').split(/[?#]/)[0].trim().toLowerCase()
+      : raw.toLowerCase()
+
+    if (!code) {
+      return NextResponse.json({ error: 'Invalid invite code' }, { status: 400 })
     }
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        global: {
-          headers: { Authorization: authHeader },
-        },
-      }
+      { global: { headers: { Authorization: authHeader } } }
     )
 
     const {
       data: { user },
+      error: userError,
     } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
+
+    if (userError || !user) {
+      return NextResponse.json({ error: 'You must be logged in' }, { status: 401 })
     }
 
-    const body = await req.json().catch(() => ({}))
-    const code = String(body.code || '')
-      .trim()
-      .toLowerCase()
-    if (!code) {
-      return NextResponse.json({ error: 'Missing code' }, { status: 400 })
-    }
-
+    // Invite by code (your row exists under column "code")
     const { data: invite, error: invErr } = await supabase
       .from('vanish_group_invites')
       .select('*')
-      .eq('code', code)
+      .ilike('code', code)
       .maybeSingle()
 
-    if (invErr || !invite) {
+    if (invErr) {
+      return NextResponse.json({ error: invErr.message }, { status: 500 })
+    }
+    if (!invite) {
       return NextResponse.json(
-        { error: invErr?.message || 'Invite not found' },
+        { error: 'Group not available. This link may have vanished.' },
         { status: 404 }
       )
     }
 
-    if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
-      return NextResponse.json({ error: 'Invite expired' }, { status: 400 })
+    if (invite.revoked_at) {
+      return NextResponse.json(
+        { error: 'Group not available. This link was revoked.' },
+        { status: 410 }
+      )
     }
 
-    const maxUses = Number(invite.max_uses || 12)
-    const useCount = Number(invite.use_count || 0)
-    if (useCount >= maxUses) {
-      return NextResponse.json({ error: 'Invite already used up' }, { status: 400 })
+    if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
+      return NextResponse.json(
+        { error: 'Group not available. This link has expired.' },
+        { status: 410 }
+      )
+    }
+
+    const groupId = invite.group_id
+    if (!groupId) {
+      return NextResponse.json({ error: 'Invalid invite' }, { status: 400 })
     }
 
     const { data: group, error: gErr } = await supabase
       .from('vanish_groups')
       .select('*')
-      .eq('id', invite.group_id)
+      .eq('id', groupId)
       .maybeSingle()
 
-    if (gErr || !group) {
-      return NextResponse.json({ error: 'Group not found' }, { status: 404 })
+    if (gErr) {
+      return NextResponse.json({ error: gErr.message }, { status: 500 })
+    }
+    if (!group) {
+      return NextResponse.json(
+        { error: 'Group not available. This group has vanished.' },
+        { status: 404 }
+      )
     }
 
     if (group.died_at) {
-      return NextResponse.json({ error: 'Group has vanished' }, { status: 400 })
-    }
-    if (group.expires_at && new Date(group.expires_at).getTime() <= Date.now()) {
-      return NextResponse.json({ error: 'Group has vanished' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Group not available. This group has vanished.' },
+        { status: 410 }
+      )
     }
 
+    if (group.expires_at && new Date(group.expires_at).getTime() <= Date.now()) {
+      return NextResponse.json(
+        { error: 'Group not available. This group has expired.' },
+        { status: 410 }
+      )
+    }
+
+    // Already a member?
     const { data: existing } = await supabase
       .from('vanish_group_members')
-      .select('user_id')
-      .eq('group_id', group.id)
+      .select('id')
+      .eq('group_id', groupId)
       .eq('user_id', user.id)
       .maybeSingle()
 
     if (!existing) {
+      // Max members
+      const maxMembers = Number(group.max_members) > 0 ? Number(group.max_members) : 12
       const { count } = await supabase
         .from('vanish_group_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('group_id', group.id)
+        .select('id', { count: 'exact', head: true })
+        .eq('group_id', groupId)
 
-      const maxMembers = Number(group.max_members || 12)
       if ((count || 0) >= maxMembers) {
-        return NextResponse.json({ error: 'Group is full' }, { status: 400 })
+        return NextResponse.json({ error: 'Group is full' }, { status: 403 })
       }
 
       const { error: memErr } = await supabase.from('vanish_group_members').insert({
-        group_id: group.id,
+        group_id: groupId,
         user_id: user.id,
       })
-      if (memErr) {
-        return NextResponse.json({ error: memErr.message }, { status: 500 })
-      }
 
-      await supabase
-        .from('vanish_group_invites')
-        .update({ use_count: useCount + 1 })
-        .eq('id', invite.id)
+      if (memErr) {
+        // unique violation → already member
+        if (!String(memErr.message || '').toLowerCase().includes('duplicate')) {
+          return NextResponse.json({ error: memErr.message }, { status: 500 })
+        }
+      }
     }
 
-    return NextResponse.json({ success: true, group_id: group.id })
+    return NextResponse.json({
+      success: true,
+      group_id: groupId,
+    })
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || 'Something went wrong' },
