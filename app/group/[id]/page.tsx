@@ -71,6 +71,7 @@ export default function GroupRoomPage() {
   const [showMembers, setShowMembers] = useState(false)
   const [leaveModal, setLeaveModal] = useState(false)
   const [vanishedOpen, setVanishedOpen] = useState(false)
+  const [removedByAdmin, setRemovedByAdmin] = useState(false)
   const [modal, setModal] = useState<'report-group' | 'report-msg' | null>(null)
   const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
@@ -113,6 +114,13 @@ export default function GroupRoomPage() {
     setVanishedOpen(true)
     setError('This group has vanished')
     setMessages([])
+  }
+
+  const markRemovedByAdmin = () => {
+    setRemovedByAdmin(true)
+    setMessages([])
+    setError('')
+    setInfo('')
   }
 
   const goLandingClearSession = async () => {
@@ -238,6 +246,20 @@ export default function GroupRoomPage() {
       setGroup(g)
       setMaxMembersEdit(Math.min(12, g.max_members || 12))
 
+      const { data: membership } = await supabase
+        .from('vanish_group_members')
+        .select('user_id')
+        .eq('group_id', groupId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (!membership) {
+        if (!mounted) return
+        markRemovedByAdmin()
+        setLoading(false)
+        return
+      }
+
       const { data: msgs } = await supabase
         .from('vanish_group_messages')
         .select('*')
@@ -348,6 +370,29 @@ export default function GroupRoomPage() {
             markVanished()
           }
         )
+        .on(
+          'postgres_changes',
+          {
+            event: 'DELETE',
+            schema: 'public',
+            table: 'vanish_group_members',
+            filter: `group_id=eq.${groupId}`,
+          },
+          async (payload) => {
+            const oldRow: any = payload.old
+            const {
+              data: { user: u },
+            } = await supabase.auth.getUser()
+            if (u && oldRow?.user_id === u.id) {
+              markRemovedByAdmin()
+              return
+            }
+            const {
+              data: { session },
+            } = await supabase.auth.getSession()
+            if (session) await loadMembers(session.access_token)
+          }
+        )
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             console.log('Go Vanish group realtime on', groupId)
@@ -379,6 +424,17 @@ export default function GroupRoomPage() {
           return
         }
         setMyProfile((prev: any) => ({ ...prev, ...myP }))
+
+        const { data: stillMember } = await supabase
+          .from('vanish_group_members')
+          .select('user_id')
+          .eq('group_id', groupId)
+          .eq('user_id', u.id)
+          .maybeSingle()
+        if (!stillMember) {
+          markRemovedByAdmin()
+          return
+        }
 
         const gNow = groupRef.current
         const adminId = gNow?.admin_id
@@ -422,7 +478,7 @@ export default function GroupRoomPage() {
   }, [groupId, router])
 
   const sendText = async () => {
-    if (!text.trim() || !user || sending || vanishedOpen) return
+    if (!text.trim() || !user || sending || vanishedOpen || removedByAdmin) return
     setSending(true)
     const body = text.trim()
     setText('')
@@ -450,7 +506,7 @@ export default function GroupRoomPage() {
   }
 
   const uploadMedia = async (file: File, kind: 'image' | 'video' | 'file') => {
-    if (!user || !group || vanishedOpen) return
+    if (!user || !group || vanishedOpen || removedByAdmin) return
     setUploading(true)
     setError('')
     const path = `${groupId}/${user.id}/${Date.now()}-${file.name.replace(
@@ -634,10 +690,22 @@ export default function GroupRoomPage() {
   }
 
   const removeMember = async (member_id: string) => {
+    if (!isAdmin || !member_id || member_id === user?.id) return
     const {
       data: { session },
     } = await supabase.auth.getSession()
     if (!session) return
+    setError('')
+    // Block rejoin
+    try {
+      await supabase.from('vanish_group_exits').upsert({
+        group_id: groupId,
+        user_id: member_id,
+        left_at: new Date().toISOString(),
+      })
+    } catch {
+      /* optional table */
+    }
     const res = await fetch('/api/groups/members', {
       method: 'DELETE',
       headers: {
@@ -647,8 +715,14 @@ export default function GroupRoomPage() {
       body: JSON.stringify({ group_id: groupId, member_id }),
     })
     const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
+    // Always hard-delete membership so remove is real (not soft UI only)
+    const { error: delErr } = await supabase
+      .from('vanish_group_members')
+      .delete()
+      .eq('group_id', groupId)
+      .eq('user_id', member_id)
+    if (data.error && delErr) {
+      setError(data.error || delErr.message)
       return
     }
     setMembers((prev) => prev.filter((m) => m.user_id !== member_id))
@@ -696,7 +770,7 @@ export default function GroupRoomPage() {
   }
 
   const openMsgActions = (m: any) => {
-    if (vanishedOpen) return
+    if (vanishedOpen || removedByAdmin) return
     setMsgMenuId(m.id)
     setEditOpen(false)
     setEditText(m.body || '')
@@ -865,6 +939,29 @@ export default function GroupRoomPage() {
     )
   }
 
+  // Removed by admin — solid screen only, no chat behind
+  if (removedByAdmin) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-6">
+        <div className="w-full max-w-sm text-center">
+          <p className="text-2xl font-semibold text-cyan-400 mb-3">
+            You have been removed
+          </p>
+          <p className="text-zinc-400 text-sm mb-8">
+            All chats have vanished.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.replace('/home')}
+            className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl"
+          >
+            Back home
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if ((error && !group) || (vanishedOpen && !group)) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 gap-4">
@@ -886,10 +983,12 @@ export default function GroupRoomPage() {
     <div
       className="min-h-screen text-white flex flex-col h-screen"
       style={{
-        background: `
-          radial-gradient(ellipse 100% 70% at 50% 0%, rgba(34,211,238,0.14) 0%, transparent 55%),
-          radial-gradient(ellipse 50% 40% at 90% 90%, rgba(6,78,89,0.25) 0%, transparent 50%),
-          #030712
+        backgroundColor: '#000000',
+        backgroundImage: `
+          radial-gradient(ellipse 85% 50% at 50% -15%, rgba(34,211,238,0.28) 0%, transparent 52%),
+          radial-gradient(ellipse 40% 35% at 100% 100%, rgba(8,47,73,0.55) 0%, transparent 55%),
+          radial-gradient(ellipse 35% 30% at 0% 85%, rgba(34,211,238,0.08) 0%, transparent 50%),
+          linear-gradient(180deg, #04040a 0%, #000000 42%, #020617 100%)
         `,
       }}
     >
