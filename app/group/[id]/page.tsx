@@ -65,6 +65,9 @@ export default function GroupRoomPage() {
   const [members, setMembers] = useState<any[]>([])
   const [profilesById, setProfilesById] = useState<Record<string, any>>({})
   const [memberReports, setMemberReports] = useState<any[]>([])
+  const [readReportIds, setReadReportIds] = useState<Record<string, boolean>>(
+    {}
+  )
   const [showMembers, setShowMembers] = useState(false)
   const [leaveModal, setLeaveModal] = useState(false)
   const [vanishedOpen, setVanishedOpen] = useState(false)
@@ -72,7 +75,9 @@ export default function GroupRoomPage() {
   const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
   const [reportMessageId, setReportMessageId] = useState<string | null>(null)
-  const [reportTo, setReportTo] = useState<'platform' | 'admin'>('platform')
+  const [reportTo, setReportTo] = useState<'platform' | 'admin' | 'both'>(
+    'platform'
+  )
   const [msgMenuId, setMsgMenuId] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [editText, setEditText] = useState('')
@@ -86,7 +91,8 @@ export default function GroupRoomPage() {
   const groupRef = useRef<any>(null)
 
   const isAdmin = !!(user && group && user.id === group.admin_id)
-  const adminReportCount = memberReports.length
+  const unreadReports = memberReports.filter((r) => !readReportIds[r.id])
+  const adminReportCount = unreadReports.length
 
   useEffect(() => {
     groupRef.current = group
@@ -649,7 +655,6 @@ export default function GroupRoomPage() {
     setInfo('Member removed')
   }
 
-  /** Admin removes a reported message after reviewing notification */
   const adminRemoveMessage = async (messageId: string) => {
     if (!isAdmin || !messageId) return
     const { error: upErr } = await supabase
@@ -663,6 +668,11 @@ export default function GroupRoomPage() {
     }
     setMessages((prev) => prev.filter((m) => m.id !== messageId))
     setInfo('Message removed by admin')
+  }
+
+  const adminMarkReportRead = (reportId: string) => {
+    setReadReportIds((prev) => ({ ...prev, [reportId]: true }))
+    setInfo('Report marked read')
   }
 
   const saveEdit = async () => {
@@ -702,7 +712,13 @@ export default function GroupRoomPage() {
     } = await supabase.auth.getSession()
     if (!session) return
 
-    const toLabel = reportTo === 'admin' ? 'GROUP_ADMIN' : 'PLATFORM'
+    const toLabel =
+      reportTo === 'admin'
+        ? 'GROUP_ADMIN'
+        : reportTo === 'both'
+          ? 'ADMIN_AND_PLATFORM'
+          : 'PLATFORM'
+
     const msg = reportMessageId
       ? messages.find((m) => m.id === reportMessageId)
       : null
@@ -712,9 +728,14 @@ export default function GroupRoomPage() {
         ? `[media:${msg?.type || 'file'}]`
         : ''
 
+    const sendPlatform = reportTo === 'platform' || reportTo === 'both'
+    const sendAdmin = reportTo === 'admin' || reportTo === 'both'
+
     if (modal === 'report-msg' && reportMessageId) {
-      if (reportTo === 'platform') {
-        await fetch('/api/report', {
+      let platformData: any = {}
+
+      if (sendPlatform) {
+        const resP = await fetch('/api/report', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -726,69 +747,110 @@ export default function GroupRoomPage() {
             reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
           }),
         })
+        platformData = await resP.json().catch(() => ({}))
+        if (platformData.error) {
+          setError(platformData.error)
+          return
+        }
       }
 
-      const res = await fetch('/api/groups/report-message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          group_id: groupId,
-          message_id: reportMessageId,
-          report_type: reportType,
-          reason: `[to:${toLabel}] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (data.error) {
-        setError(data.error)
-        return
+      if (sendAdmin) {
+        const resA = await fetch('/api/groups/report-message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            group_id: groupId,
+            message_id: reportMessageId,
+            report_type: reportType,
+            reason: `[to:${toLabel}] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
+          }),
+        })
+        const adminData = await resA.json().catch(() => ({}))
+        if (adminData.error) {
+          setError(adminData.error)
+          return
+        }
       }
 
-      // Do NOT remove on report. Only remove if AI labels high risk.
+      // Platform AI: remove ONLY on verified high risk (not forced/false reports)
       const aiHigh =
-        data.ai_risk === 'high' ||
-        data.risk === 'high' ||
-        data.ai_label === 'high'
-      if (data.removed && aiHigh) {
+        platformData.ai_risk === 'high' &&
+        platformData.ai_verified === true &&
+        platformData.removed === true
+
+      if (aiHigh) {
         setMessages((prev) => prev.filter((m) => m.id !== reportMessageId))
-        setInfo('High-risk content removed')
+        setInfo('Verified high-risk content removed by platform')
+      } else if (reportTo === 'both') {
+        setInfo(
+          'Reported to Go Vanish and group admin — message stays unless verified high risk or admin removes it'
+        )
+      } else if (reportTo === 'admin') {
+        setInfo(
+          'Report sent to group admin — message stays until admin removes it'
+        )
       } else {
         setInfo(
-          reportTo === 'admin'
-            ? 'Report sent to group admin — message stays until admin removes it'
-            : 'Report sent to platform — message stays until reviewed'
+          'Report sent to Go Vanish — message stays unless AI verifies high risk'
         )
       }
+
       if (isAdmin) await loadMemberReports()
     } else {
-      const res = await fetch('/api/report', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          reported_id: group?.admin_id,
-          conversation_id: groupId,
-          reason: `[GROUP] [to:${toLabel}] ${reportType}: ${reportReason}`,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (data.error) {
-        setError(data.error)
-        return
+      // Report group
+      if (sendPlatform) {
+        const res = await fetch('/api/report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            reported_id: group?.admin_id,
+            conversation_id: groupId,
+            reason: `[GROUP] [to:${toLabel}] ${reportType}: ${reportReason}`,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (data.error) {
+          setError(data.error)
+          return
+        }
       }
-      setInfo('Report sent')
+      if (sendAdmin) {
+        await fetch('/api/groups/report-message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            group_id: groupId,
+            message_id: null,
+            report_type: reportType,
+            reason: `[to:${toLabel}] GROUP: ${reportType}: ${reportReason}`,
+          }),
+        }).catch(() => null)
+      }
+      setInfo(
+        reportTo === 'both'
+          ? 'Group reported to Go Vanish and admin'
+          : reportTo === 'admin'
+            ? 'Group reported to admin'
+            : 'Group reported to Go Vanish'
+      )
       if (isAdmin) await loadMemberReports()
     }
+
     setModal(null)
     setReportType('')
     setReportReason('')
     setReportMessageId(null)
     setMsgMenuId(null)
+    setReportTo('platform')
   }
 
   const displayEmoji = (userId: string, username?: string | null) => {
@@ -1242,10 +1304,10 @@ export default function GroupRoomPage() {
               </button>
             </div>
 
-            {adminReportCount > 0 && (
+            {memberReports.length > 0 && (
               <div className="mb-4 space-y-2">
                 <p className="text-sm font-semibold text-red-400">
-                  Reports ({adminReportCount})
+                  Reports ({adminReportCount} unread / {memberReports.length})
                 </p>
                 {memberReports.map((r) => {
                   const reason = String(r.reason || '')
@@ -1260,12 +1322,20 @@ export default function GroupRoomPage() {
                   const who =
                     profilesById[r.reported_id]?.username ||
                     String(r.reported_id || '').slice(0, 8)
+                  const isRead = !!readReportIds[r.id]
                   return (
                     <div
                       key={r.id}
-                      className="rounded-xl border border-red-500/40 bg-red-950/40 p-3 text-sm"
+                      className={`rounded-xl border p-3 text-sm ${
+                        isRead
+                          ? 'border-zinc-700 bg-zinc-900/60 opacity-70'
+                          : 'border-red-500/40 bg-red-950/40'
+                      }`}
                     >
-                      <p className="font-semibold text-red-300">{typeLabel}</p>
+                      <p className="font-semibold text-red-300">
+                        {typeLabel}
+                        {isRead ? ' · read' : ''}
+                      </p>
                       <p className="text-zinc-300 mt-1 break-words">{msgPart}</p>
                       <p className="text-[11px] text-zinc-500 mt-1">
                         About: {who}
@@ -1273,15 +1343,29 @@ export default function GroupRoomPage() {
                           ? ` · ${new Date(r.created_at).toLocaleString()}`
                           : ''}
                       </p>
-                      {mid && (
-                        <button
-                          type="button"
-                          onClick={() => adminRemoveMessage(mid)}
-                          className="mt-2 text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-lg"
-                        >
-                          Remove message
-                        </button>
-                      )}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {!isRead && (
+                          <button
+                            type="button"
+                            onClick={() => adminMarkReportRead(r.id)}
+                            className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg"
+                          >
+                            Mark read
+                          </button>
+                        )}
+                        {mid && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              adminRemoveMessage(mid)
+                              adminMarkReportRead(r.id)
+                            }}
+                            className="text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-lg"
+                          >
+                            Remove message
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )
                 })}
@@ -1326,28 +1410,38 @@ export default function GroupRoomPage() {
             <h3 className="text-lg font-semibold mb-3">
               {modal === 'report-group' ? 'Report group' : 'Report message'}
             </h3>
-            {modal === 'report-msg' && (
-              <div className="flex gap-2 mb-3">
-                <button
-                  type="button"
-                  onClick={() => setReportTo('platform')}
-                  className={`flex-1 py-2 rounded-xl text-sm ${
-                    reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'
-                  }`}
-                >
-                  Platform
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReportTo('admin')}
-                  className={`flex-1 py-2 rounded-xl text-sm ${
-                    reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'
-                  }`}
-                >
-                  Group admin
-                </button>
-              </div>
-            )}
+
+            <p className="text-xs text-zinc-400 mb-2">Send report to</p>
+            <div className="flex flex-col gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setReportTo('platform')}
+                className={`w-full py-2.5 rounded-xl text-sm font-medium ${
+                  reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'
+                }`}
+              >
+                REPORT TO GO VANISH
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportTo('admin')}
+                className={`w-full py-2.5 rounded-xl text-sm font-medium ${
+                  reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'
+                }`}
+              >
+                REPORT TO ADMIN
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportTo('both')}
+                className={`w-full py-2.5 rounded-xl text-sm font-medium ${
+                  reportTo === 'both' ? 'bg-yellow-600' : 'bg-zinc-800'
+                }`}
+              >
+                REPORT TO BOTH ADMIN &amp; GO VANISH
+              </button>
+            </div>
+
             <div className="flex flex-wrap gap-2 mb-3">
               {REPORT_TYPES.map((type) => (
                 <button
@@ -1379,6 +1473,7 @@ export default function GroupRoomPage() {
                   setReportType('')
                   setReportReason('')
                   setReportMessageId(null)
+                  setReportTo('platform')
                 }}
                 className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
               >
