@@ -52,7 +52,10 @@ export async function POST(req: Request) {
         { status: 410 }
       )
     }
-    if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
+    if (
+      invite.expires_at &&
+      new Date(invite.expires_at).getTime() <= Date.now()
+    ) {
       return NextResponse.json(
         { error: 'Group not available. This link has expired.' },
         { status: 410 }
@@ -79,7 +82,10 @@ export async function POST(req: Request) {
         { status: 410 }
       )
     }
-    if (group.expires_at && new Date(group.expires_at).getTime() <= Date.now()) {
+    if (
+      group.expires_at &&
+      new Date(group.expires_at).getTime() <= Date.now()
+    ) {
       return NextResponse.json(
         { error: 'Group not available. This group has expired.' },
         { status: 410 }
@@ -124,10 +130,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Group is full' }, { status: 400 })
     }
 
+    // Schema has no is_admin — admin is vanish_groups.admin_id only
     const { error: memErr } = await supabase.from('vanish_group_members').insert({
       group_id: groupId,
       user_id: user.id,
-      is_admin: false,
     })
 
     if (memErr) {

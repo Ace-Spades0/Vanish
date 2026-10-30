@@ -1,23 +1,19 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { takeReturnTo } from '@/lib/returnTo'
 
-/**
- * Username is assigned on Get Started (random), not picked here.
- * Active name → /home
- * Expired / missing / no session → sign out → landing /
- */
 export default function UsernamePage() {
   const router = useRouter()
+  const [message, setMessage] = useState('Setting up…')
 
   useEffect(() => {
     const run = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
-
       if (!user) {
         router.replace('/')
         return
@@ -34,22 +30,23 @@ export default function UsernamePage() {
         return
       }
 
-      if (profile?.is_permanent_username && profile.username) {
-        router.replace('/home')
+      const hasName = !!profile?.username
+      let active = !!profile?.is_permanent_username
+      if (hasName && profile?.username_claimed_at && !active) {
+        const hours =
+          (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+          (1000 * 60 * 60)
+        active = hours < 24
+      }
+
+      if (hasName && active) {
+        const ret = takeReturnTo()
+        router.replace(ret || '/home')
         return
       }
 
-      if (profile?.username && profile.username_claimed_at) {
-        const hoursPassed =
-          (Date.now() - new Date(profile.username_claimed_at).getTime()) /
-          (1000 * 60 * 60)
-        if (hoursPassed < 24) {
-          router.replace('/home')
-          return
-        }
-      }
-
-      // Expired or no username → leave identity path → landing only
+      // Expired / no name → landing (identity wipe path)
+      setMessage('Redirecting…')
       await supabase.auth.signOut()
       router.replace('/')
     }
@@ -59,7 +56,7 @@ export default function UsernamePage() {
 
   return (
     <div className="min-h-screen bg-black text-white flex items-center justify-center">
-      <p className="text-zinc-400 text-sm">Redirecting…</p>
+      <p className="text-zinc-400 text-sm">{message}</p>
     </div>
   )
 }
