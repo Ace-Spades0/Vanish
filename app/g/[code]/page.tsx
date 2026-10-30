@@ -46,7 +46,6 @@ export default function GroupInvitePage() {
       }
 
       if (!hasName || !active) {
-        // Get Started / identity path should create username then read vanish_return_to
         router.push('/')
         return
       }
@@ -213,7 +212,6 @@ export default function GroupInvitePage() {
                 </span>
               </label>
               <button
-                dec
                 type="button"
                 disabled={!accepted || joining || !ready}
                 onClick={join}

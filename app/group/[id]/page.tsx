@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { emojiFromUsername } from '@/lib/groupEmojis'
 
 const REPORT_TYPES = [
   'Spam',
@@ -21,23 +22,9 @@ const DURATION_OPTIONS = [
   { minutes: 1440, label: '24h' },
 ]
 
-const GROUP_EMOJIS = [
-  '🎭', '👻', '🦊', '🐼', '🐺', '🐯', '🦁', '🐸', '🐙', '🦄',
-  '🐲', '🦇', '🐍', '🦈', '🦉', '🌙', '⭐', '🔥', '⚡', '❄️',
-  '🌊', '🧿', '👁️', '🧠', '🎩', '🕶️', '🎱', '🃏', '🔮', '🗝️',
-  '💀', '👽', '🤖', '🥷', '😈', '🎃', '🪐', '☄️', '🌀', '✦',
-]
-
 function shortTag(username?: string | null) {
   const u = (username || '???').toString()
   return u.slice(-3).toUpperCase()
-}
-
-function emojiFromUsername(username?: string | null, fallbackId?: string) {
-  const s = (username || fallbackId || '?').toString()
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
-  return GROUP_EMOJIS[h % GROUP_EMOJIS.length]
 }
 
 export default function GroupRoomPage() {
