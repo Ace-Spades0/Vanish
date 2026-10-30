@@ -44,11 +44,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Only admin can end group' }, { status: 403 })
     }
 
+    const now = new Date().toISOString()
+
+    // 1) Realtime UPDATE so every open client sees "vanished"
+    await admin
+      .from('vanish_groups')
+      .update({ died_at: now })
+      .eq('id', group_id)
+
+    await admin
+      .from('vanish_group_invites')
+      .update({ revoked_at: now })
+      .eq('group_id', group_id)
+
+    // 2) Wipe contents (group row kept briefly so subscribers get died_at)
     await admin.from('vanish_group_messages').delete().eq('group_id', group_id)
     await admin.from('vanish_group_members').delete().eq('group_id', group_id)
     await admin.from('vanish_group_exits').delete().eq('group_id', group_id)
     await admin.from('vanish_group_invites').delete().eq('group_id', group_id)
     await admin.from('reports').delete().eq('conversation_id', group_id)
+
+    // 3) Remove group row
     await admin.from('vanish_groups').delete().eq('id', group_id)
 
     return NextResponse.json({ success: true })

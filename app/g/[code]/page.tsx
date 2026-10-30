@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { saveReturnTo, takeReturnTo } from '@/lib/returnTo'
 
 export default function GroupInvitePage() {
   const params = useParams()
@@ -16,9 +17,15 @@ export default function GroupInvitePage() {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
+    if (codeParam) {
+      saveReturnTo(`/g/${codeParam}`)
+    }
+  }, [codeParam])
+
+  useEffect(() => {
     const init = async () => {
-      if (typeof window !== 'undefined' && codeParam) {
-        sessionStorage.setItem('vanish_return_to', `/g/${codeParam}`)
+      if (codeParam) {
+        saveReturnTo(`/g/${codeParam}`)
       }
 
       const {
@@ -78,7 +85,10 @@ export default function GroupInvitePage() {
         setLoading(false)
         return
       }
-      if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
+      if (
+        invite.expires_at &&
+        new Date(invite.expires_at).getTime() <= Date.now()
+      ) {
         setError('Group not available. This link has expired.')
         setLoading(false)
         return
@@ -90,7 +100,7 @@ export default function GroupInvitePage() {
         .eq('id', invite.group_id)
         .maybeSingle()
 
-      if (!group) {
+      if (!group || group.died_at) {
         setError('Group not available. This group has vanished.')
         setLoading(false)
         return
@@ -147,9 +157,7 @@ export default function GroupInvitePage() {
       return
     }
 
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('vanish_return_to')
-    }
+    takeReturnTo()
     router.replace(`/group/${data.group_id}`)
   }
 

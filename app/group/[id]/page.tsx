@@ -48,6 +48,7 @@ export default function GroupRoomPage() {
   const [memberReports, setMemberReports] = useState<any[]>([])
   const [showMembers, setShowMembers] = useState(false)
   const [leaveModal, setLeaveModal] = useState(false)
+  const [vanishedOpen, setVanishedOpen] = useState(false)
   const [modal, setModal] = useState<'report-group' | 'report-msg' | null>(null)
   const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
@@ -62,6 +63,7 @@ export default function GroupRoomPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const mediaRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
+  const channelRef = useRef<any>(null)
 
   const isAdmin = !!(user && group && user.id === group.admin_id)
   const adminReportCount = memberReports.length
@@ -76,6 +78,12 @@ export default function GroupRoomPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const markVanished = () => {
+    setVanishedOpen(true)
+    setError('This group has vanished')
+    setMessages([])
+  }
 
   const loadMemberReports = async () => {
     if (!groupId) return
@@ -124,7 +132,6 @@ export default function GroupRoomPage() {
   }
 
   useEffect(() => {
-    let channel: any = null
     let mounted = true
 
     const init = async () => {
@@ -135,7 +142,7 @@ export default function GroupRoomPage() {
         router.replace('/')
         return
       }
-      if (!mounted) return
+      if (!mounted) return return
       setUser(user)
 
       const { data: profile } = await supabase
@@ -153,6 +160,7 @@ export default function GroupRoomPage() {
 
       if (gErr || !g) {
         setError('Group not found or already vanished')
+        setVanishedOpen(true)
         setLoading(false)
         return
       }
@@ -160,7 +168,8 @@ export default function GroupRoomPage() {
         g.died_at ||
         (g.expires_at && new Date(g.expires_at).getTime() <= Date.now())
       ) {
-        setError('This group has vanished')
+        markVanished()
+        setGroup(g)
         setLoading(false)
         return
       }
@@ -191,38 +200,60 @@ export default function GroupRoomPage() {
         await loadMemberReports()
       }
 
-      channel = supabase
-        .channel(`group-${groupId}`)
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+      }
+
+      const ch = supabase
+        .channel(`group-rt-${groupId}-${user.id}`)
         .on(
           'postgres_changes',
           {
-            event: '*',
+            event: 'INSERT',
             schema: 'public',
             table: 'vanish_group_messages',
             filter: `group_id=eq.${groupId}`,
           },
           (payload) => {
-            if (payload.eventType === 'INSERT') {
-              const row: any = payload.new
-              if (row.deleted) return
-              setMessages((prev) => {
-                if (prev.some((m) => m.id === row.id)) return prev
-                return [...prev, row]
-              })
-              refreshSenderProfiles([row])
-            }
-            if (payload.eventType === 'UPDATE') {
-              const row: any = payload.new
-              setMessages((prev) =>
-                prev
-                  .map((m) => (m.id === row.id ? row : m))
-                  .filter((m) => !m.deleted)
-              )
-            }
-            if (payload.eventType === 'DELETE') {
-              const row: any = payload.old
-              setMessages((prev) => prev.filter((m) => m.id !== row.id))
-            }
+            const row: any = payload.new
+            if (!row || row.deleted) return
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === row.id)) return prev
+              return [...prev, row]
+            })
+            refreshSenderProfiles([row])
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'vanish_group_messages',
+            filter: `group_id=eq.${groupId}`,
+          },
+          (payload) => {
+            const row: any = payload.new
+            if (!row) return
+            setMessages((prev) =>
+              prev
+                .map((m) => (m.id === row.id ? row : m))
+                .filter((m) => !m.deleted)
+            )
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'DELETE',
+            schema: 'public',
+            table: 'vanish_group_messages',
+            filter: `group_id=eq.${groupId}`,
+          },
+          (payload) => {
+            const row: any = payload.old
+            if (!row?.id) return
+            setMessages((prev) => prev.filter((m) => m.id !== row.id))
           }
         )
         .on(
@@ -236,42 +267,74 @@ export default function GroupRoomPage() {
           (payload) => {
             const row: any = payload.new
             if (row?.died_at) {
-              setError('This group has vanished')
               setGroup(row)
+              markVanished()
             } else if (row) {
               setGroup(row)
             }
           }
         )
-        .subscribe()
+        .on(
+          'postgres_changes',
+          {
+            event: 'DELETE',
+            schema: 'public',
+            table: 'vanish_groups',
+            filter: `id=eq.${groupId}`,
+          },
+          () => {
+            markVanished()
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Go Vanish group realtime on', groupId)
+          }
+        })
+
+      channelRef.current = ch
     }
 
     init()
     return () => {
       mounted = false
-      if (channel) supabase.removeChannel(channel)
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+        channelRef.current = null
+      }
     }
   }, [groupId, router])
 
   const sendText = async () => {
-    if (!text.trim() || !user || sending) return
+    if (!text.trim() || !user || sending || vanishedOpen) return
     setSending(true)
     const body = text.trim()
     setText('')
     if (textRef.current) textRef.current.style.height = 'auto'
 
-    const { error: insErr } = await supabase.from('vanish_group_messages').insert({
-      group_id: groupId,
-      sender_id: user.id,
-      body,
-      type: 'text',
-    })
+    const { data: inserted, error: insErr } = await supabase
+      .from('vanish_group_messages')
+      .insert({
+        group_id: groupId,
+        sender_id: user.id,
+        body,
+        type: 'text',
+      })
+      .select('*')
+      .maybeSingle()
+
     if (insErr) setError(insErr.message)
+    else if (inserted) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === inserted.id)) return prev
+        return [...prev, inserted]
+      })
+    }
     setSending(false)
   }
 
   const uploadMedia = async (file: File, kind: 'image' | 'video' | 'file') => {
-    if (!user || !group) return
+    if (!user || !group || vanishedOpen) return
     setUploading(true)
     setError('')
     const path = `${groupId}/${user.id}/${Date.now()}-${file.name.replace(
@@ -287,15 +350,25 @@ export default function GroupRoomPage() {
       return
     }
     const { data: pub } = supabase.storage.from('chat-photos').getPublicUrl(path)
-    const { error: insErr } = await supabase.from('vanish_group_messages').insert({
-      group_id: groupId,
-      sender_id: user.id,
-      body: kind === 'file' ? file.name : '',
-      type: kind,
-      media_url: pub?.publicUrl || '',
-      media_path: path,
-    })
+    const { data: inserted, error: insErr } = await supabase
+      .from('vanish_group_messages')
+      .insert({
+        group_id: groupId,
+        sender_id: user.id,
+        body: kind === 'file' ? file.name : '',
+        type: kind,
+        media_url: pub?.publicUrl || '',
+        media_path: path,
+      })
+      .select('*')
+      .maybeSingle()
     if (insErr) setError(insErr.message)
+    else if (inserted) {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === inserted.id)) return prev
+        return [...prev, inserted]
+      })
+    }
     setUploading(false)
   }
 
@@ -371,7 +444,7 @@ export default function GroupRoomPage() {
       setError(data.error)
       return
     }
-    router.replace('/home')
+    markVanished()
   }
 
   const leaveAsMember = async () => {
@@ -487,6 +560,7 @@ export default function GroupRoomPage() {
   }
 
   const openMsgActions = (m: any) => {
+    if (vanishedOpen) return
     setMsgMenuId(m.id)
     setEditOpen(false)
     setEditText(m.body || '')
@@ -596,11 +670,14 @@ export default function GroupRoomPage() {
     )
   }
 
-  if (error && !group) {
+  if ((error && !group) || (vanishedOpen && !group)) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 gap-4">
-        <p className="text-red-400 text-center">{error}</p>
+        <p className="text-red-400 text-center">
+          {error || 'This group has vanished'}
+        </p>
         <button
+          type="button"
           onClick={() => router.push('/home')}
           className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
         >
@@ -624,7 +701,7 @@ export default function GroupRoomPage() {
       <div className="shrink-0 border-b border-cyan-500/15 bg-black/50 backdrop-blur-md p-3 space-y-2">
         <button
           type="button"
-          onClick={() => setLeaveModal(true)}
+          onClick={() => (vanishedOpen ? router.push('/home') : setLeaveModal(true))}
           className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
         >
           ← Back to Home
@@ -642,7 +719,7 @@ export default function GroupRoomPage() {
           </p>
         </div>
 
-        {isAdmin && (
+        {isAdmin && !vanishedOpen && (
           <div className="rounded-xl border border-cyan-800/50 bg-zinc-950/80 p-2 space-y-2">
             <p className="text-[11px] text-cyan-300/90">
               Ends:{' '}
@@ -730,19 +807,23 @@ export default function GroupRoomPage() {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => {
-            setModal('report-group')
-            setReportMessageId(null)
-            setReportTo('platform')
-          }}
-          className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl"
-        >
-          Report group
-        </button>
+        {!vanishedOpen && (
+          <button
+            type="button"
+            onClick={() => {
+              setModal('report-group')
+              setReportMessageId(null)
+              setReportTo('platform')
+            }}
+            className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl"
+          >
+            Report group
+          </button>
+        )}
         {info && <p className="text-xs text-cyan-400">{info}</p>}
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && !vanishedOpen && (
+          <p className="text-xs text-red-400">{error}</p>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -793,7 +874,7 @@ export default function GroupRoomPage() {
                       <img
                         src={m.media_url}
                         alt=""
-                        className="max-w-[220px] max-h-[280px] rounded-xl object-cover"
+                        className="max-w-[220px] max-h-[280px] rounded-xl object-cover select-none pointer-events-none"
                         draggable={false}
                         onContextMenu={(e) => e.preventDefault()}
                       />
@@ -802,15 +883,16 @@ export default function GroupRoomPage() {
                       <video
                         src={m.media_url}
                         controls
-                        controlsList="nodownload noplaybackrate"
+                        controlsList="nodownload noplaybackrate noremoteplayback"
                         disablePictureInPicture
                         className="max-w-[220px] max-h-[280px] rounded-xl"
                         onClick={(e) => e.stopPropagation()}
+                        onContextMenu={(e) => e.preventDefault()}
                       />
                     )}
                     {m.type === 'file' && (
                       <p className="text-sm">
-                        File (session view): {m.body || 'attachment'}
+                        File (view in session only): {m.body || 'attachment'}
                       </p>
                     )}
                     {(!m.type || m.type === 'text') && (
@@ -845,64 +927,86 @@ export default function GroupRoomPage() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="shrink-0 border-t border-cyan-500/15 bg-black/70 backdrop-blur p-3">
-        <div className="flex gap-2 items-end">
-          <input
-            ref={mediaRef}
-            type="file"
-            accept="image/*,video/*"
-            className="hidden"
-            onChange={onMediaPick}
-          />
-          <input
-            ref={fileRef}
-            type="file"
-            className="hidden"
-            onChange={onFilePick}
-          />
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={() => mediaRef.current?.click()}
-            className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
-          >
-            📷
-          </button>
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-            className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
-          >
-            📎
-          </button>
-          <textarea
-            ref={textRef}
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value)
-              requestAnimationFrame(grow)
-            }}
-            placeholder="Message…"
-            rows={1}
-            className="flex-1 min-w-0 p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-[15px] resize-none overflow-hidden focus:outline-none focus:border-cyan-400"
-            style={{ maxHeight: 160 }}
-          />
-          <button
-            type="button"
-            onClick={sendText}
-            disabled={sending || uploading}
-            className="shrink-0 bg-cyan-500 text-black font-medium px-4 h-11 rounded-xl disabled:opacity-50"
-          >
-            Send
-          </button>
+      {!vanishedOpen && (
+        <div className="shrink-0 border-t border-cyan-500/15 bg-black/70 backdrop-blur p-3">
+          <div className="flex gap-2 items-end">
+            <input
+              ref={mediaRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={onMediaPick}
+            />
+            <input
+              ref={fileRef}
+              type="file"
+              className="hidden"
+              onChange={onFilePick}
+            />
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => mediaRef.current?.click()}
+              className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
+            >
+              📷
+            </button>
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+              className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
+            >
+              📎
+            </button>
+            <textarea
+              ref={textRef}
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value)
+                requestAnimationFrame(grow)
+              }}
+              placeholder="Message…"
+              rows={1}
+              className="flex-1 min-w-0 p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-[15px] resize-none overflow-hidden focus:outline-none focus:border-cyan-400"
+              style={{ maxHeight: 160 }}
+            />
+            <button
+              type="button"
+              onClick={sendText}
+              disabled={sending || uploading}
+              className="shrink-0 bg-cyan-500 text-black font-medium px-4 h-11 rounded-xl disabled:opacity-50"
+            >
+              Send
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-600 mt-1 px-1">
+            Enter = new line · Tap a message to report / edit · Photos view only
+          </p>
         </div>
-        <p className="text-[10px] text-zinc-600 mt-1 px-1">
-          Enter = new line · Tap a message to report / edit · Send button sends
-        </p>
-      </div>
+      )}
 
-      {leaveModal && (
+      {vanishedOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 text-center">
+            <p className="text-2xl font-semibold text-cyan-400 mb-2">
+              This group has vanished
+            </p>
+            <p className="text-sm text-zinc-400 mb-6">
+              Everything in this group is gone. Invite links no longer work.
+            </p>
+            <button
+              type="button"
+              onClick={() => router.replace('/home')}
+              className="w-full bg-cyan-500 text-black font-semibold py-3 rounded-xl"
+            >
+              Back to Home
+            </button>
+          </div>
+        </div>
+      )}
+
+      {leaveModal && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
             <h3 className="text-lg font-semibold mb-2">
@@ -933,7 +1037,7 @@ export default function GroupRoomPage() {
         </div>
       )}
 
-      {msgMenuId && (
+      {msgMenuId && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-4">
             {messages.find((m) => m.id === msgMenuId)?.sender_id ===
@@ -992,7 +1096,7 @@ export default function GroupRoomPage() {
         </div>
       )}
 
-      {showMembers && isAdmin && (
+      {showMembers && isAdmin && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-5 max-h-[75vh] overflow-y-auto">
             <div className="flex justify-between mb-4">
@@ -1051,14 +1155,14 @@ export default function GroupRoomPage() {
                   <span className="text-base font-semibold">
                     {displayEmoji(m.user_id, m.username)}{' '}
                     <span className="text-cyan-300">{m.username}</span>
-                    {m.is_admin ? (
+                    {m.user_id === group?.admin_id ? (
                       <span className="text-zinc-500 font-normal text-sm">
                         {' '}
                         · Admin
                       </span>
                     ) : null}
                   </span>
-                  {!m.is_admin && (
+                  {m.user_id !== group?.admin_id && (
                     <button
                       type="button"
                       onClick={() => removeMember(m.user_id)}
@@ -1074,7 +1178,7 @@ export default function GroupRoomPage() {
         </div>
       )}
 
-      {modal && (
+      {modal && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl p-5">
             <h3 className="text-lg font-semibold mb-3">

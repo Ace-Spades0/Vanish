@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { takeReturnTo } from '@/lib/returnTo'
+import { peekReturnTo, takeReturnTo } from '@/lib/returnTo'
 
 export default function UsernamePage() {
   const router = useRouter()
@@ -40,12 +40,21 @@ export default function UsernamePage() {
       }
 
       if (hasName && active) {
-        const ret = takeReturnTo()
-        router.replace(ret || '/home')
+        const ret = takeReturnTo() || peekReturnTo()
+        if (ret) {
+          try {
+            sessionStorage.removeItem('vanish_return_to')
+            localStorage.removeItem('vanish_return_to')
+          } catch {
+            /* ignore */
+          }
+          router.replace(ret)
+          return
+        }
+        router.replace('/home')
         return
       }
 
-      // Expired / no name → landing (identity wipe path)
       setMessage('Redirecting…')
       await supabase.auth.signOut()
       router.replace('/')
