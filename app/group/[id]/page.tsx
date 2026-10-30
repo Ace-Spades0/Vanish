@@ -22,9 +22,23 @@ const DURATION_OPTIONS = [
   { minutes: 1440, label: '24h' },
 ]
 
-function shortTag(username?: string | null) {
-  const u = (username || '???').toString()
-  return u.slice(-3).toUpperCase()
+function shortTag(username?: string | null, fallbackId?: string) {
+  const s = (username || fallbackId || '???').toString()
+  return s.slice(-3).toUpperCase()
+}
+
+function isProfileUsernameActive(profile: {
+  username?: string | null
+  username_claimed_at?: string | null
+  is_permanent_username?: boolean | null
+}) {
+  if (!profile?.username) return false
+  if (profile.is_permanent_username) return true
+  if (!profile.username_claimed_at) return false
+  const hours =
+    (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+    (1000 * 60 * 60)
+  return hours < 24
 }
 
 export default function GroupRoomPage() {
@@ -44,95 +58,91 @@ export default function GroupRoomPage() {
   const [sending, setSending] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [members, setMembers] = useState<any[]>([])
-  const [profilesById, setProfilesById] = useState<Record<string, any>>({})
-  const [memberReports, setMemberReports] = useState<any[]>([])
+  const [profilesMap, setProfilesMap] = useState<Record<string, any>>({})
   const [showMembers, setShowMembers] = useState(false)
-  const [leaveModal, setLeaveModal] = useState(false)
-  const [vanishedOpen, setVanishedOpen] = useState(false)
-  const [modal, setModal] = useState<'report-group' | 'report-msg' | null>(null)
+  const [vanished, setVanished] = useState(false)
+  const [vanishedMsg, setVanishedMsg] = useState('This group has vanished.')
+  const [modal, setModal] = useState<
+    'report-group' | 'report-msg' | 'leave' | 'edit' | null
+  >(null)
   const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
   const [reportMessageId, setReportMessageId] = useState<string | null>(null)
-  const [reportTo, setReportTo] = useState<'platform' | 'admin'>('platform')
-  const [msgMenuId, setMsgMenuId] = useState<string | null>(null)
-  const [editOpen, setEditOpen] = useState(false)
+  const [reportScope, setReportScope] = useState<'platform' | 'admin'>('platform')
   const [editText, setEditText] = useState('')
-  const [maxMembersEdit, setMaxMembersEdit] = useState(12)
-
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const mediaRef = useRef<HTMLInputElement>(null)
-  const textRef = useRef<HTMLTextAreaElement>(null)
+  const [editMsgId, setEditMsgId] = useState<string | null>(null)
+  const [adminReports, setAdminReports] = useState<any[]>([])
+  const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  const isAdmin = !!(user && group && user.id === group.admin_id)
-  const adminReportCount = memberReports.length
+  const isAdmin = !!(user && group && group.admin_id === user.id)
 
-  const grow = () => {
-    const el = textRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  const markVanished = () => {
-    setVanishedOpen(true)
-    setError('This group has vanished')
+  const markVanished = (msg?: string) => {
+    setVanished(true)
+    setVanishedMsg(msg || 'This group has vanished.')
     setMessages([])
   }
 
-  const loadMemberReports = async () => {
-    if (!groupId) return
-    const { data } = await supabase
-      .from('reports')
-      .select('*')
-      .eq('conversation_id', groupId)
-      .order('created_at', { ascending: false })
-      .limit(40)
-    setMemberReports(data || [])
-  }
-
-  const loadMembers = async (token: string) => {
-    const res = await fetch(`/api/groups/members?group_id=${groupId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.members) {
-      setMembers(data.members)
-      const map: Record<string, any> = {}
-      data.members.forEach((m: any) => {
-        map[m.user_id] = {
-          id: m.user_id,
-          username: m.username,
-          avatar_icon: m.avatar_icon,
-        }
-      })
-      setProfilesById((prev) => ({ ...prev, ...map }))
+  const forceLanding = async () => {
+    try {
+      await supabase.auth.signOut()
+    } catch {
+      /* ignore */
     }
-  }
-
-  const refreshSenderProfiles = async (msgs: any[]) => {
-    const ids = Array.from(
-      new Set(msgs.map((m) => m.sender_id).filter(Boolean))
-    )
-    if (!ids.length) return
-    const { data: profs } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_icon')
-      .in('id', ids)
-    const map: Record<string, any> = {}
-    ;(profs || []).forEach((p) => {
-      map[p.id] = p
-    })
-    setProfilesById((prev) => ({ ...prev, ...map }))
+    router.replace('/')
   }
 
   useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  useEffect(() => {
     let mounted = true
+
+    const loadMembers = async () => {
+      const { data: mems } = await supabase
+        .from('vanish_group_members')
+        .select('user_id')
+        .eq('group_id', groupId)
+
+      const list = mems || []
+      setMembers(list)
+
+      const ids = list.map((m: any) => m.user_id).filter(Boolean)
+      if (ids.length === 0) return
+
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_icon, username_claimed_at, is_permanent_username')
+        .in('id', ids)
+
+      const map: Record<string, any> = {}
+      ;(profs || []).forEach((p: any) => {
+        map[p.id] = p
+      })
+      setProfilesMap(map)
+    }
+
+    const loadMessages = async () => {
+      const { data } = await supabase
+        .from('vanish_group_messages')
+        .select('*')
+        .eq('group_id', groupId)
+        .eq('deleted', false)
+        .order('created_at', { ascending: true })
+      if (mounted) setMessages(data || [])
+    }
+
+    const loadAdminReports = async () => {
+      const { data } = await supabase
+        .from('reports')
+        .select('*')
+        .eq('conversation_id', groupId)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      if (mounted) setAdminReports(data || [])
+    }
 
     const init = async () => {
       const {
@@ -142,7 +152,7 @@ export default function GroupRoomPage() {
         router.replace('/')
         return
       }
-      if (!mounted) return return
+      if (!mounted) return
       setUser(user)
 
       const { data: profile } = await supabase
@@ -150,6 +160,12 @@ export default function GroupRoomPage() {
         .select('*')
         .eq('id', user.id)
         .maybeSingle()
+
+      if (!profile || !isProfileUsernameActive(profile)) {
+        await forceLanding()
+        return
+      }
+      if (!mounted) return
       setMyProfile(profile)
 
       const { data: g, error: gErr } = await supabase
@@ -158,54 +174,37 @@ export default function GroupRoomPage() {
         .eq('id', groupId)
         .maybeSingle()
 
-      if (gErr || !g) {
-        setError('Group not found or already vanished')
-        setVanishedOpen(true)
+      if (gErr || !g || g.died_at) {
+        markVanished('This group has vanished.')
         setLoading(false)
         return
       }
-      if (
-        g.died_at ||
-        (g.expires_at && new Date(g.expires_at).getTime() <= Date.now())
-      ) {
-        markVanished()
-        setGroup(g)
-        setLoading(false)
-        return
-      }
+      if (!mounted) return
       setGroup(g)
-      setMaxMembersEdit(Math.min(12, g.max_members || 12))
 
-      const { data: msgs } = await supabase
-        .from('vanish_group_messages')
-        .select('*')
+      const { data: mem } = await supabase
+        .from('vanish_group_members')
+        .select('user_id')
         .eq('group_id', groupId)
-        .or('deleted.is.null,deleted.eq.false')
-        .order('created_at', { ascending: true })
-        .limit(200)
+        .eq('user_id', user.id)
+        .maybeSingle()
 
-      const list = msgs || []
-      setMessages(list)
-      await refreshSenderProfiles(list)
-      setLoading(false)
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (session) {
-        await loadMembers(session.access_token)
+      if (!mem) {
+        setError('You are not in this group.')
+        setLoading(false)
+        return
       }
 
-      if (g.admin_id === user.id) {
-        await loadMemberReports()
-      }
+      await loadMembers()
+      await loadMessages()
+      if (g.admin_id === user.id) await loadAdminReports()
 
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current)
       }
 
       const ch = supabase
-        .channel(`group-rt-${groupId}-${user.id}`)
+        .channel(`group-room-${groupId}`)
         .on(
           'postgres_changes',
           {
@@ -215,13 +214,12 @@ export default function GroupRoomPage() {
             filter: `group_id=eq.${groupId}`,
           },
           (payload) => {
-            const row: any = payload.new
+            const row = payload.new as any
             if (!row || row.deleted) return
             setMessages((prev) => {
               if (prev.some((m) => m.id === row.id)) return prev
               return [...prev, row]
             })
-            refreshSenderProfiles([row])
           }
         )
         .on(
@@ -233,13 +231,15 @@ export default function GroupRoomPage() {
             filter: `group_id=eq.${groupId}`,
           },
           (payload) => {
-            const row: any = payload.new
+            const row = payload.new as any
             if (!row) return
-            setMessages((prev) =>
-              prev
-                .map((m) => (m.id === row.id ? row : m))
-                .filter((m) => !m.deleted)
-            )
+            if (row.deleted) {
+              setMessages((prev) => prev.filter((m) => m.id !== row.id))
+            } else {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === row.id ? { ...m, ...row } : m))
+              )
+            }
           }
         )
         .on(
@@ -251,7 +251,7 @@ export default function GroupRoomPage() {
             filter: `group_id=eq.${groupId}`,
           },
           (payload) => {
-            const row: any = payload.old
+            const row = payload.old as any
             if (!row?.id) return
             setMessages((prev) => prev.filter((m) => m.id !== row.id))
           }
@@ -265,12 +265,11 @@ export default function GroupRoomPage() {
             filter: `id=eq.${groupId}`,
           },
           (payload) => {
-            const row: any = payload.new
+            const row = payload.new as any
             if (row?.died_at) {
-              setGroup(row)
-              markVanished()
+              markVanished('This group has vanished.')
             } else if (row) {
-              setGroup(row)
+              setGroup((prev: any) => ({ ...prev, ...row }))
             }
           }
         )
@@ -283,21 +282,69 @@ export default function GroupRoomPage() {
             filter: `id=eq.${groupId}`,
           },
           () => {
-            markVanished()
+            markVanished('This group has vanished.')
           }
         )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log('Go Vanish group realtime on', groupId)
-          }
-        })
+        .subscribe()
 
       channelRef.current = ch
+      setLoading(false)
     }
 
     init()
+
+    const expiryTick = setInterval(async () => {
+      const {
+        data: { user: u },
+      } = await supabase.auth.getUser()
+      if (!u) {
+        router.replace('/')
+        return
+      }
+      const { data: p } = await supabase
+        .from('profiles')
+        .select(
+          'username, username_claimed_at, is_permanent_username, id'
+        )
+        .eq('id', u.id)
+        .maybeSingle()
+
+      if (!p || !isProfileUsernameActive(p)) {
+        clearInterval(expiryTick)
+        await forceLanding()
+        return
+      }
+
+      // Admin username expired → kill group for everyone (realtime via died_at)
+      if (group?.admin_id) {
+        const { data: adminProf } = await supabase
+          .from('profiles')
+          .select(
+            'username, username_claimed_at, is_permanent_username'
+          )
+          .eq('id', group.admin_id)
+          .maybeSingle()
+
+        if (!adminProf || !isProfileUsernameActive(adminProf)) {
+          const {
+            data: { session },
+          } = await supabase.auth.getSession()
+          await fetch('/api/groups/die', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session?.access_token || ''}`,
+            },
+            body: JSON.stringify({ group_id: groupId }),
+          })
+          markVanished('This group has vanished.')
+        }
+      }
+    }, 20000)
+
     return () => {
       mounted = false
+      clearInterval(expiryTick)
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current)
         channelRef.current = null
@@ -305,907 +352,623 @@ export default function GroupRoomPage() {
     }
   }, [groupId, router])
 
+  const endGroup = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    const res = await fetch('/api/groups/die', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session?.access_token || ''}`,
+      },
+      body: JSON.stringify({ group_id: groupId }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setError(data.error || 'Could not end group')
+      return
+    }
+    markVanished('This group has vanished.')
+  }
+
+  const leaveAsMember = async () => {
+    if (!user) return
+    await supabase.from('vanish_group_exits').upsert(
+      {
+        group_id: groupId,
+        user_id: user.id,
+      },
+      { onConflict: 'group_id,user_id' }
+    )
+    await supabase
+      .from('vanish_group_members')
+      .delete()
+      .eq('group_id', groupId)
+      .eq('user_id', user.id)
+    router.replace('/home')
+  }
+
+  const confirmLeave = async () => {
+    setModal(null)
+    if (isAdmin) {
+      await endGroup()
+    } else {
+      await leaveAsMember()
+    }
+  }
+
+  const createInvite = async () => {
+    if (!isAdmin) return
+    const code = Math.random().toString(36).slice(2, 10)
+    const { error: invErr } = await supabase.from('vanish_group_invites').insert({
+      group_id: groupId,
+      code,
+      created_by: user.id,
+    })
+    if (invErr) {
+      setError(invErr.message)
+      return
+    }
+    const origin =
+      typeof window !== 'undefined' ? window.location.origin : ''
+    setInviteLink(`${origin}/g/${code}`)
+    setInfo('Invite link ready')
+  }
+
+  const copyInvite = async () => {
+    if (!inviteLink) return
+    try {
+      await navigator.clipboard.writeText(inviteLink)
+      setInfo('Link copied')
+    } catch {
+      setInfo(inviteLink)
+    }
+  }
+
+  const setDuration = async (minutes: number) => {
+    if (!isAdmin) return
+    const expires = new Date(Date.now() + minutes * 60 * 1000).toISOString()
+    const { error: e } = await supabase
+      .from('vanish_groups')
+      .update({
+        duration_minutes: minutes,
+        expires_at: expires,
+      })
+      .eq('id', groupId)
+    if (e) setError(e.message)
+    else {
+      setGroup((g: any) => ({
+        ...g,
+        duration_minutes: minutes,
+        expires_at: expires,
+      }))
+      setInfo('Group time updated')
+    }
+  }
+
   const sendText = async () => {
-    if (!text.trim() || !user || sending || vanishedOpen) return
+    if (!user || !text.trim() || sending || vanished) return
     setSending(true)
     const body = text.trim()
     setText('')
-    if (textRef.current) textRef.current.style.height = 'auto'
-
-    const { data: inserted, error: insErr } = await supabase
-      .from('vanish_group_messages')
-      .insert({
-        group_id: groupId,
-        sender_id: user.id,
-        body,
-        type: 'text',
-      })
-      .select('*')
-      .maybeSingle()
-
-    if (insErr) setError(insErr.message)
-    else if (inserted) {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === inserted.id)) return prev
-        return [...prev, inserted]
-      })
-    }
+    const { error: e } = await supabase.from('vanish_group_messages').insert({
+      group_id: groupId,
+      sender_id: user.id,
+      type: 'text',
+      body,
+      deleted: false,
+    })
+    if (e) setError(e.message)
     setSending(false)
   }
 
-  const uploadMedia = async (file: File, kind: 'image' | 'video' | 'file') => {
-    if (!user || !group || vanishedOpen) return
+  const uploadMedia = async (file: File) => {
+    if (!user || vanished) return
     setUploading(true)
-    setError('')
-    const path = `${groupId}/${user.id}/${Date.now()}-${file.name.replace(
-      /[^a-zA-Z0-9._-]/g,
-      '_'
-    )}`
+    const path = `groups/${groupId}/${Date.now()}-${file.name}`
     const { error: upErr } = await supabase.storage
       .from('chat-photos')
-      .upload(path, file, { upsert: false })
+      .upload(path, file)
     if (upErr) {
       setError(upErr.message)
       setUploading(false)
       return
     }
     const { data: pub } = supabase.storage.from('chat-photos').getPublicUrl(path)
-    const { data: inserted, error: insErr } = await supabase
-      .from('vanish_group_messages')
-      .insert({
-        group_id: groupId,
-        sender_id: user.id,
-        body: kind === 'file' ? file.name : '',
-        type: kind,
-        media_url: pub?.publicUrl || '',
-        media_path: path,
-      })
-      .select('*')
-      .maybeSingle()
-    if (insErr) setError(insErr.message)
-    else if (inserted) {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === inserted.id)) return prev
-        return [...prev, inserted]
-      })
-    }
+    const isVideo = file.type.startsWith('video/')
+    const { error: e } = await supabase.from('vanish_group_messages').insert({
+      group_id: groupId,
+      sender_id: user.id,
+      type: isVideo ? 'video' : 'image',
+      media_url: pub.publicUrl,
+      body: '',
+      deleted: false,
+    })
+    if (e) setError(e.message)
     setUploading(false)
   }
 
-  const onMediaPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (file.type.startsWith('video/')) await uploadMedia(file, 'video')
-    else await uploadMedia(file, 'image')
-  }
-
-  const onFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    await uploadMedia(file, 'file')
-  }
-
-  const createInvite = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) return
-    const res = await fetch('/api/groups/invite', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ group_id: groupId }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
-    const code = data.code || data.inviteCode
-    if (code) {
-      const origin =
-        typeof window !== 'undefined'
-          ? window.location.origin
-          : 'https://vanish-pearl.vercel.app'
-      setInviteLink(`${origin}/g/${code}`)
-      setInfo('Link ready — copy it')
-    }
-  }
-
-  const copyLink = async () => {
-    if (!inviteLink) return
-    try {
-      await navigator.clipboard.writeText(inviteLink)
-      setInfo('Link copied')
-    } catch {
-      setError('Could not copy')
-    }
-  }
-
-  const endGroup = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) return
-    const res = await fetch('/api/groups/die', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ group_id: groupId }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
-    markVanished()
-  }
-
-  const leaveAsMember = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session || !user) return
-
-    await supabase.from('vanish_group_exits').upsert({
-      group_id: groupId,
-      user_id: user.id,
-      left_at: new Date().toISOString(),
-    })
-
-    const res = await fetch('/api/groups/members', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ group_id: groupId, member_id: user.id }),
-    })
-    const data = await res.json().catch(() => ({}))
-
-    if (!res.ok) {
-      await supabase
-        .from('vanish_group_members')
-        .delete()
-        .eq('group_id', groupId)
-        .eq('user_id', user.id)
-    } else if (data.error) {
-      setError(data.error)
-      return
-    }
-    router.replace('/home')
-  }
-
-  const confirmLeave = async () => {
-    setLeaveModal(false)
-    if (isAdmin) await endGroup()
-    else await leaveAsMember()
-  }
-
-  const saveSettings = async (duration_minutes?: number) => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) return
-    let max = Math.floor(Number(maxMembersEdit) || 12)
-    if (max < 2) max = 2
-    if (max > 12) max = 12
-    const res = await fetch('/api/groups/settings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        group_id: groupId,
-        duration_minutes,
-        max_members: max,
-      }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
-    if (data.group) setGroup(data.group)
-    setInfo('Group settings updated')
-  }
-
-  const removeMember = async (member_id: string) => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) return
-    const res = await fetch('/api/groups/members', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ group_id: groupId, member_id }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
-    setMembers((prev) => prev.filter((m) => m.user_id !== member_id))
-    setInfo('Member removed')
+  const softDeleteMessage = async (id: string) => {
+    await supabase
+      .from('vanish_group_messages')
+      .update({ deleted: true })
+      .eq('id', id)
+      .eq('sender_id', user.id)
   }
 
   const saveEdit = async () => {
-    if (!msgMenuId || !user || !editText.trim()) return
-    const msg = messages.find((m) => m.id === msgMenuId)
-    if (!msg || msg.sender_id !== user.id) return
-
-    const { error: upErr } = await supabase
+    if (!editMsgId || !editText.trim()) return
+    await supabase
       .from('vanish_group_messages')
       .update({
         body: editText.trim(),
         edited_at: new Date().toISOString(),
       })
-      .eq('id', msgMenuId)
+      .eq('id', editMsgId)
       .eq('sender_id', user.id)
-
-    if (upErr) setError(upErr.message)
-    setEditOpen(false)
-    setMsgMenuId(null)
+    setModal(null)
+    setEditMsgId(null)
     setEditText('')
   }
 
-  const openMsgActions = (m: any) => {
-    if (vanishedOpen) return
-    setMsgMenuId(m.id)
-    setEditOpen(false)
-    setEditText(m.body || '')
-  }
-
   const submitReport = async () => {
-    if (!reportType.trim() || !reportReason.trim()) {
-      setError('Choose a type and explain')
-      return
-    }
+    if (!user || !reportType || !reportReason.trim()) return
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    if (!session) return
-
-    const toLabel = reportTo === 'admin' ? 'GROUP_ADMIN' : 'PLATFORM'
-    const msg = reportMessageId
-      ? messages.find((m) => m.id === reportMessageId)
-      : null
-    const msgSnippet = msg?.body
-      ? String(msg.body).slice(0, 120)
-      : reportMessageId
-        ? `[media:${msg?.type || 'file'}]`
-        : ''
-
-    if (modal === 'report-msg' && reportMessageId) {
-      if (reportTo === 'platform') {
-        await fetch('/api/report', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            reported_id: msg?.sender_id || group?.admin_id,
-            conversation_id: groupId,
-            reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | msg:${msgSnippet}`,
-          }),
-        })
-      }
-
-      const res = await fetch('/api/groups/report-message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          group_id: groupId,
-          message_id: reportMessageId,
-          report_type: reportType,
-          reason: `[to:${toLabel}] ${reportReason} | msg:${msgSnippet}`,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (data.error) {
-        setError(data.error)
-        return
-      }
-      if (data.removed) {
-        setMessages((prev) => prev.filter((m) => m.id !== reportMessageId))
-        setInfo('Critical content removed')
-      } else {
-        setInfo(
-          reportTo === 'admin'
-            ? 'Report sent to group admin'
-            : 'Report sent to platform'
-        )
-      }
-      if (isAdmin) await loadMemberReports()
-    } else {
-      const res = await fetch('/api/report', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          reported_id: group?.admin_id,
-          conversation_id: groupId,
-          reason: `[GROUP] [to:${toLabel}] ${reportType}: ${reportReason}`,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (data.error) {
-        setError(data.error)
-        return
-      }
-      setInfo('Report sent')
-      if (isAdmin) await loadMemberReports()
-    }
+    await fetch('/api/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session?.access_token || ''}`,
+      },
+      body: JSON.stringify({
+        reported_id: group?.admin_id,
+        conversation_id: groupId,
+        reason: `[${reportScope}] ${reportType}: ${reportReason}${
+          reportMessageId ? ` msg:${reportMessageId}` : ''
+        }`,
+      }),
+    })
     setModal(null)
     setReportType('')
     setReportReason('')
     setReportMessageId(null)
-    setMsgMenuId(null)
+    setInfo('Report sent')
   }
 
-  const displayEmoji = (userId: string, username?: string | null) => {
-    return emojiFromUsername(username, userId)
+  const removeMember = async (uid: string) => {
+    if (!isAdmin) return
+    await supabase
+      .from('vanish_group_members')
+      .delete()
+      .eq('group_id', groupId)
+      .eq('user_id', uid)
+    await supabase.from('vanish_group_exits').upsert(
+      { group_id: groupId, user_id: uid },
+      { onConflict: 'group_id,user_id' }
+    )
+    setMembers((prev) => prev.filter((m) => m.user_id !== uid))
   }
-    if (loading) {
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
         <p className="text-zinc-400">Loading group…</p>
       </div>
     )
   }
-
-  if ((error && !group) || (vanishedOpen && !group)) {
+    if (vanished) {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 gap-4">
-        <p className="text-red-400 text-center">
-          {error || 'This group has vanished'}
-        </p>
-        <button
-          type="button"
-          onClick={() => router.push('/home')}
-          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
-        >
-          ← Back to Home
-        </button>
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 text-center">
+          <p className="text-2xl font-semibold text-cyan-400 mb-3">
+            {vanishedMsg}
+          </p>
+          <p className="text-sm text-zinc-400 mb-6">
+            Everything in this group is gone.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.replace('/home')}
+            className="w-full bg-cyan-500 text-black font-medium py-3 rounded-xl"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (error && !group) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="max-w-md text-center">
+          <p className="text-red-400 mb-4">{error}</p>
+          <button
+            type="button"
+            onClick={() => router.replace('/home')}
+            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
+          >
+            ← Back to Home
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
     <div
-      className="min-h-screen text-white flex flex-col h-screen"
+      className="min-h-screen text-white flex flex-col"
       style={{
-        background: `
-          radial-gradient(ellipse 100% 70% at 50% 0%, rgba(34,211,238,0.14) 0%, transparent 55%),
-          radial-gradient(ellipse 50% 40% at 90% 90%, rgba(6,78,89,0.25) 0%, transparent 50%),
-          #030712
-        `,
+        background:
+          'radial-gradient(ellipse 100% 70% at 50% 0%, rgba(34,211,238,0.14) 0%, transparent 55%), radial-gradient(ellipse 50% 40% at 90% 90%, rgba(6,78,89,0.25) 0%, transparent 50%), #030712',
       }}
     >
-      <div className="shrink-0 border-b border-cyan-500/15 bg-black/50 backdrop-blur-md p-3 space-y-2">
-        <button
-          type="button"
-          onClick={() => (vanishedOpen ? router.push('/home') : setLeaveModal(true))}
-          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
-        >
-          ← Back to Home
-        </button>
-
-        <div className="min-w-0">
-          <p className="text-cyan-400 font-semibold text-lg truncate">
-            Vanishing group
-          </p>
-          <p className="text-[11px] text-zinc-500">
-            Temporary · Media view-only · Max {group?.max_members ?? 12} members
-          </p>
-          <p className="text-[11px] text-zinc-500">
-            No last seen. No read receipts. Text encrypted.
-          </p>
+      <div className="border-b border-zinc-800/80 px-3 py-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setModal('leave')}
+            className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
+          >
+            ← Back
+          </button>
+          <div className="text-center min-w-0 flex-1">
+            <p className="font-semibold text-cyan-300 truncate">
+              {group?.name || 'Group'}
+            </p>
+            <p className="text-[11px] text-zinc-400">
+              Group chat · text encrypted on device where enabled
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowMembers(true)}
+            className="relative text-xs bg-zinc-800 border border-zinc-700 px-3 py-2 rounded-xl"
+          >
+            Members
+            {isAdmin && adminReports.length > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-600 text-[10px] rounded-full flex items-center justify-center px-1">
+                {adminReports.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        {isAdmin && !vanishedOpen && (
-          <div className="rounded-xl border border-cyan-800/50 bg-zinc-950/80 p-2 space-y-2">
-            <p className="text-[11px] text-cyan-300/90">
-              Ends:{' '}
-              {group?.expires_at
-                ? new Date(group.expires_at).toLocaleString()
-                : '—'}{' '}
-              · Max members: {group?.max_members ?? '—'}
-            </p>
-            <div className="flex flex-wrap gap-1.5 items-center">
-              {DURATION_OPTIONS.map((o) => (
-                <button
-                  key={o.minutes}
-                  type="button"
-                  onClick={() => saveSettings(o.minutes)}
-                  className={`text-[11px] px-2 py-1 rounded-lg border ${
-                    Number(group?.duration_minutes) === o.minutes
-                      ? 'bg-cyan-500 text-black border-cyan-400'
-                      : 'bg-zinc-900 border-zinc-700 text-zinc-300'
+        {isAdmin && (
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-[11px] text-zinc-500">Time (admin only)</span>
+            {DURATION_OPTIONS.map((d) => (
+              <button
+                key={d.minutes}
+                type="button"
+                onClick={() => setDuration(d.minutes)}
+                className={`text-xs px-2.5 py-1 rounded-lg border ${
+                  group?.duration_minutes === d.minutes
+                    ? 'bg-cyan-600 border-cyan-500'
+                    : 'bg-zinc-900 border-zinc-700'
+                }`}
+              >
+                {d.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={createInvite}
+              className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800 border border-zinc-600"
+            >
+              Invite link
+            </button>
+            {inviteLink && (
+              <button
+                type="button"
+                onClick={copyInvite}
+                className="text-xs px-2.5 py-1 rounded-lg bg-cyan-700"
+              >
+                Copy link
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setModal('leave')}
+              className="text-xs px-2.5 py-1 rounded-lg bg-red-700"
+            >
+              End group
+            </button>
+          </div>
+        )}
+        {info && <p className="text-xs text-cyan-400">{info}</p>}
+        {error && <p className="text-xs text-red-400">{error}</p>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+        {messages.length === 0 && (
+          <p className="text-center text-zinc-500 text-sm py-16">
+            No messages yet.
+          </p>
+        )}
+        {messages.map((msg) => {
+          const mine = msg.sender_id === user?.id
+          const prof = profilesMap[msg.sender_id]
+          const uname = prof?.username || msg.sender_id?.slice(0, 6)
+          const emoji = emojiFromUsername(uname, msg.sender_id)
+          return (
+            <div
+              key={msg.id}
+              className={`flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}
+            >
+              {!mine && (
+                <span className="text-xl shrink-0 mt-5" title={uname}>
+                  {emoji}
+                </span>
+              )}
+              <div className={`max-w-[78%] ${mine ? 'items-end' : 'items-start'}`}>
+                <p
+                  className={`text-sm font-semibold mb-1 ${
+                    mine ? 'text-right text-cyan-300' : 'text-left text-zinc-300'
                   }`}
                 >
-                  {o.label}
-                </button>
-              ))}
-              <input
-                type="number"
-                min={2}
-                max={12}
-                value={maxMembersEdit}
-                onChange={(e) => setMaxMembersEdit(Number(e.target.value) || 2)}
-                className="w-16 text-[11px] p-1 rounded-lg bg-zinc-900 border border-zinc-700"
-              />
-              <button
-                type="button"
-                onClick={() => saveSettings()}
-                className="text-[11px] px-2 py-1 rounded-lg bg-zinc-800 border border-zinc-600"
-              >
-                Save max
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={createInvite}
-                className="text-xs font-medium bg-cyan-600 hover:bg-cyan-500 px-3 py-2 rounded-xl"
-              >
-                Vanish link
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMembers(true)
-                  loadMemberReports()
-                }}
-                className="relative text-xs font-medium bg-zinc-800 border border-zinc-600 px-3 py-2 rounded-xl"
-              >
-                Members
-                {adminReportCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-[10px] font-bold flex items-center justify-center">
-                    {adminReportCount > 9 ? '9+' : adminReportCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setLeaveModal(true)}
-                className="text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-2 rounded-xl"
-              >
-                End group
-              </button>
-            </div>
-            {inviteLink && (
-              <div className="flex gap-2 items-start">
-                <p className="flex-1 text-xs text-cyan-300 break-all bg-black/50 p-2 rounded-lg">
-                  {inviteLink}
+                  {emoji} {shortTag(uname, msg.sender_id)}
                 </p>
                 <button
                   type="button"
-                  onClick={copyLink}
-                  className="shrink-0 text-xs font-semibold bg-cyan-500 text-black px-3 py-2 rounded-xl"
+                  onClick={() => {
+                    if (mine && msg.type === 'text') {
+                      setEditMsgId(msg.id)
+                      setEditText(msg.body || '')
+                      setModal('edit')
+                    } else {
+                      setReportMessageId(msg.id)
+                      setModal('report-msg')
+                    }
+                  }}
+                  className={`w-full text-left rounded-2xl px-3.5 py-2.5 border ${
+                    mine
+                      ? 'bg-cyan-600/90 border-cyan-500/50 text-black rounded-br-md'
+                      : 'bg-zinc-900/90 border-zinc-700 text-zinc-100 rounded-bl-md'
+                  }`}
                 >
-                  Copy
+                  {msg.type === 'image' && msg.media_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={msg.media_url}
+                      alt=""
+                      className="max-w-[220px] max-h-[280px] rounded-lg object-cover pointer-events-none select-none"
+                      draggable={false}
+                    />
+                  )}
+                  {msg.type === 'video' && msg.media_url && (
+                    <video
+                      src={msg.media_url}
+                      controls
+                      controlsList="nodownload noplaybackrate"
+                      disablePictureInPicture
+                      className="max-w-[220px] max-h-[280px] rounded-lg"
+                    />
+                  )}
+                  {msg.type === 'text' && (
+                    <p className="text-[15px] whitespace-pre-wrap break-words">
+                      {msg.body}
+                    </p>
+                  )}
+                  {msg.edited_at && (
+                    <p className="text-[10px] opacity-70 mt-1">edited</p>
+                  )}
                 </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {!vanishedOpen && (
-          <button
-            type="button"
-            onClick={() => {
-              setModal('report-group')
-              setReportMessageId(null)
-              setReportTo('platform')
-            }}
-            className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl"
-          >
-            Report group
-          </button>
-        )}
-        {info && <p className="text-xs text-cyan-400">{info}</p>}
-        {error && !vanishedOpen && (
-          <p className="text-xs text-red-400">{error}</p>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
-          <p className="text-center text-zinc-500 text-sm py-16">
-            No messages yet. This group will vanish.
-          </p>
-        ) : (
-          messages.map((m) => {
-            if (m.deleted) return null
-            const mine = m.sender_id === user?.id
-            const p = profilesById[m.sender_id]
-            const uname = mine
-              ? myProfile?.username || p?.username
-              : p?.username
-            const icon = displayEmoji(m.sender_id, uname)
-            const tag = shortTag(uname)
-
-            return (
-              <div
-                key={m.id}
-                className={`flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}
-              >
-                {!mine && (
-                  <div className="text-xl shrink-0 mt-6" title={uname || ''}>
-                    {icon}
-                  </div>
-                )}
-                <div className="max-w-[85%] flex flex-col">
-                  <p className="text-sm font-semibold text-zinc-200 mb-1 px-1">
-                    <span className="mr-1">{icon}</span>
-                    <span className="text-cyan-300/90">{tag}</span>
-                    {mine ? (
-                      <span className="text-zinc-500 font-normal"> · you</span>
-                    ) : null}
-                  </p>
+                {mine && (
                   <button
                     type="button"
-                    onClick={() => openMsgActions(m)}
-                    className={`text-left px-3.5 py-2.5 rounded-2xl text-[15px] ${
-                      mine
-                        ? 'bg-cyan-600 text-white rounded-br-md shadow-[0_0_24px_rgba(34,211,238,0.25)]'
-                        : 'bg-black/70 text-zinc-100 rounded-bl-md border border-cyan-500/25'
-                    }`}
+                    onClick={() => softDeleteMessage(msg.id)}
+                    className="text-[10px] text-zinc-500 mt-1"
                   >
-                    {m.type === 'image' && m.media_url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={m.media_url}
-                        alt=""
-                        className="max-w-[220px] max-h-[280px] rounded-xl object-cover select-none pointer-events-none"
-                        draggable={false}
-                        onContextMenu={(e) => e.preventDefault()}
-                      />
-                    )}
-                    {m.type === 'video' && m.media_url && (
-                      <video
-                        src={m.media_url}
-                        controls
-                        controlsList="nodownload noplaybackrate noremoteplayback"
-                        disablePictureInPicture
-                        className="max-w-[220px] max-h-[280px] rounded-xl"
-                        onClick={(e) => e.stopPropagation()}
-                        onContextMenu={(e) => e.preventDefault()}
-                      />
-                    )}
-                    {m.type === 'file' && (
-                      <p className="text-sm">
-                        File (view in session only): {m.body || 'attachment'}
-                      </p>
-                    )}
-                    {(!m.type || m.type === 'text') && (
-                      <p className="whitespace-pre-wrap break-words leading-relaxed">
-                        {m.body}
-                      </p>
-                    )}
-                    <p
-                      className={`text-[10px] mt-1 ${
-                        mine ? 'text-cyan-100/70 text-right' : 'text-zinc-500'
-                      }`}
-                    >
-                      {m.created_at
-                        ? new Date(m.created_at).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : ''}
-                      {m.edited_at ? ' · edited' : ''}
-                    </p>
+                    Vanish message
                   </button>
-                </div>
-                {mine && (
-                  <div className="text-xl shrink-0 mt-6" title={uname || ''}>
-                    {icon}
-                  </div>
                 )}
               </div>
-            )
-          })
-        )}
-        <div ref={bottomRef} />
+              {mine && (
+                <span className="text-xl shrink-0 mt-5" title={uname}>
+                  {emoji}
+                </span>
+              )}
+            </div>
+          )
+        })}
+        <div ref={messagesEndRef} />
       </div>
 
-      {!vanishedOpen && (
-        <div className="shrink-0 border-t border-cyan-500/15 bg-black/70 backdrop-blur p-3">
-          <div className="flex gap-2 items-end">
-            <input
-              ref={mediaRef}
-              type="file"
-              accept="image/*,video/*"
-              className="hidden"
-              onChange={onMediaPick}
-            />
+      <div className="border-t border-zinc-800 p-3">
+        <div className="flex gap-2 items-end">
+          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-3 py-3 rounded-xl text-lg">
+            📎
             <input
               ref={fileRef}
               type="file"
+              accept="image/*,video/*"
               className="hidden"
-              onChange={onFilePick}
-            />
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => mediaRef.current?.click()}
-              className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
-            >
-              📷
-            </button>
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileRef.current?.click()}
-              className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
-            >
-              📎
-            </button>
-            <textarea
-              ref={textRef}
-              value={text}
               onChange={(e) => {
-                setText(e.target.value)
-                requestAnimationFrame(grow)
+                const f = e.target.files?.[0]
+                if (f) uploadMedia(f)
+                e.target.value = ''
               }}
-              placeholder="Message…"
-              rows={1}
-              className="flex-1 min-w-0 p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-[15px] resize-none overflow-hidden focus:outline-none focus:border-cyan-400"
-              style={{ maxHeight: 160 }}
             />
-            <button
-              type="button"
-              onClick={sendText}
-              disabled={sending || uploading}
-              className="shrink-0 bg-cyan-500 text-black font-medium px-4 h-11 rounded-xl disabled:opacity-50"
-            >
-              Send
-            </button>
+          </label>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                // Enter = new line only (do not send)
+                return
+              }
+            }}
+            rows={1}
+            placeholder="Message…"
+            className="flex-1 p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-sm resize-none min-h-[44px] max-h-32"
+          />
+          <button
+            type="button"
+            disabled={sending || uploading || !text.trim()}
+            onClick={sendText}
+            className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-medium px-4 py-3 rounded-xl"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+
+      {showMembers && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-end sm:items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-zinc-700 rounded-3xl p-5 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between mb-4">
+              <p className="font-semibold text-lg">Members</p>
+              <button
+                type="button"
+                onClick={() => setShowMembers(false)}
+                className="text-zinc-400"
+              >
+                Close
+              </button>
+            </div>
+            {isAdmin && adminReports.length > 0 && (
+              <div className="mb-4 space-y-2">
+                <p className="text-sm text-red-400 font-medium">Reports</p>
+                {adminReports.map((r) => (
+                  <div
+                    key={r.id}
+                    className="text-xs bg-zinc-900 border border-red-900/50 rounded-xl p-3"
+                  >
+                    <p className="text-red-300">{r.reason}</p>
+                    <p className="text-zinc-500 mt-1">
+                      {r.created_at
+                        ? new Date(r.created_at).toLocaleString()
+                        : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="space-y-2">
+              {members.map((m) => {
+                const p = profilesMap[m.user_id]
+                const uname = p?.username || m.user_id.slice(0, 8)
+                const emoji = emojiFromUsername(uname, m.user_id)
+                return (
+                  <div
+                    key={m.user_id}
+                    className="flex items-center justify-between py-2 border-b border-zinc-800"
+                  >
+                    <span className="text-base font-medium">
+                      {emoji} {uname}
+                      {m.user_id === group?.admin_id ? ' · admin' : ''}
+                    </span>
+                    {isAdmin && m.user_id !== user?.id && (
+                      <button
+                        type="button"
+                        onClick={() => removeMember(m.user_id)}
+                        className="text-xs text-red-400"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
-          <p className="text-[10px] text-zinc-600 mt-1 px-1">
-            Enter = new line · Tap a message to report / edit · Photos view only
-          </p>
         </div>
       )}
 
-      {vanishedOpen && (
-        <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 text-center">
-            <p className="text-2xl font-semibold text-cyan-400 mb-2">
-              This group has vanished
-            </p>
-            <p className="text-sm text-zinc-400 mb-6">
-              Everything in this group is gone. Invite links no longer work.
-            </p>
-            <button
-              type="button"
-              onClick={() => router.replace('/home')}
-              className="w-full bg-cyan-500 text-black font-semibold py-3 rounded-xl"
-            >
-              Back to Home
-            </button>
-          </div>
-        </div>
-      )}
-
-      {leaveModal && !vanishedOpen && (
-        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
+      {modal === 'leave' && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-zinc-950 border border-zinc-700 rounded-3xl p-5">
             <h3 className="text-lg font-semibold mb-2">
-              {isAdmin ? 'End group and leave?' : 'Leave this group?'}
+              {isAdmin ? 'End this group?' : 'Leave this group?'}
             </h3>
-            <p className="text-sm text-zinc-400 mb-4">
+            <p className="text-sm text-zinc-400 mb-5">
               {isAdmin
-                ? 'You are admin. Leaving deletes this group everywhere for everyone. Invite links stop working.'
-                : 'If you leave, you cannot join this group again with the invite link.'}
+                ? 'The group vanishes for everyone. Links stop working.'
+                : 'You leave permanently. This invite will not let you back in.'}
             </p>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setLeaveModal(false)}
-                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={confirmLeave}
-                className="flex-1 bg-red-600 py-2.5 rounded-xl font-medium"
+                className="flex-1 bg-red-600 py-2.5 rounded-xl"
               >
-                {isAdmin ? 'End & leave' : 'Leave'}
+                {isAdmin ? 'End group' : 'Leave'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {msgMenuId && !vanishedOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-4">
-            {messages.find((m) => m.id === msgMenuId)?.sender_id ===
-              user?.id && (
-              <>
-                {!editOpen ? (
-                  <button
-                    type="button"
-                    className="w-full text-left py-3 border-b border-zinc-800"
-                    onClick={() => setEditOpen(true)}
-                  >
-                    Edit message
-                  </button>
-                ) : (
-                  <div className="py-2 border-b border-zinc-800">
-                    <textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      rows={3}
-                      className="w-full p-2 mb-2 rounded-xl bg-zinc-950 border border-zinc-700 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={saveEdit}
-                      className="w-full bg-cyan-500 text-black font-medium py-2 rounded-xl mb-1"
-                    >
-                      Save
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-            <button
-              type="button"
-              className="w-full text-left py-3 border-b border-zinc-800 text-yellow-400"
-              onClick={() => {
-                setReportMessageId(msgMenuId)
-                setModal('report-msg')
-                setMsgMenuId(null)
-                setEditOpen(false)
-              }}
-            >
-              Report this message
-            </button>
-            <button
-              type="button"
-              className="w-full text-left py-3 text-zinc-400"
-              onClick={() => {
-                setMsgMenuId(null)
-                setEditOpen(false)
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showMembers && isAdmin && !vanishedOpen && (
+      {modal === 'edit' && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-5 max-h-[75vh] overflow-y-auto">
-            <div className="flex justify-between mb-4">
-              <p className="font-semibold text-base">Members</p>
+          <div className="w-full max-w-sm bg-zinc-950 border border-zinc-700 rounded-3xl p-5">
+            <h3 className="text-lg font-semibold mb-3">Edit message</h3>
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              rows={3}
+              className="w-full p-3 mb-3 rounded-xl bg-zinc-900 border border-zinc-700 text-sm"
+            />
+            <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setShowMembers(false)}
-                className="text-sm text-zinc-400 hover:text-white transition"
+                onClick={() => setModal(null)}
+                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
               >
-                Close
+                Cancel
               </button>
-            </div>
-
-            {adminReportCount > 0 && (
-              <div className="mb-4 space-y-2">
-                <p className="text-sm font-semibold text-red-400">
-                  Reports ({adminReportCount})
-                </p>
-                {memberReports.map((r) => {
-                  const reason = String(r.reason || '')
-                  const typeMatch = reason.match(
-                    /(Spam|Harassment|Threats|Scam \/ fraud|Sexual content|Hate \/ abuse|Other)/i
-                  )
-                  const typeLabel = typeMatch ? typeMatch[1] : 'Report'
-                  const msgPart = reason.includes('msg:')
-                    ? reason.split('msg:').slice(1).join('msg:').trim()
-                    : reason
-                  const who =
-                    profilesById[r.reported_id]?.username ||
-                    String(r.reported_id || '').slice(0, 8)
-                  return (
-                    <div
-                      key={r.id}
-                      className="rounded-xl border border-red-500/40 bg-red-950/40 p-3 text-sm"
-                    >
-                      <p className="font-semibold text-red-300">{typeLabel}</p>
-                      <p className="text-zinc-300 mt-1 break-words">{msgPart}</p>
-                      <p className="text-[11px] text-zinc-500 mt-1">
-                        About: {who}
-                        {r.created_at
-                          ? ` · ${new Date(r.created_at).toLocaleString()}`
-                          : ''}
-                      </p>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              {members.map((m) => (
-                <div
-                  key={m.user_id}
-                  className="flex items-center justify-between py-2 border-b border-zinc-800"
-                >
-                  <span className="text-base font-semibold">
-                    {displayEmoji(m.user_id, m.username)}{' '}
-                    <span className="text-cyan-300">{m.username}</span>
-                    {m.user_id === group?.admin_id ? (
-                      <span className="text-zinc-500 font-normal text-sm">
-                        {' '}
-                        · Admin
-                      </span>
-                    ) : null}
-                  </span>
-                  {m.user_id !== group?.admin_id && (
-                    <button
-                      type="button"
-                      onClick={() => removeMember(m.user_id)}
-                      className="text-xs text-red-400"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
+              <button
+                type="button"
+                onClick={saveEdit}
+                className="flex-1 bg-cyan-500 text-black font-medium py-2.5 rounded-xl"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {modal && !vanishedOpen && (
+      {(modal === 'report-msg' || modal === 'report-group') && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl p-5">
-            <h3 className="text-lg font-semibold mb-3">
-              {modal === 'report-group' ? 'Report group' : 'Report message'}
-            </h3>
-            {modal === 'report-msg' && (
-              <div className="flex gap-2 mb-3">
-                <button
-                  type="button"
-                  onClick={() => setReportTo('platform')}
-                  className={`flex-1 py-2 rounded-xl text-sm ${
-                    reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'
-                  }`}
-                >
-                  Platform
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReportTo('admin')}
-                  className={`flex-1 py-2 rounded-xl text-sm ${
-                    reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'
-                  }`}
-                >
-                  Group admin
-                </button>
-              </div>
-            )}
+          <div className="w-full max-w-sm bg-zinc-950 border border-zinc-700 rounded-3xl p-5">
+            <h3 className="text-lg font-semibold mb-3">Report</h3>
+            <div className="flex gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setReportScope('platform')}
+                className={`flex-1 text-xs py-2 rounded-lg border ${
+                  reportScope === 'platform'
+                    ? 'bg-yellow-600 border-yellow-500'
+                    : 'bg-zinc-800 border-zinc-700'
+                }`}
+              >
+                Platform
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportScope('admin')}
+                className={`flex-1 text-xs py-2 rounded-lg border ${
+                  reportScope === 'admin'
+                    ? 'bg-yellow-600 border-yellow-500'
+                    : 'bg-zinc-800 border-zinc-700'
+                }`}
+              >
+                Group admin
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2 mb-3">
               {REPORT_TYPES.map((type) => (
                 <button
