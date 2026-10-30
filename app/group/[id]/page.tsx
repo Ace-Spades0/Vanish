@@ -95,21 +95,10 @@ export default function GroupRoomPage() {
     const { data } = await supabase
       .from('reports')
       .select('*')
-      .or(
-        `conversation_id.eq.${groupId},reason.ilike.%${groupId}%,reason.ilike.%GROUP_ADMIN%`
-      )
+      .eq('conversation_id', groupId)
       .order('created_at', { ascending: false })
       .limit(40)
-    const list = (data || []).filter((r: any) => {
-      const reason = String(r.reason || '')
-      return (
-        r.conversation_id === groupId ||
-        reason.includes(groupId) ||
-        reason.includes('GROUP_ADMIN') ||
-        reason.includes('[GROUP]')
-      )
-    })
-    setMemberReports(list)
+    setMemberReports(data || [])
   }
 
   const loadMembers = async (token: string) => {
@@ -404,6 +393,12 @@ export default function GroupRoomPage() {
     } = await supabase.auth.getSession()
     if (!session || !user) return
 
+    await supabase.from('vanish_group_exits').upsert({
+      group_id: groupId,
+      user_id: user.id,
+      left_at: new Date().toISOString(),
+    })
+
     const res = await fetch('/api/groups/members', {
       method: 'DELETE',
       headers: {
@@ -633,10 +628,9 @@ export default function GroupRoomPage() {
       className="min-h-screen text-white flex flex-col h-screen"
       style={{
         background: `
-          radial-gradient(ellipse 120% 80% at 50% -20%, rgba(34,211,238,0.18) 0%, transparent 50%),
-          radial-gradient(ellipse 80% 50% at 100% 50%, rgba(8,47,73,0.35) 0%, transparent 45%),
-          radial-gradient(ellipse 60% 40% at 0% 80%, rgba(34,211,238,0.08) 0%, transparent 40%),
-          linear-gradient(180deg, #05080c 0%, #000000 100%)
+          radial-gradient(ellipse 100% 70% at 50% 0%, rgba(34,211,238,0.14) 0%, transparent 55%),
+          radial-gradient(ellipse 50% 40% at 90% 90%, rgba(6,78,89,0.25) 0%, transparent 50%),
+          #030712
         `,
       }}
     >
@@ -929,8 +923,8 @@ export default function GroupRoomPage() {
             </h3>
             <p className="text-sm text-zinc-400 mb-4">
               {isAdmin
-                ? 'You are admin. Leaving ends the group for everyone and invite links stop working.'
-                : 'You will exit the group. Others can continue until the group ends.'}
+                ? 'You are admin. Leaving deletes this group everywhere for everyone. Invite links stop working.'
+                : 'If you leave, you cannot join this group again with the invite link.'}
             </p>
             <div className="flex gap-2">
               <button
