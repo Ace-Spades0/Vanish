@@ -40,6 +40,12 @@ function isActiveUsername(profile: {
   return hoursPassed < 24
 }
 
+function extractMessageIdFromReason(reason?: string | null) {
+  if (!reason) return null
+  const m = String(reason).match(/message_id:([a-zA-Z0-9_-]+)/)
+  return m?.[1] || null
+}
+
 export default function GroupRoomPage() {
   const params = useParams()
   const groupId = params.id as string
@@ -344,7 +350,6 @@ export default function GroupRoomPage() {
 
       channelRef.current = ch
 
-      // Username expiry (self → landing) + admin username expiry (group dies)
       expiryTimer = setInterval(async () => {
         const {
           data: { user: u },
@@ -381,7 +386,6 @@ export default function GroupRoomPage() {
             .maybeSingle()
 
           if (!adminP || !isActiveUsername(adminP)) {
-            // Prefer die API when current user is admin; otherwise set died_at if RLS allows
             if (u.id === adminId) {
               await dieGroupAsAdminSession()
             } else {
@@ -392,7 +396,6 @@ export default function GroupRoomPage() {
               if (!dieErr) {
                 markVanished()
               } else {
-                // Still show vanished locally; die route may need admin
                 markVanished()
               }
             }
@@ -646,6 +649,22 @@ export default function GroupRoomPage() {
     setInfo('Member removed')
   }
 
+  /** Admin removes a reported message after reviewing notification */
+  const adminRemoveMessage = async (messageId: string) => {
+    if (!isAdmin || !messageId) return
+    const { error: upErr } = await supabase
+      .from('vanish_group_messages')
+      .update({ deleted: true })
+      .eq('id', messageId)
+      .eq('group_id', groupId)
+    if (upErr) {
+      setError(upErr.message)
+      return
+    }
+    setMessages((prev) => prev.filter((m) => m.id !== messageId))
+    setInfo('Message removed by admin')
+  }
+
   const saveEdit = async () => {
     if (!msgMenuId || !user || !editText.trim()) return
     const msg = messages.find((m) => m.id === msgMenuId)
@@ -704,7 +723,7 @@ export default function GroupRoomPage() {
           body: JSON.stringify({
             reported_id: msg?.sender_id || group?.admin_id,
             conversation_id: groupId,
-            reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | msg:${msgSnippet}`,
+            reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
           }),
         })
       }
@@ -719,7 +738,7 @@ export default function GroupRoomPage() {
           group_id: groupId,
           message_id: reportMessageId,
           report_type: reportType,
-          reason: `[to:${toLabel}] ${reportReason} | msg:${msgSnippet}`,
+          reason: `[to:${toLabel}] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -727,14 +746,20 @@ export default function GroupRoomPage() {
         setError(data.error)
         return
       }
-      if (data.removed) {
+
+      // Do NOT remove on report. Only remove if AI labels high risk.
+      const aiHigh =
+        data.ai_risk === 'high' ||
+        data.risk === 'high' ||
+        data.ai_label === 'high'
+      if (data.removed && aiHigh) {
         setMessages((prev) => prev.filter((m) => m.id !== reportMessageId))
-        setInfo('Critical content removed')
+        setInfo('High-risk content removed')
       } else {
         setInfo(
           reportTo === 'admin'
-            ? 'Report sent to group admin'
-            : 'Report sent to platform'
+            ? 'Report sent to group admin — message stays until admin removes it'
+            : 'Report sent to platform — message stays until reviewed'
         )
       }
       if (isAdmin) await loadMemberReports()
@@ -1231,6 +1256,7 @@ export default function GroupRoomPage() {
                   const msgPart = reason.includes('msg:')
                     ? reason.split('msg:').slice(1).join('msg:').trim()
                     : reason
+                  const mid = extractMessageIdFromReason(reason)
                   const who =
                     profilesById[r.reported_id]?.username ||
                     String(r.reported_id || '').slice(0, 8)
@@ -1247,6 +1273,15 @@ export default function GroupRoomPage() {
                           ? ` · ${new Date(r.created_at).toLocaleString()}`
                           : ''}
                       </p>
+                      {mid && (
+                        <button
+                          type="button"
+                          onClick={() => adminRemoveMessage(mid)}
+                          className="mt-2 text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-lg"
+                        >
+                          Remove message
+                        </button>
+                      )}
                     </div>
                   )
                 })}
