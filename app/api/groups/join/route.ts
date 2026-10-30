@@ -37,7 +37,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'You must be logged in' }, { status: 401 })
     }
 
-    // Invite by code (your row exists under column "code")
     const { data: invite, error: invErr } = await supabase
       .from('vanish_group_invites')
       .select('*')
@@ -53,14 +52,12 @@ export async function POST(req: Request) {
         { status: 404 }
       )
     }
-
     if (invite.revoked_at) {
       return NextResponse.json(
         { error: 'Group not available. This link was revoked.' },
         { status: 410 }
       )
     }
-
     if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
       return NextResponse.json(
         { error: 'Group not available. This link has expired.' },
@@ -71,6 +68,23 @@ export async function POST(req: Request) {
     const groupId = invite.group_id
     if (!groupId) {
       return NextResponse.json({ error: 'Invalid invite' }, { status: 400 })
+    }
+
+    const { data: exited } = await supabase
+      .from('vanish_group_exits')
+      .select('user_id')
+      .eq('group_id', groupId)
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (exited) {
+      return NextResponse.json(
+        {
+          error:
+            'You left this group. You cannot join this group again with this link.',
+        },
+        { status: 403 }
+      )
     }
 
     const { data: group, error: gErr } = await supabase
@@ -88,14 +102,12 @@ export async function POST(req: Request) {
         { status: 404 }
       )
     }
-
     if (group.died_at) {
       return NextResponse.json(
         { error: 'Group not available. This group has vanished.' },
         { status: 410 }
       )
     }
-
     if (group.expires_at && new Date(group.expires_at).getTime() <= Date.now()) {
       return NextResponse.json(
         { error: 'Group not available. This group has expired.' },
@@ -103,7 +115,6 @@ export async function POST(req: Request) {
       )
     }
 
-    // Already a member?
     const { data: existing } = await supabase
       .from('vanish_group_members')
       .select('id')
@@ -112,7 +123,6 @@ export async function POST(req: Request) {
       .maybeSingle()
 
     if (!existing) {
-      // Max members
       const maxMembers = Number(group.max_members) > 0 ? Number(group.max_members) : 12
       const { count } = await supabase
         .from('vanish_group_members')
@@ -128,18 +138,12 @@ export async function POST(req: Request) {
         user_id: user.id,
       })
 
-      if (memErr) {
-        // unique violation → already member
-        if (!String(memErr.message || '').toLowerCase().includes('duplicate')) {
-          return NextResponse.json({ error: memErr.message }, { status: 500 })
-        }
+      if (memErr && !String(memErr.message || '').toLowerCase().includes('duplicate')) {
+        return NextResponse.json({ error: memErr.message }, { status: 500 })
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      group_id: groupId,
-    })
+    return NextResponse.json({ success: true, group_id: groupId })
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || 'Something went wrong' },

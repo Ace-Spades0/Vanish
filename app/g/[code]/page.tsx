@@ -24,8 +24,30 @@ export default function GroupInvitePage() {
       const {
         data: { user },
       } = await supabase.auth.getUser()
+
       if (!user) {
         router.push('/auth')
+        return
+      }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('username, username_claimed_at, is_permanent_username')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      const hasName = !!profile?.username
+      let active = !!profile?.is_permanent_username
+      if (hasName && profile?.username_claimed_at && !active) {
+        const hours =
+          (Date.now() - new Date(profile.username_claimed_at).getTime()) /
+          (1000 * 60 * 60)
+        active = hours < 24
+      }
+
+      if (!hasName || !active) {
+        // Get Started / identity path should create username then read vanish_return_to
+        router.push('/')
         return
       }
 
@@ -36,7 +58,6 @@ export default function GroupInvitePage() {
       }
 
       const code = codeParam.toLowerCase()
-
       const { data: invite, error: invErr } = await supabase
         .from('vanish_group_invites')
         .select('*')
@@ -48,45 +69,45 @@ export default function GroupInvitePage() {
         setLoading(false)
         return
       }
-
       if (!invite) {
         setError('Group not available. This link may have vanished.')
         setLoading(false)
         return
       }
-
       if (invite.revoked_at) {
         setError('Group not available. This link was revoked.')
         setLoading(false)
         return
       }
-
       if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
         setError('Group not available. This link has expired.')
         setLoading(false)
         return
       }
 
-      const { data: group, error: gErr } = await supabase
+      const { data: group } = await supabase
         .from('vanish_groups')
         .select('*')
         .eq('id', invite.group_id)
         .maybeSingle()
 
-      if (gErr) {
-        setError(gErr.message)
-        setLoading(false)
-        return
-      }
-
-      if (!group || group.died_at) {
+      if (!group) {
         setError('Group not available. This group has vanished.')
         setLoading(false)
         return
       }
 
-      if (group.expires_at && new Date(group.expires_at).getTime() <= Date.now()) {
-        setError('Group not available. This group has expired.')
+      const { data: exited } = await supabase
+        .from('vanish_group_exits')
+        .select('user_id')
+        .eq('group_id', invite.group_id)
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (exited) {
+        setError(
+          'You left this group. You cannot join this group again with this link.'
+        )
         setLoading(false)
         return
       }
@@ -106,7 +127,6 @@ export default function GroupInvitePage() {
     const {
       data: { session },
     } = await supabase.auth.getSession()
-
     if (!session) {
       router.push('/auth')
       return
@@ -122,7 +142,6 @@ export default function GroupInvitePage() {
     })
 
     const data = await res.json().catch(() => ({}))
-
     if (!res.ok) {
       setError(data.error || 'Could not join group')
       setJoining(false)
@@ -157,7 +176,7 @@ export default function GroupInvitePage() {
         <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-6">
           <h1 className="text-2xl font-bold mb-2">Vanishing group</h1>
           <p className="text-sm text-zinc-400 mb-4">
-            One-time style join. Chats and media here are temporary.
+            Temporary group. If you leave, you cannot come back with this link.
           </p>
 
           {error ? (
@@ -174,19 +193,14 @@ export default function GroupInvitePage() {
           ) : (
             <div className="space-y-4">
               <ul className="text-sm text-zinc-300 space-y-2 list-disc pl-5">
-                <li>Messages and media can disappear after the group ends.</li>
+                <li>Messages and media disappear when the group ends.</li>
+                <li>If you leave, you never rejoin this same group.</li>
                 <li>Do not share passwords, codes, or money details.</li>
-                <li>
-                  You can leave the group. If the admin leaves, the group can end
-                  for everyone.
-                </li>
-                <li>Report harmful content if needed.</li>
               </ul>
               <p className="text-[11px] font-semibold text-cyan-300/95 uppercase tracking-wide leading-relaxed">
                 NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
                 SECRETS YOU CANNOT AFFORD TO EXPOSE.
               </p>
-
               <label className="flex items-start gap-3 text-sm text-zinc-300 cursor-pointer">
                 <input
                   type="checkbox"
@@ -194,10 +208,12 @@ export default function GroupInvitePage() {
                   onChange={(e) => setAccepted(e.target.checked)}
                   className="mt-1"
                 />
-                <span>I understand and want to join this vanishing group.</span>
+                <span>
+                  I understand. If I leave, I cannot join this group again.
+                </span>
               </label>
-
               <button
+                dec
                 type="button"
                 disabled={!accepted || joining || !ready}
                 onClick={join}
