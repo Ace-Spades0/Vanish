@@ -7,11 +7,12 @@ const UUID_RE =
 function localReview(reason: string, snapshot: any[]): {
   risk: string
   summary: string
+  verified: boolean
 } {
   const text = [
     reason || '',
     ...(snapshot || []).map((m) =>
-      m.type === 'text' ? String(m.content || '') : `[${m.type}]`
+      m.type === 'text' ? String(m.content || m.body || '') : `[${m.type}]`
     ),
   ]
     .join(' ')
@@ -25,6 +26,7 @@ function localReview(reason: string, snapshot: any[]): {
     'suicide',
     'child porn',
     'csam',
+    'child sexual',
   ]
   const medium = [
     'threat',
@@ -63,19 +65,28 @@ function localReview(reason: string, snapshot: any[]): {
   }
   if (/spam|harass|threat|scam|abuse/i.test(reason || '')) score += 1
 
-  const risk = score >= 5 ? 'high' : score >= 2 ? 'medium' : 'low'
+  // Require strong signal for high — reduces force/false reports
+  const risk = score >= 6 ? 'high' : score >= 2 ? 'medium' : 'low'
+  const verified = risk === 'high' && hits.some((h) => high.includes(h))
+
   const summary =
     hits.length > 0
-      ? `Auto review (${risk}). Signals: ${[...new Set(hits)].slice(0, 8).join(', ')}. Snapshot: ${(snapshot || []).length} msgs.`
-      : `Auto review (${risk}). No strong signals. Snapshot: ${(snapshot || []).length} msgs.`
+      ? `Auto review (${risk}${verified ? ', verified' : ''}). Signals: ${[
+          ...new Set(hits),
+        ]
+          .slice(0, 8)
+          .join(', ')}. Snapshot: ${(snapshot || []).length} msgs.`
+      : `Auto review (${risk}). No strong signals. Snapshot: ${
+          (snapshot || []).length
+        } msgs.`
 
-  return { risk, summary }
+  return { risk, summary, verified }
 }
 
 async function openAiReview(
   reason: string,
   snapshot: any[]
-): Promise<{ risk: string; summary: string } | null> {
+): Promise<{ risk: string; summary: string; verified: boolean } | null> {
   const key = process.env.OPENAI_API_KEY
   if (!key) return null
 
@@ -83,7 +94,7 @@ async function openAiReview(
     .map((m, i) => {
       const body =
         m.type === 'text'
-          ? String(m.content || '').slice(0, 500)
+          ? String(m.content || m.body || '').slice(0, 500)
           : `[${m.type}]`
       return `${i + 1}. (${m.type}) ${body}`
     })
@@ -98,12 +109,12 @@ async function openAiReview(
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        temperature: 0.2,
+        temperature: 0.1,
         messages: [
           {
             role: 'system',
             content:
-              'Trust & safety. Output ONLY JSON: {"risk":"low"|"medium"|"high","summary":"short"}',
+              'Trust & safety for ephemeral chat. Be strict against false/force reports. Output ONLY JSON: {"risk":"low"|"medium"|"high","verified":true|false,"summary":"short"}. Set risk=high and verified=true ONLY when content clearly shows serious harm (CSAM, credible violence/terror threats, clear scam with pressure). Vague insults or single complaints without evidence = low or medium, verified=false.',
           },
           {
             role: 'user',
@@ -118,10 +129,13 @@ async function openAiReview(
     const match = raw.match(/\{[\s\S]*\}/)
     if (!match) return null
     const parsed = JSON.parse(match[0])
+    const risk = ['low', 'medium', 'high'].includes(parsed.risk)
+      ? parsed.risk
+      : 'medium'
+    const verified = risk === 'high' && parsed.verified === true
     return {
-      risk: ['low', 'medium', 'high'].includes(parsed.risk)
-        ? parsed.risk
-        : 'medium',
+      risk,
+      verified,
       summary: String(parsed.summary || 'Done').slice(0, 1000),
     }
   } catch {
@@ -131,7 +145,6 @@ async function openAiReview(
 
 export async function POST(req: Request) {
   const authHeader = req.headers.get('Authorization')
-
   const supabaseUser = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -156,14 +169,12 @@ export async function POST(req: Request) {
       { status: 400 }
     )
   }
-
   if (!UUID_RE.test(String(reported_id))) {
     return NextResponse.json(
       { error: 'Invalid reported user id.' },
       { status: 400 }
     )
   }
-
   if (reported_id === user.id) {
     return NextResponse.json(
       { error: 'You cannot report yourself' },
@@ -175,7 +186,6 @@ export async function POST(req: Request) {
     typeof conversation_id === 'string' && conversation_id.length > 0
       ? conversation_id.slice(0, 120)
       : null
-
   const msgId =
     typeof message_id === 'string' && UUID_RE.test(message_id)
       ? message_id
@@ -183,6 +193,7 @@ export async function POST(req: Request) {
 
   let message_snapshot: any[] = []
   if (convId) {
+    // Try 1:1 messages first
     const { data: rows } = await supabaseUser
       .from('messages')
       .select('id, sender_id, content, type, is_encrypted, created_at, deleted')
@@ -191,17 +202,47 @@ export async function POST(req: Request) {
       .order('created_at', { ascending: false })
       .limit(30)
 
-    message_snapshot = (rows || []).reverse().map((m) => ({
-      id: m.id,
-      sender_id: m.sender_id,
-      type: m.type,
-      is_encrypted: m.is_encrypted,
-      created_at: m.created_at,
-      content:
-        typeof m.content === 'string'
-          ? m.content.slice(0, 2000)
-          : String(m.content ?? ''),
-    }))
+    if (rows && rows.length > 0) {
+      message_snapshot = rows.reverse().map((m) => ({
+        id: m.id,
+        sender_id: m.sender_id,
+        type: m.type,
+        is_encrypted: m.is_encrypted,
+        created_at: m.created_at,
+        content:
+          typeof m.content === 'string'
+            ? m.content.slice(0, 2000)
+            : String(m.content ?? ''),
+      }))
+    } else {
+      // Group chat snapshot (conversation_id may be group id)
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+      if (serviceKey) {
+        const admin = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          serviceKey
+        )
+        const { data: gRows } = await admin
+          .from('vanish_group_messages')
+          .select(
+            'id, sender_id, body, type, media_url, created_at, deleted'
+          )
+          .eq('group_id', convId)
+          .or('deleted.is.null,deleted.eq.false')
+          .order('created_at', { ascending: false })
+          .limit(30)
+        message_snapshot = (gRows || []).reverse().map((m: any) => ({
+          id: m.id,
+          sender_id: m.sender_id,
+          type: m.type || 'text',
+          created_at: m.created_at,
+          content:
+            typeof m.body === 'string'
+              ? m.body.slice(0, 2000)
+              : String(m.body ?? ''),
+        }))
+      }
+    }
   }
 
   const insertRow: Record<string, any> = {
@@ -215,7 +256,6 @@ export async function POST(req: Request) {
   if (msgId) insertRow.message_id = msgId
 
   let reportId: string | null = null
-
   let { data: report, error } = await supabaseUser
     .from('reports')
     .insert(insertRow)
@@ -253,7 +293,6 @@ export async function POST(req: Request) {
 
   reportId = report?.id || null
 
-  // Auto AI
   let result = await openAiReview(String(reason).trim(), message_snapshot)
   let engine = 'openai'
   if (!result) {
@@ -278,27 +317,61 @@ export async function POST(req: Request) {
       .eq('id', reportId)
   }
 
+  // Only remove group message if AI high AND verified (not force reports)
+  let removed = false
+  if (
+    msgId &&
+    convId &&
+    result.risk === 'high' &&
+    result.verified === true &&
+    serviceKey
+  ) {
+    const { data: gMsg } = await supabaseAdmin
+      .from('vanish_group_messages')
+      .select('id, media_path')
+      .eq('id', msgId)
+      .eq('group_id', convId)
+      .maybeSingle()
+
+    if (gMsg) {
+      await supabaseAdmin
+        .from('vanish_group_messages')
+        .update({
+          deleted: true,
+          body: '[Removed by verified safety review]',
+          media_url: null,
+          media_path: null,
+        })
+        .eq('id', msgId)
+      if (gMsg.media_path) {
+        try {
+          await supabaseAdmin.storage
+            .from('chat-photos')
+            .remove([gMsg.media_path])
+        } catch {
+          /* ignore */
+        }
+      }
+      removed = true
+    }
+  }
+
   // Rule: 3 high-risk reports in 7 days → suspend 7 days
   let suspended = false
   let highCount = 0
-
   if (result.risk === 'high') {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-
     const { data: highs } = await supabaseAdmin
       .from('reports')
       .select('id')
       .eq('reported_id', reported_id)
       .eq('ai_risk', 'high')
       .gte('created_at', since)
-
     highCount = (highs || []).length
-
     if (highCount >= 3) {
       const suspended_until = new Date(
         Date.now() + 7 * 24 * 60 * 60 * 1000
       ).toISOString()
-
       const { error: suspErr } = await supabaseAdmin
         .from('profiles')
         .update({
@@ -306,9 +379,7 @@ export async function POST(req: Request) {
           suspended_until,
         })
         .eq('id', reported_id)
-
       suspended = !suspErr
-
       try {
         await supabaseAdmin.from('safety_logs').insert({
           conversation_id: convId,
@@ -333,8 +404,10 @@ export async function POST(req: Request) {
     success: true,
     id: reportId,
     ai_risk: result.risk,
+    ai_verified: result.verified === true,
     ai_status: 'done',
     engine,
+    removed,
     high_reports_7d: highCount,
     auto_suspended: suspended,
   })
