@@ -463,7 +463,7 @@ export default function GroupRoomPage() {
             }
           }
         }
-      }, 20000)
+      }, 3000)
     }
 
     init()

@@ -1,8 +1,20 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+
+const VIEW_OPTIONS = [
+  { s: 5, label: '5s' },
+  { s: 10, label: '10s' },
+  { s: 15, label: '15s' },
+  { s: 20, label: '20s' },
+  { s: 25, label: '25s' },
+  { s: 30, label: '30s' },
+  { s: 60, label: '1m' },
+  { s: 120, label: '2m' },
+  { s: 240, label: '4m' },
+]
 
 function extractInviteCode(input: string) {
   const raw = input.trim()
@@ -14,6 +26,13 @@ function extractInviteCode(input: string) {
   return raw.trim().toLowerCase()
 }
 
+function autoViewSeconds(text: string) {
+  const n = text.trim().length
+  if (n <= 40) return 5
+  if (n <= 120) return 8
+  return 10 // max 10s when auto
+}
+
 export default function LettersPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
@@ -21,12 +40,16 @@ export default function LettersPage() {
   const [letters, setLetters] = useState<any[]>([])
   const [toInput, setToInput] = useState('')
   const [body, setBody] = useState('')
+  const [viewSeconds, setViewSeconds] = useState(10)
   const [message, setMessage] = useState('')
   const [messageOk, setMessageOk] = useState(false)
   const [safetyAlert, setSafetyAlert] = useState(false)
   const [loading, setLoading] = useState(true)
   const [acceptedSafety, setAcceptedSafety] = useState(false)
   const [reading, setReading] = useState<any | null>(null)
+  const [secsLeft, setSecsLeft] = useState<number | null>(null)
+  const [vanishedLetter, setVanishedLetter] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadInbox = async (userId: string) => {
     const { data } = await supabase
@@ -47,13 +70,11 @@ export default function LettersPage() {
         router.push('/auth')
         return
       }
-
       const { data: profile } = await supabase
         .from('profiles')
         .select('status, suspended_until')
         .eq('id', user.id)
         .maybeSingle()
-
       if (profile?.status === 'banned') {
         await supabase.auth.signOut()
         router.push('/auth')
@@ -68,7 +89,6 @@ export default function LettersPage() {
           return
         }
       }
-
       setUser(user)
       await loadInbox(user.id)
       try {
@@ -85,6 +105,33 @@ export default function LettersPage() {
     }
     init()
   }, [])
+
+  useEffect(() => {
+    if (!reading || secsLeft === null) return
+    if (secsLeft <= 0) {
+      ;(async () => {
+        const letter = reading
+        setReading(null)
+        setSecsLeft(null)
+        setVanishedLetter(true)
+        if (letter?.id) {
+          await supabase
+            .from('letters')
+            .update({ read_at: new Date().toISOString() })
+            .eq('id', letter.id)
+          await supabase.from('letters').delete().eq('id', letter.id)
+          setLetters((prev) => prev.filter((l) => l.id !== letter.id))
+        }
+      })()
+      return
+    }
+    timerRef.current = setInterval(() => {
+      setSecsLeft((s) => (s === null ? null : s - 1))
+    }, 1000)
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [reading, secsLeft])
 
   const resolveTarget = async (input: string) => {
     const trimmed = input.trim()
@@ -173,25 +220,48 @@ export default function LettersPage() {
       setMessage('You cannot send a letter to this user')
       return
     }
-    const { error } = await supabase.from('letters').insert({
+    const secs = viewSeconds || autoViewSeconds(body)
+    const row: any = {
       from_id: user.id,
       to_username: target.username,
       to_id: target.id,
       body: body.trim(),
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    })
+      view_seconds: secs,
+    }
+    let { error } = await supabase.from('letters').insert(row)
+    if (error && String(error.message || '').includes('view_seconds')) {
+      delete row.view_seconds
+      // embed timer in body prefix for readers without column
+      row.body = `[[view:${secs}]]\n` + body.trim()
+      const retry = await supabase.from('letters').insert(row)
+      error = retry.error
+    }
     if (error) {
       setMessage(error.message)
       setMessageOk(false)
     } else {
       setMessage(
-        '✓ One-time letter sent. They can read it once, then it vanishes.'
+        `✓ Letter sent. When opened, it vanishes after ${secs}s.`
       )
       setMessageOk(true)
       setBody('')
       setToInput('')
       setSafetyAlert(false)
     }
+  }
+
+  const parseViewSeconds = (letter: any) => {
+    if (letter.view_seconds && Number(letter.view_seconds) > 0) {
+      return Number(letter.view_seconds)
+    }
+    const m = String(letter.body || '').match(/^\[\[view:(\d+)\]\]\n?/)
+    if (m) return Math.min(240, Math.max(5, Number(m[1])))
+    return autoViewSeconds(String(letter.body || ''))
+  }
+
+  const displayBody = (letter: any) => {
+    return String(letter.body || '').replace(/^\[\[view:\d+\]\]\n?/, '')
   }
 
   const openLetter = async (letter: any) => {
@@ -201,13 +271,17 @@ export default function LettersPage() {
       setLetters((prev) => prev.filter((l) => l.id !== letter.id))
       return
     }
+    setVanishedLetter(false)
     setReading(letter)
+    setSecsLeft(parseViewSeconds(letter))
   }
 
   const finishReading = async () => {
     if (!reading) return
     const letter = reading
+    if (timerRef.current) clearInterval(timerRef.current)
     setReading(null)
+    setSecsLeft(null)
     await supabase
       .from('letters')
       .update({ read_at: new Date().toISOString() })
@@ -239,7 +313,7 @@ export default function LettersPage() {
         </button>
         <h1 className="text-3xl font-bold mb-2">Letters</h1>
         <p className="text-zinc-500 text-sm mb-6">
-          One-time notes. Read once, then gone.
+          One-time notes. Read once — timer runs, then gone.
         </p>
         <div className="flex gap-2 mb-6">
           <button
@@ -286,7 +360,7 @@ export default function LettersPage() {
               </p>
               <ul className="text-[11px] text-zinc-400 space-y-1.5 list-disc pl-4 mb-3">
                 <li>Do not share passwords, codes, or payment details.</li>
-                <li>Letters are read once, then gone.</li>
+                <li>Letters are read once; a timer then deletes them.</li>
                 <li>
                   If something feels wrong, do not engage — report when you can.
                 </li>
@@ -319,9 +393,6 @@ export default function LettersPage() {
                 <p className="text-sm sm:text-base font-bold text-white tracking-wide">
                   Please confirm the safety note first
                 </p>
-                <p className="text-[11px] text-red-100/90 mt-1">
-                  Tick the box above — same as confirming before Revoke
-                </p>
               </div>
             )}
             <input
@@ -330,9 +401,23 @@ export default function LettersPage() {
               placeholder="Username or vanish link"
               className="w-full p-3 rounded-xl bg-black/40 border border-zinc-700 text-sm"
             />
-            <p className="text-[11px] text-zinc-500">
-              Example: shadow_42 or your vanish link
-            </p>
+            <p className="text-[11px] text-zinc-500">View time after open</p>
+            <div className="flex flex-wrap gap-1.5">
+              {VIEW_OPTIONS.map((o) => (
+                <button
+                  key={o.s}
+                  type="button"
+                  onClick={() => setViewSeconds(o.s)}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border ${
+                    viewSeconds === o.s
+                      ? 'bg-cyan-500 text-black border-cyan-400'
+                      : 'bg-zinc-900 border-zinc-700 text-zinc-300'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value.slice(0, 500))}
@@ -384,9 +469,12 @@ export default function LettersPage() {
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm">
             <div className="rounded-3xl border-2 border-cyan-400/70 bg-zinc-950 shadow-[0_0_48px_rgba(34,211,238,0.22)] overflow-hidden">
-              <div className="bg-cyan-500/20 border-b border-cyan-400/40 px-4 py-3">
-                <p className="text-[11px] font-bold text-cyan-300 uppercase tracking-[0.2em] text-center">
+              <div className="bg-cyan-500/20 border-b border-cyan-400/40 px-4 py-3 flex items-center justify-between">
+                <p className="text-[11px] font-bold text-cyan-300 uppercase tracking-[0.2em]">
                   One-time letter
+                </p>
+                <p className="text-sm font-semibold text-cyan-200">
+                  {secsLeft !== null ? `${secsLeft}s` : ''}
                 </p>
               </div>
               <div className="p-5 space-y-4">
@@ -395,7 +483,7 @@ export default function LettersPage() {
                     Message
                   </p>
                   <p className="text-[15px] leading-relaxed text-zinc-50 whitespace-pre-wrap break-words">
-                    {reading.body}
+                    {displayBody(reading)}
                   </p>
                 </div>
                 <div className="rounded-xl border border-amber-500/45 bg-amber-500/10 px-3 py-2.5">
@@ -405,7 +493,8 @@ export default function LettersPage() {
                   </p>
                 </div>
                 <p className="text-[11px] text-zinc-500 text-center">
-                  Closing removes this letter forever.
+                  Timer runs even if you leave this screen. Letter vanishes when
+                  time hits zero.
                 </p>
                 <button
                   onClick={finishReading}
@@ -415,6 +504,25 @@ export default function LettersPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {vanishedLetter && !reading && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 text-center">
+            <p className="text-xl font-semibold text-cyan-400 mb-2">
+              Letter vanished
+            </p>
+            <p className="text-sm text-zinc-400 mb-6">
+              Time is up. This note is gone.
+            </p>
+            <button
+              type="button"
+              onClick={() => setVanishedLetter(false)}
+              className="w-full bg-cyan-500 text-black font-semibold py-3 rounded-xl"
+            >
+              OK
+            </button>
           </div>
         </div>
       )}

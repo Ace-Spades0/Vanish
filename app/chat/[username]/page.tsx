@@ -153,6 +153,7 @@ export default function ChatPage() {
   const [savingDuration, setSavingDuration] = useState(false)
   const [sealConfirm, setSealConfirm] = useState<'on' | 'off' | null>(null)
   const [quietConfirm, setQuietConfirm] = useState<'on' | 'off' | null>(null)
+  const [leaveModal, setLeaveModal] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<any>(null)
@@ -758,6 +759,26 @@ export default function ChatPage() {
         .from('profiles')
         .update({ is_offline: true })
         .eq('id', user.id)
+      // Chat vanishes for both in realtime
+      await supabase
+        .from('messages')
+        .update({ deleted: true, expires_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+        .eq('deleted', false)
+      // Seal so other side cannot Start new chat
+      let nextSeals = [...sealUserIds]
+      if (!nextSeals.includes(user.id)) nextSeals.push(user.id)
+      await saveSettings({ seal_user_ids: nextSeals })
+      setSealUserIds(nextSeals)
+      setMessages([])
+      setFileCount(0)
+      setVideoCount(0)
+      setMediaUrls({})
+      setSealed(true)
+      setChatExpired(true)
+      setFirstMsgAt(null)
+      setChatEndsAt(null)
+      hadMessagesRef.current = false
       setGhostReply(false)
     }
   }
@@ -847,6 +868,26 @@ export default function ChatPage() {
         .from('profiles')
         .update({ is_offline: true })
         .eq('id', user.id)
+      // Chat vanishes for both in realtime
+      await supabase
+        .from('messages')
+        .update({ deleted: true, expires_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+        .eq('deleted', false)
+      // Seal so other side cannot Start new chat
+      let nextSeals = [...sealUserIds]
+      if (!nextSeals.includes(user.id)) nextSeals.push(user.id)
+      await saveSettings({ seal_user_ids: nextSeals })
+      setSealUserIds(nextSeals)
+      setMessages([])
+      setFileCount(0)
+      setVideoCount(0)
+      setMediaUrls({})
+      setSealed(true)
+      setChatExpired(true)
+      setFirstMsgAt(null)
+      setChatEndsAt(null)
+      hadMessagesRef.current = false
       setGhostReply(false)
     }
   }
@@ -867,21 +908,48 @@ export default function ChatPage() {
     const {
       data: { session },
     } = await supabase.auth.getSession()
+    // Kill chat so Active chats clears
+    if (conversationId) {
+      await supabase
+        .from('messages')
+        .update({ deleted: true, expires_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+        .eq('deleted', false)
+    }
     const res = await fetch('/api/block', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session?.access_token || ''}`,
       },
-      body: JSON.stringify({ blocked_id: targetUser.id }),
+      body: JSON.stringify({
+        blocked_id: targetUser.id,
+        conversation_id: conversationId || null,
+      }),
     })
     const data = await res.json()
     if (data.error) alert(data.error)
     else {
       setBlocked(true)
+      setMessages([])
+      setSealed(true)
       setModal(null)
       router.push('/home')
     }
+  }
+
+  const confirmLeaveChat = async () => {
+    if (conversationId) {
+      await supabase
+        .from('messages')
+        .update({ deleted: true, expires_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+        .eq('deleted', false)
+    }
+    setLeaveModal(false)
+    setMessages([])
+    setSealed(true)
+    router.push('/home')
   }
 
   const confirmReportUser = async () => {
@@ -1050,6 +1118,17 @@ export default function ChatPage() {
               >
                 Block
               </button>
+              <button
+                type="button"
+                onClick={() => setModal('ghost')}
+                className={`text-sm px-2.5 py-1.5 rounded-lg font-medium border ${
+                  ghostReply
+                    ? 'bg-emerald-600 border-emerald-400 text-white'
+                    : 'bg-zinc-900 border-zinc-600 text-zinc-200'
+                }`}
+              >
+                Ghost {ghostReply ? 'ON' : ''}
+              </button>
             </div>
           </div>
           <div className="flex flex-col items-end gap-1.5 shrink-0">
@@ -1058,17 +1137,17 @@ export default function ChatPage() {
             </p>
             <button
               type="button"
+              onClick={() => setLeaveModal(true)}
+              className="text-base font-medium text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-xl"
+            >
+              ← Back
+            </button>
+            <button
+              type="button"
               onClick={() => setHeaderOpen((v) => !v)}
               className="text-sm px-2.5 py-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/15 text-cyan-300 font-medium hover:bg-cyan-500/25"
             >
               {headerOpen ? 'Less' : 'More'}
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push('/home')}
-              className="text-base font-medium text-cyan-400 border border-cyan-500/40 px-3 py-1.5 rounded-xl"
-            >
-              ← Back
             </button>
           </div>
         </div>
@@ -1098,17 +1177,6 @@ export default function ChatPage() {
               }`}
             >
               Quiet {myQuietOn ? 'ON' : 'OFF'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setModal('ghost')}
-              className={`text-sm font-semibold px-3 py-2 rounded-xl border ${
-                ghostReply
-                  ? 'bg-emerald-600 text-white border-emerald-400'
-                  : 'bg-zinc-900 border-zinc-700'
-              }`}
-            >
-              Ghost {ghostReply ? 'armed' : ''}
             </button>
           </div>
         )}
@@ -1508,8 +1576,10 @@ export default function ChatPage() {
           <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
             <h3 className="text-lg font-semibold mb-2">Ghost mode</h3>
             <p className="text-sm text-zinc-400 mb-4">
-              After your next message is sent, you go offline. Others cannot find
-              you in Search until you turn offline off in Profile.
+              After your next message is sent: you go offline (others cannot find
+              you in Search until you turn Offline off in Profile), this chat
+              vanishes for both of you in realtime, and they will not see Start a
+              new chat.
             </p>
             <div className="flex gap-2">
               <button
@@ -1526,6 +1596,34 @@ export default function ChatPage() {
                 className="flex-1 bg-emerald-600 py-2.5 rounded-xl font-medium"
               >
                 Enable Ghost
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {leaveModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="text-lg font-semibold mb-2">Leave this chat?</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              Leaving ends this chat. Messages vanish for both of you. You can
+              still search them later unless they sealed or blocked.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setLeaveModal(false)}
+                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmLeaveChat}
+                className="flex-1 bg-red-600 py-2.5 rounded-xl font-medium"
+              >
+                Leave & end chat
               </button>
             </div>
           </div>

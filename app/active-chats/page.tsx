@@ -1,9 +1,7 @@
 'use client'
-
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-
 function isUsernameActive(profile: {
   username?: string | null
   username_claimed_at?: string | null
@@ -17,7 +15,6 @@ function isUsernameActive(profile: {
     (1000 * 60 * 60)
   return hoursPassed < 24
 }
-
 type ActiveChat = {
   conversationId: string
   otherUsername: string
@@ -25,7 +22,6 @@ type ActiveChat = {
   lastAt: string
   liveCount: number
 }
-
 export default function ActiveChatsPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -34,7 +30,6 @@ export default function ActiveChatsPage() {
   const [chats, setChats] = useState<ActiveChat[]>([])
   const [ending, setEnding] = useState<string | null>(null)
   const [hint, setHint] = useState('')
-
   const load = async () => {
     setHint('')
     const {
@@ -45,13 +40,11 @@ export default function ActiveChatsPage() {
       return
     }
     setUserId(user.id)
-
     const { data: myProfile } = await supabase
       .from('profiles')
       .select('username, username_claimed_at, is_permanent_username, status')
       .eq('id', user.id)
       .maybeSingle()
-
     if (myProfile?.status === 'banned') {
       await supabase.auth.signOut()
       router.push('/auth')
@@ -66,10 +59,19 @@ export default function ActiveChatsPage() {
       return
     }
     setMyUsername(myProfile!.username)
-
     const nowIso = new Date().toISOString()
 
-    // Live messages only (no conversations table)
+    // Blocks either direction — hide those chats
+    const { data: blockRows } = await supabase
+      .from('blocks')
+      .select('blocker_id, blocked_id')
+      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`)
+    const blockedIds = new Set<string>()
+    for (const b of blockRows || []) {
+      if (b.blocker_id === user.id) blockedIds.add(b.blocked_id)
+      if (b.blocked_id === user.id) blockedIds.add(b.blocker_id)
+    }
+
     const { data: msgs, error } = await supabase
       .from('messages')
       .select('id, conversation_id, sender_id, created_at, deleted, expires_at')
@@ -77,14 +79,12 @@ export default function ActiveChatsPage() {
       .gt('expires_at', nowIso)
       .order('created_at', { ascending: false })
       .limit(400)
-
     if (error) {
       setHint(error.message)
       setChats([])
       setLoading(false)
       return
     }
-
     type Acc = {
       conversationId: string
       senders: Set<string>
@@ -92,12 +92,10 @@ export default function ActiveChatsPage() {
       liveCount: number
     }
     const map = new Map<string, Acc>()
-
     for (const m of msgs || []) {
       if (!m.conversation_id) continue
       if (m.deleted === true) continue
       if (m.expires_at && new Date(m.expires_at).getTime() <= Date.now()) continue
-
       const existing = map.get(m.conversation_id)
       if (!existing) {
         map.set(m.conversation_id, {
@@ -114,38 +112,28 @@ export default function ActiveChatsPage() {
         }
       }
     }
-
-    // Keep only threads where I sent at least one live message
-    // OR the conversation_id includes my current username (sorted pair)
     const myName = (myProfile!.username || '').toLowerCase()
     const mine = Array.from(map.values()).filter((c) => {
       if (c.senders.has(user.id)) return true
       const parts = c.conversationId.toLowerCase().split('_')
       return parts.includes(myName)
     })
-
     if (mine.length === 0) {
       setChats([])
       setLoading(false)
       return
     }
-
     const otherIds = new Set<string>()
     for (const c of mine) {
       for (const sid of c.senders) {
         if (sid !== user.id) otherIds.add(sid)
       }
     }
-
-    // Resolve other party: from senders, or by username in conversation_id
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, username, avatar_icon, username_claimed_at, is_permanent_username')
       .in('id', Array.from(otherIds).length ? Array.from(otherIds) : ['00000000-0000-0000-0000-000000000000'])
-
     const byId = new Map((profiles || []).map((p) => [p.id, p]))
-
-    // Also load any username that appears in conversation_id but never sent yet
     const needNames = new Set<string>()
     for (const c of mine) {
       const parts = c.conversationId.split('_')
@@ -163,11 +151,9 @@ export default function ActiveChatsPage() {
         (byUser || []).map((p) => [String(p.username).toLowerCase(), p])
       )
     }
-
     const list: ActiveChat[] = []
     for (const c of mine) {
       if (c.liveCount < 1) continue
-
       let other: any = null
       for (const sid of c.senders) {
         if (sid !== user.id && byId.has(sid)) {
@@ -184,9 +170,8 @@ export default function ActiveChatsPage() {
           }
         }
       }
-
       if (!other?.username || !isUsernameActive(other)) continue
-
+      if (blockedIds.has(other.id)) continue
       list.push({
         conversationId: c.conversationId,
         otherUsername: other.username,
@@ -195,18 +180,15 @@ export default function ActiveChatsPage() {
         liveCount: c.liveCount,
       })
     }
-
     list.sort(
       (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()
     )
     setChats(list)
     setLoading(false)
   }
-
   useEffect(() => {
     load()
   }, [])
-
   const endChat = async (conversationId: string) => {
     if (!userId || ending) return
     setEnding(conversationId)
@@ -219,7 +201,6 @@ export default function ActiveChatsPage() {
     setChats((prev) => prev.filter((c) => c.conversationId !== conversationId))
     setEnding(null)
   }
-
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
@@ -227,7 +208,6 @@ export default function ActiveChatsPage() {
       </div>
     )
   }
-
   return (
     <div className="min-h-screen bg-black text-white px-4 py-8">
       <div className="max-w-md mx-auto">
@@ -238,17 +218,13 @@ export default function ActiveChatsPage() {
         >
           ← Back to Home
         </button>
-
         <h1 className="text-2xl font-bold mb-1">Active chats</h1>
         <p className="text-sm text-zinc-500 mb-6">
-          Live chats only. Tap a name to open. End removes it for both when
-          messages are marked gone.
+          Live chats only. Blocked users do not appear. Tap a name to open.
         </p>
-
         {hint && (
           <p className="text-sm text-red-400 mb-4 break-words">{hint}</p>
         )}
-
         {chats.length === 0 ? (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-8 text-center">
             <p className="text-zinc-500 text-sm">No active chat</p>
