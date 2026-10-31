@@ -143,22 +143,55 @@ export default function GroupRoomPage() {
     setMemberReports(data || [])
   }
 
-  const loadMembers = async (token: string) => {
-    const res = await fetch(`/api/groups/members?group_id=${groupId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.members) {
-      setMembers(data.members)
+  const loadMembers = async (token?: string) => {
+    // Direct Supabase first (faster for admin)
+    const { data: rows } = await supabase
+      .from('vanish_group_members')
+      .select('user_id')
+      .eq('group_id', groupId)
+    const ids = (rows || []).map((r) => r.user_id)
+    if (ids.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, username, avatar_icon')
+        .in('id', ids)
       const map: Record<string, any> = {}
-      data.members.forEach((m: any) => {
-        map[m.user_id] = {
-          id: m.user_id,
-          username: m.username,
-          avatar_icon: m.avatar_icon,
-        }
+      ;(profs || []).forEach((p) => {
+        map[p.id] = p
       })
       setProfilesById((prev) => ({ ...prev, ...map }))
+      setMembers(
+        ids.map((id) => ({
+          user_id: id,
+          username: map[id]?.username || null,
+          avatar_icon: map[id]?.avatar_icon || null,
+        }))
+      )
+    } else {
+      setMembers([])
+    }
+    // API backup if token given
+    if (token) {
+      try {
+        const res = await fetch(`/api/groups/members?group_id=${groupId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const data = await res.json().catch(() => ({}))
+        if (data.members && data.members.length) {
+          setMembers(data.members)
+          const map: Record<string, any> = {}
+          data.members.forEach((m: any) => {
+            map[m.user_id] = {
+              id: m.user_id,
+              username: m.username,
+              avatar_icon: m.avatar_icon,
+            }
+          })
+          setProfilesById((prev) => ({ ...prev, ...map }))
+        }
+      } catch {
+        /* keep direct list */
+      }
     }
   }
 
@@ -368,6 +401,21 @@ export default function GroupRoomPage() {
           },
           () => {
             markVanished()
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'vanish_group_members',
+            filter: `group_id=eq.${groupId}`,
+          },
+          async () => {
+            const {
+              data: { session },
+            } = await supabase.auth.getSession()
+            if (session) await loadMembers(session.access_token)
           }
         )
         .on(

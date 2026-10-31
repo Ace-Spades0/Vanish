@@ -31,7 +31,11 @@ export async function GET(req: Request) {
     if (!group) {
       return NextResponse.json({ error: 'Group not found' }, { status: 404 })
     }
-    const { data: rows, error } = await supabase
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    const reader = serviceKey
+      ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey)
+      : supabase
+    const { data: rows, error } = await reader
       .from('vanish_group_members')
       .select('user_id')
       .eq('group_id', group_id)
@@ -41,7 +45,7 @@ export async function GET(req: Request) {
     const ids = (rows || []).map((r) => r.user_id)
     let profiles: any[] = []
     if (ids.length) {
-      const { data: profs } = await supabase
+      const { data: profs } = await reader
         .from('profiles')
         .select('id, username, avatar_icon')
         .in('id', ids)

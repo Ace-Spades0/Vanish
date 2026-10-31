@@ -49,6 +49,7 @@ export default function LettersPage() {
   const [reading, setReading] = useState<any | null>(null)
   const [secsLeft, setSecsLeft] = useState<number | null>(null)
   const [vanishedLetter, setVanishedLetter] = useState(false)
+  const [openSafety, setOpenSafety] = useState<any | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadInbox = async (userId: string) => {
@@ -91,6 +92,28 @@ export default function LettersPage() {
       }
       setUser(user)
       await loadInbox(user.id)
+
+      const ch = supabase
+        .channel(`letters-inbox-${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'letters',
+            filter: `to_id=eq.${user.id}`,
+          },
+          (payload) => {
+            const row: any = payload.new
+            if (!row || row.read_at) return
+            setLetters((prev) => {
+              if (prev.some((l) => l.id === row.id)) return prev
+              return [row, ...prev]
+            })
+          }
+        )
+        .subscribe()
+
       try {
         const pre = sessionStorage.getItem('letter_to')
         if (pre) {
@@ -146,7 +169,7 @@ export default function LettersPage() {
       if (!invite) return { error: 'Vanish link not found' }
       const { data: creator } = await supabase
         .from('profiles')
-        .select('id, username')
+        .select('id, username, is_offline')
         .eq('id', invite.creator_id)
         .maybeSingle()
       if (!creator) return { error: 'User not available' }
@@ -154,7 +177,7 @@ export default function LettersPage() {
     }
     const { data: byName } = await supabase
       .from('profiles')
-      .select('id, username')
+      .select('id, username, is_offline')
       .ilike('username', trimmed)
       .maybeSingle()
     if (byName) return { target: byName }
@@ -168,7 +191,7 @@ export default function LettersPage() {
       if (invite) {
         const { data: creator } = await supabase
           .from('profiles')
-          .select('id, username')
+          .select('id, username, is_offline')
           .eq('id', invite.creator_id)
           .maybeSingle()
         if (creator) return { target: creator }
@@ -216,8 +239,12 @@ export default function LettersPage() {
       setMessage('You cannot send a letter to yourself')
       return
     }
+    if (target.is_offline) {
+      setMessage('User is not found')
+      return
+    }
     if (await isBlockedEitherWay(user.id, target.id)) {
-      setMessage('You cannot send a letter to this user')
+      setMessage('User is not found')
       return
     }
     const secs = viewSeconds || autoViewSeconds(body)
@@ -271,6 +298,14 @@ export default function LettersPage() {
       setLetters((prev) => prev.filter((l) => l.id !== letter.id))
       return
     }
+    // Safety warning before reading (same idea as chat / group)
+    setOpenSafety(letter)
+  }
+
+  const acceptOpenSafety = () => {
+    const letter = openSafety
+    setOpenSafety(null)
+    if (!letter) return
     setVanishedLetter(false)
     setReading(letter)
     setSecsLeft(parseViewSeconds(letter))
@@ -465,6 +500,38 @@ export default function LettersPage() {
           </div>
         )}
       </div>
+      {openSafety && !reading && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/20 rounded-3xl p-6">
+            <h2 className="text-xl font-semibold mb-3">Before you open</h2>
+            <ul className="text-sm text-zinc-300 space-y-2 mb-4 list-disc pl-5">
+              <li>This letter is one-time. A timer starts when you open it.</li>
+              <li>Do not share passwords, codes, or money details.</li>
+              <li>If something feels wrong, close and do not engage.</li>
+            </ul>
+            <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
+              NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
+              SECRETS YOU CANNOT AFFORD TO EXPOSE.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setOpenSafety(null)}
+                className="flex-1 bg-zinc-800 py-3 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={acceptOpenSafety}
+                className="flex-1 bg-cyan-500 text-black font-medium py-3 rounded-xl"
+              >
+                I understand — Open
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {reading && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm">

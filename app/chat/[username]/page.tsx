@@ -200,8 +200,12 @@ export default function ChatPage() {
   }
 
   const canStartNewChat = () => {
+    if (blocked) return false
     if (!user?.id || !targetUser?.id) return true
-    return !sealUserIds.includes(targetUser.id)
+    // Either side sealed (e.g. Ghost) → no restart
+    if (sealUserIds.includes(user.id) || sealUserIds.includes(targetUser.id))
+      return false
+    return true
   }
 
   const recomputeEnd = (
@@ -468,6 +472,29 @@ export default function ChatPage() {
             if (row.seal_user_ids) setSealUserIds(asIdList(row.seal_user_ids))
             if (row.quiet_user_ids)
               setQuietUserIds(asIdList(row.quiet_user_ids))
+          }
+        )
+        .subscribe()
+
+      // Other party blocked us or messages wiped → vanish UI
+      supabase
+        .channel(`chat-blocks-${convId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'blocks',
+            filter: `blocked_id=eq.${user.id}`,
+          },
+          (payload) => {
+            const row = payload.new as any
+            if (row?.blocker_id === targetProfile.id) {
+              setBlocked(true)
+              setMessages([])
+              setSealed(true)
+              setChatExpired(true)
+            }
           }
         )
         .subscribe()
@@ -759,15 +786,19 @@ export default function ChatPage() {
         .from('profiles')
         .update({ is_offline: true })
         .eq('id', user.id)
-      // Chat vanishes for both in realtime
       await supabase
         .from('messages')
         .update({ deleted: true, expires_at: new Date().toISOString() })
         .eq('conversation_id', conversationId)
         .eq('deleted', false)
-      // Seal so other side cannot Start new chat
-      let nextSeals = [...sealUserIds]
-      if (!nextSeals.includes(user.id)) nextSeals.push(user.id)
+      // Seal both sides — neither sees Start a new chat
+      const nextSeals = Array.from(
+        new Set([
+          ...sealUserIds,
+          user.id,
+          ...(targetUser?.id ? [targetUser.id] : []),
+        ])
+      )
       await saveSettings({ seal_user_ids: nextSeals })
       setSealUserIds(nextSeals)
       setMessages([])
@@ -868,15 +899,19 @@ export default function ChatPage() {
         .from('profiles')
         .update({ is_offline: true })
         .eq('id', user.id)
-      // Chat vanishes for both in realtime
       await supabase
         .from('messages')
         .update({ deleted: true, expires_at: new Date().toISOString() })
         .eq('conversation_id', conversationId)
         .eq('deleted', false)
-      // Seal so other side cannot Start new chat
-      let nextSeals = [...sealUserIds]
-      if (!nextSeals.includes(user.id)) nextSeals.push(user.id)
+      // Seal both sides — neither sees Start a new chat
+      const nextSeals = Array.from(
+        new Set([
+          ...sealUserIds,
+          user.id,
+          ...(targetUser?.id ? [targetUser.id] : []),
+        ])
+      )
       await saveSettings({ seal_user_ids: nextSeals })
       setSealUserIds(nextSeals)
       setMessages([])
@@ -933,8 +968,9 @@ export default function ChatPage() {
       setBlocked(true)
       setMessages([])
       setSealed(true)
+      setChatExpired(true)
       setModal(null)
-      router.push('/home')
+      // Stay on vanish screen with Home only (blocked branch)
     }
   }
 
@@ -1329,7 +1365,20 @@ export default function ChatPage() {
             <p className="text-center text-sm text-zinc-500 mb-6">
               Messages are gone. Nothing left to read.
             </p>
-            {canStartNewChat() ? (
+            {blocked ? (
+              <div className="space-y-2">
+                <p className="text-center text-zinc-500 text-sm mb-2">
+                  This chat has vanished.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => router.push('/home')}
+                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
+                >
+                  Go home
+                </button>
+              </div>
+            ) : canStartNewChat() ? (
               <div className="space-y-2">
                 <button
                   onClick={requestNewChat}
@@ -1356,7 +1405,7 @@ export default function ChatPage() {
             ) : (
               <div className="space-y-2">
                 <p className="text-center text-zinc-500 text-sm mb-2">
-                  This chat cannot be reopened.
+                  This chat has vanished. It cannot be reopened.
                 </p>
                 <button
                   type="button"
@@ -1364,13 +1413,6 @@ export default function ChatPage() {
                   className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-xl border border-zinc-700"
                 >
                   Go home
-                </button>
-                <button
-                  type="button"
-                  onClick={() => router.push('/search')}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-cyan-400 font-medium py-3 rounded-xl border border-zinc-700"
-                >
-                  Search users
                 </button>
               </div>
             )}
