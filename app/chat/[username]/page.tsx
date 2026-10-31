@@ -139,6 +139,7 @@ export default function ChatPage() {
   const [editText, setEditText] = useState('')
   const [msgMenu, setMsgMenu] = useState<'menu' | 'edit' | null>(null)
   const [ghostReply, setGhostReply] = useState(false)
+  const ghostArmedRef = useRef(false)
   const [sealed, setSealed] = useState(false)
   const [headerOpen, setHeaderOpen] = useState(false)
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({})
@@ -401,9 +402,9 @@ export default function ChatPage() {
         },
         async (payload) => {
           if (payload.new.deleted) return
+          // Ghost / seal already wiped this chat — do not revive UI
+          if (ghostArmedRef.current) return
           hadMessagesRef.current = true
-          setSealed(false)
-          setChatExpired(false)
           const row = await decryptMessageRow(convId, payload.new)
           setMessages((prev) => {
             if (prev.some((m) => m.id === row.id)) return prev
@@ -782,25 +783,9 @@ export default function ChatPage() {
     }
 
     if (ghostReply) {
-      await supabase
-        .from('profiles')
-        .update({ is_offline: true })
-        .eq('id', user.id)
-      await supabase
-        .from('messages')
-        .update({ deleted: true, expires_at: new Date().toISOString() })
-        .eq('conversation_id', conversationId)
-        .eq('deleted', false)
-      // Seal both sides — neither sees Start a new chat
-      const nextSeals = Array.from(
-        new Set([
-          ...sealUserIds,
-          user.id,
-          ...(targetUser?.id ? [targetUser.id] : []),
-        ])
-      )
-      await saveSettings({ seal_user_ids: nextSeals })
-      setSealUserIds(nextSeals)
+      // Local vanish first — realtime must not put messages back
+      ghostArmedRef.current = true
+      setGhostReply(false)
       setMessages([])
       setFileCount(0)
       setVideoCount(0)
@@ -810,7 +795,25 @@ export default function ChatPage() {
       setFirstMsgAt(null)
       setChatEndsAt(null)
       hadMessagesRef.current = false
-      setGhostReply(false)
+
+      const nextSeals = Array.from(
+        new Set([
+          ...sealUserIds,
+          user.id,
+          ...(targetUser?.id ? [targetUser.id] : []),
+        ])
+      )
+      setSealUserIds(nextSeals)
+
+      await supabase
+        .from('profiles')
+        .update({ is_offline: true })
+        .eq('id', user.id)
+      await supabase
+        .from('messages')
+        .update({ deleted: true, expires_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+      await saveSettings({ seal_user_ids: nextSeals })
     }
   }
 
@@ -895,25 +898,9 @@ export default function ChatPage() {
     if (error) alert(error.message)
 
     if (ghostReply) {
-      await supabase
-        .from('profiles')
-        .update({ is_offline: true })
-        .eq('id', user.id)
-      await supabase
-        .from('messages')
-        .update({ deleted: true, expires_at: new Date().toISOString() })
-        .eq('conversation_id', conversationId)
-        .eq('deleted', false)
-      // Seal both sides — neither sees Start a new chat
-      const nextSeals = Array.from(
-        new Set([
-          ...sealUserIds,
-          user.id,
-          ...(targetUser?.id ? [targetUser.id] : []),
-        ])
-      )
-      await saveSettings({ seal_user_ids: nextSeals })
-      setSealUserIds(nextSeals)
+      // Local vanish first — realtime must not put messages back
+      ghostArmedRef.current = true
+      setGhostReply(false)
       setMessages([])
       setFileCount(0)
       setVideoCount(0)
@@ -923,7 +910,25 @@ export default function ChatPage() {
       setFirstMsgAt(null)
       setChatEndsAt(null)
       hadMessagesRef.current = false
-      setGhostReply(false)
+
+      const nextSeals = Array.from(
+        new Set([
+          ...sealUserIds,
+          user.id,
+          ...(targetUser?.id ? [targetUser.id] : []),
+        ])
+      )
+      setSealUserIds(nextSeals)
+
+      await supabase
+        .from('profiles')
+        .update({ is_offline: true })
+        .eq('id', user.id)
+      await supabase
+        .from('messages')
+        .update({ deleted: true, expires_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId)
+      await saveSettings({ seal_user_ids: nextSeals })
     }
   }
 
@@ -1356,7 +1361,7 @@ export default function ChatPage() {
         )}
       </div>
 
-      {(chatExpired || sealed) && messages.length === 0 && (
+      {(chatExpired || sealed) && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 shadow-[0_0_40px_rgba(34,211,238,0.15)]">
             <p className="text-center text-2xl font-semibold text-cyan-400 mb-2">
