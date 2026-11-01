@@ -68,7 +68,7 @@ const copy = {
       'Go Vanish is not for children under 16. If you believe a minor is using the service, please report it.',
     s9t: '9. Security',
     s9p:
-      'We use reasonable technical measures to protect the service. No online service is perfectly secure. Clearing browser data creates a new identity. Do not share secrets you cannot afford to expose.',
+      'Messages are encrypted in your browser using AES-256-GCM before they are sent to our servers. Because we use Supabase for our database infrastructure, they inherently process basic connection metadata (like IP addresses) to function securely, but they cannot read your message content. No online service is perfectly secure. Clearing browser data creates a new identity. Do not share secrets you cannot afford to expose.',
     s10t: '10. Changes',
     s10p:
       'We may update this Privacy & Security page. Continued use after changes means you accept the updated policy.',
@@ -128,7 +128,7 @@ const copy = {
     s8p: 'Go Vanish si kwa watoto chini ya miaka 16.',
     s9t: '9. Usalama',
     s9p:
-      'Tunatumia hatua zinazofaa. Hakuna huduma salama kikamilifu. Usishiriki siri hatari.',
+      'Ujumbe husimbwa kwa njia fiche kwenye kivinjari chako kwa kutumia AES-256-GCM kabla ya kutumwa kwa seva zetu. Kwa sababu tunatumia Supabase kwa hifadhidata yetu, wanachakata data ya msingi ya muunganisho (kama anwani za IP) ili kufanya kazi kwa usalama, lakini hawawezi kusoma maudhui yako. Hakuna huduma salama kikamilifu. Usishiriki siri hatari.',
     s10t: '10. Mabadiliko',
     s10p: 'Tunaweza kusasisha ukurasa huu.',
     s11t: '11. Mawasiliano',

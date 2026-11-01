@@ -17,7 +17,7 @@ const copy = {
       'You must be at least 16 years old to use Go Vanish. By using the service, you confirm that you meet this age requirement.',
     s3t: '3. Disclaimer & warning',
     s3p:
-      'Go Vanish is provided “as is”. We do not guarantee uninterrupted service, perfect delivery, or that every message will disappear in every edge case. No online service can guarantee perfect security. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE. Use the platform at your own risk.',
+      'Go Vanish is provided “as is”. We do not guarantee uninterrupted service, perfect delivery, or that every message will disappear in every edge case. No online service can guarantee perfect security. "Disappearing" messages cannot prevent screenshots, recipient-side caching, or a compromised device. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE. Use the platform at your own risk.',
     s4t: '4. Nature of the Service',
     s4p:
       'Go Vanish is a temporary and private messaging platform. Access does not require email or a password. You receive a temporary 6-character username. Messages are designed to disappear after a limited time. One-time letters and invite links are also temporary. The service is not a permanent archive of conversations.',
@@ -66,7 +66,7 @@ const copy = {
     s2p: 'Lazima uwe na angalau miaka 16 kutumia Go Vanish.',
     s3t: '3. Kanusho na onyo',
     s3p:
-      'Go Vanish inatolewa “kama ilivyo”. Hatuahidi huduma isiyokatizwa kila wakati. Hakuna huduma inayohakikisha usalama kamili mtandaoni. USISHIRIKE SIRI USIZOWEZA KUHIMILI KUFICHULIWA. Tumia jukwaa kwa hatari yako mwenyewe.',
+      'Go Vanish inatolewa “kama ilivyo”. Hatuahidi huduma isiyokatizwa kila wakati. Hakuna huduma inayohakikisha usalama kamili mtandaoni. Ujumbe unaotoweka hauzuii picha za skrini (screenshots) au kifaa kilichoathirika. USISHIRIKE SIRI USIZOWEZA KUHIMILI KUFICHULIWA. Tumia jukwaa kwa hatari yako mwenyewe.',
     s4t: '4. Asili ya huduma',
     s4p:
       'Go Vanish ni jukwaa la ujumbe wa muda na faragha. Haitaji barua pepe wala nenosiri. Unapata jina la herufi 6 la muda. Ujumbe hupotea baada ya muda. Si kumbukumbu ya kudumu.',
@@ -93,7 +93,8 @@ const copy = {
       ' kwa uharibifu wa aina isiyo ya moja kwa moja, hasara ya data, au hasara nyingine kutokana na matumizi ya huduma.',
     s9p3: 'Kwa maneno rahisi: ',
     s9bold2: 'hatubebi hasara zaidi ya sheria inavyotulazimisha',
-    s9p4: ', ikiwa ni pamoja na matatizo kutoka kwa watumiaji wengine.',
+    s9p4:
+      ', ikiwa ni pamoja na matatizo kutoka kwa watumiaji wengine.',
     s10t: '10. Mabadiliko',
     s10p: 'Tunaweza kusasisha Masharti. Kuendelea kutumia kunamaanisha unakubali.',
     s11t: '11. Mawasiliano',
