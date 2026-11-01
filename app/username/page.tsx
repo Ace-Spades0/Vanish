@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { peekReturnTo, takeReturnTo } from '@/lib/returnTo'
-import { generateKeyPair, exportPublicKey, exportPrivateKey } from '@/lib/e2ee' // ADDED
+import { generateKeyPair, exportPublicKey, exportPrivateKey } from '@/lib/e2ee'
 
 export default function UsernamePage() {
   const router = useRouter()
@@ -15,7 +15,12 @@ export default function UsernamePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.replace('/'); return }
 
-      const { data: profile } = await supabase.from('profiles').select('username, username_claimed_at, is_permanent_username, status, public_key').eq('id', user.id).maybeSingle()
+      const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+
+      if (error) {
+        setMessage("Database error: " + error.message)
+        return
+      }
 
       if (profile?.status === 'banned' || profile?.status === 'suspended') { router.replace('/appeal'); return }
 
@@ -27,7 +32,7 @@ export default function UsernamePage() {
       }
 
       if (hasName && active) {
-        // ADDED: Generate ECDH Keys if they don't exist
+        // Generate ECDH Keys if they don't exist
         if (!localStorage.getItem('vanish_priv_key')) {
           try {
             const pair = await generateKeyPair()

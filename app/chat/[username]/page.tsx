@@ -172,7 +172,6 @@ export default function ChatPage() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  // ADDED: Visibility Blur
   useEffect(() => {
     const handleVisibilityChange = () => {
       const chatContainer = document.getElementById('chat-messages-container')
@@ -196,23 +195,41 @@ export default function ChatPage() {
       if (!isMounted) return
       setUser(user)
 
-      const { data: myProfile } = await supabase.from('profiles').select('username, username_claimed_at, is_permanent_username, status, suspended_until, public_key').eq('id', user.id).maybeSingle()
+      // FIXED: Use select('*') to avoid missing public_key column errors
+      const { data: myProfile, error: myError } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+      
+      if (myError) {
+        alert("Database Error: " + myError.message)
+        setBlocked(true)
+        setLoading(false)
+        return
+      }
+      if (!myProfile) {
+        router.push('/auth')
+        return
+      }
 
-      if (myProfile?.status === 'banned') { await supabase.auth.signOut(); router.push('/auth'); return }
-      if (myProfile?.status === 'suspended') {
+      if (myProfile.status === 'banned') { await supabase.auth.signOut(); router.push('/auth'); return }
+      if (myProfile.status === 'suspended') {
         const until = myProfile.suspended_until ? new Date(myProfile.suspended_until).getTime() : null
         if (!until || until > Date.now()) { router.push('/appeal'); return }
       }
-      if (!isUsernameActive(myProfile || {})) { router.push('/username'); return }
+      if (!isUsernameActive(myProfile)) { router.push('/username'); return }
 
-      const { data: targetProfile } = await supabase.from('profiles').select('*').ilike('username', targetUsername).maybeSingle()
-      if (!targetProfile || !isUsernameActive(targetProfile)) { setBlocked(true); setLoading(false); return }
+      // FIXED: Use select('*') for target profile as well
+      const { data: targetProfile, error: targetError } = await supabase.from('profiles').select('*').ilike('username', targetUsername).maybeSingle()
+      
+      if (targetError || !targetProfile || !isUsernameActive(targetProfile)) { 
+        setBlocked(true)
+        setLoading(false)
+        return 
+      }
       setTargetUser(targetProfile)
 
       const { data: blocks } = await supabase.from('blocks').select('id').or(`and(blocker_id.eq.${user.id},blocked_id.eq.${targetProfile.id}),and(blocker_id.eq.${targetProfile.id},blocked_id.eq.${user.id})`)
       if (blocks && blocks.length > 0) { setBlocked(true); setLoading(false); return }
 
-      const convId = [myProfile!.username, targetProfile.username].sort().join('_')
+      const convId = [myProfile.username, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
       // --- ECDH KEY DERIVATION ---
@@ -234,7 +251,7 @@ export default function ChatPage() {
         }
       }
 
-      const { data: settings } = await supabase.from('conversation_settings').select('duration_minutes, duration_by_user, seal_user_ids, quiet_user_ids, sealed_by').eq('conversation_id', convId).maybeSingle()
+      const { data: settings } = await supabase.from('conversation_settings').select('*').eq('conversation_id', convId).maybeSingle()
 
       let map = asDurationMap(settings?.duration_by_user)
       if (Object.keys(map).length === 0 && settings?.duration_minutes && [30, 60, 180].includes(settings.duration_minutes)) map = { [user.id]: settings.duration_minutes }
@@ -354,7 +371,6 @@ export default function ChatPage() {
       if (profileChannelRef.current) supabase.removeChannel(profileChannelRef.current)
       if (settingsChannelRef.current) supabase.removeChannel(settingsChannelRef.current)
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
-      
       setMessages([])
       setMediaUrls({})
     }
@@ -645,7 +661,6 @@ export default function ChatPage() {
         {warningText && <p className="mt-2 text-sm text-amber-300/95">{warningText}</p>}
       </div>
 
-      {/* ADDED: id="chat-messages-container" for Visibility Blur */}
       <div id="chat-messages-container" className="flex-1 overflow-y-auto px-3 py-3 min-h-0 flex flex-col relative transition-all duration-300"
         style={{
           backgroundColor: '#000000',
