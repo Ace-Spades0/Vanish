@@ -9,6 +9,7 @@ import {
   looksEncrypted,
   encryptBytes,
   decryptBytes,
+  generateSafetyCode, // ADDED: Import safety code generator
 } from '@/lib/e2ee'
 
 const REPORT_TYPES = [
@@ -119,6 +120,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true)
   const [startingNew, setStartingNew] = useState(false)
   const [conversationId, setConversationId] = useState('')
+  const [safetyCode, setSafetyCode] = useState('') // ADDED: Safety code state
   const [fileCount, setFileCount] = useState(0)
   const [videoCount, setVideoCount] = useState(0)
   const [blocked, setBlocked] = useState(false)
@@ -306,6 +308,9 @@ export default function ChatPage() {
         .sort()
         .join('_')
       setConversationId(convId)
+      
+      // ADDED: Generate and set the safety code
+      generateSafetyCode(convId).then((code) => setSafetyCode(code))
 
       const { data: settings } = await supabase
         .from('conversation_settings')
@@ -529,7 +534,9 @@ export default function ChatPage() {
         )
         .subscribe()
     }
+    
     init()
+    
     return () => {
       isMounted = false
       if (channelRef.current) supabase.removeChannel(channelRef.current)
@@ -538,6 +545,10 @@ export default function ChatPage() {
       if (settingsChannelRef.current)
         supabase.removeChannel(settingsChannelRef.current)
       if (longPressTimer.current) clearTimeout(longPressTimer.current)
+      
+      // Wipe local memory of decrypted text and media URLs when leaving the page
+      setMessages([])
+      setMediaUrls({})
     }
   }, [targetUsername])
 
@@ -1111,7 +1122,13 @@ export default function ChatPage() {
             <p className="text-sm text-zinc-500 leading-snug">
               No last seen. No read receipts. Text encrypted.
             </p>
-            <p className="text-sm text-zinc-500">
+            {/* ADDED: Safety Code UI */}
+            {safetyCode && (
+              <p className="text-xs text-cyan-400/90 mt-1 font-mono tracking-wider">
+                Safety Code: <span className="font-bold text-cyan-300">{safetyCode}</span>
+              </p>
+            )}
+            <p className="text-sm text-zinc-500 mt-1">
               Chat length (from first message) · your pick:{' '}
               {myDuration === 30 ? '30m' : myDuration === 60 ? '1h' : '3h'}
             </p>
