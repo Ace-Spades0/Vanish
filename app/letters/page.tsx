@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+// ADDED: Import encryption functions
+import { encryptText, decryptText, looksEncrypted } from '@/lib/e2ee'
 
 const VIEW_OPTIONS = [
   { s: 5, label: '5s' },
@@ -30,7 +32,7 @@ function autoViewSeconds(text: string) {
   const n = text.trim().length
   if (n <= 40) return 5
   if (n <= 120) return 8
-  return 10 // max 10s when auto
+  return 10
 }
 
 export default function LettersPage() {
@@ -247,20 +249,30 @@ export default function LettersPage() {
       setMessage('User is not found')
       return
     }
+
+    // NEW: Encrypt the letter body before sending to database
+    const convId = [user.id, target.id].sort().join('_')
+    let encryptedBody = body.trim()
+    try {
+      encryptedBody = await encryptText(convId, body.trim())
+    } catch (err) {
+      setMessage('Failed to encrypt letter securely')
+      return
+    }
+
     const secs = viewSeconds || autoViewSeconds(body)
     const row: any = {
       from_id: user.id,
       to_username: target.username,
       to_id: target.id,
-      body: body.trim(),
+      body: encryptedBody, // Send encrypted payload
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       view_seconds: secs,
     }
     let { error } = await supabase.from('letters').insert(row)
     if (error && String(error.message || '').includes('view_seconds')) {
       delete row.view_seconds
-      // embed timer in body prefix for readers without column
-      row.body = `[[view:${secs}]]\n` + body.trim()
+      row.body = `[[view:${secs}]]\n` + encryptedBody // Keep view timer but encrypt content
       const retry = await supabase.from('letters').insert(row)
       error = retry.error
     }
@@ -269,7 +281,7 @@ export default function LettersPage() {
       setMessageOk(false)
     } else {
       setMessage(
-        `✓ Letter sent. When opened, it vanishes after ${secs}s.`
+        `✓ Letter encrypted and sent. When opened, it vanishes after ${secs}s.`
       )
       setMessageOk(true)
       setBody('')
@@ -287,10 +299,6 @@ export default function LettersPage() {
     return autoViewSeconds(String(letter.body || ''))
   }
 
-  const displayBody = (letter: any) => {
-    return String(letter.body || '').replace(/^\[\[view:\d+\]\]\n?/, '')
-  }
-
   const openLetter = async (letter: any) => {
     if (letter.read_at) return
     if (new Date(letter.expires_at).getTime() < Date.now()) {
@@ -298,16 +306,31 @@ export default function LettersPage() {
       setLetters((prev) => prev.filter((l) => l.id !== letter.id))
       return
     }
-    // Safety warning before reading (same idea as chat / group)
     setOpenSafety(letter)
   }
 
-  const acceptOpenSafety = () => {
+  const acceptOpenSafety = async () => {
     const letter = openSafety
     setOpenSafety(null)
-    if (!letter) return
+    if (!letter || !user) return
+    
     setVanishedLetter(false)
-    setReading(letter)
+    
+    // NEW: Decrypt the letter body locally before displaying
+    let plainBody = letter.body
+    if (looksEncrypted(letter.body)) {
+      try {
+        const convId = [letter.from_id, user.id].sort().join('_')
+        plainBody = await decryptText(convId, letter.body)
+      } catch {
+        plainBody = '[Unable to decrypt message securely]'
+      }
+    }
+    
+    // Strip view timer tag if present
+    plainBody = plainBody.replace(/^\[\[view:\d+\]\]\n?/, '')
+
+    setReading({ ...letter, body: plainBody })
     setSecsLeft(parseViewSeconds(letter))
   }
 
@@ -348,7 +371,7 @@ export default function LettersPage() {
         </button>
         <h1 className="text-3xl font-bold mb-2">Letters</h1>
         <p className="text-zinc-500 text-sm mb-6">
-          One-time notes. Read once — timer runs, then gone.
+          Encrypted one-time notes. Read once — timer runs, then gone.
         </p>
         <div className="flex gap-2 mb-6">
           <button
@@ -395,7 +418,7 @@ export default function LettersPage() {
               </p>
               <ul className="text-[11px] text-zinc-400 space-y-1.5 list-disc pl-4 mb-3">
                 <li>Do not share passwords, codes, or payment details.</li>
-                <li>Letters are read once; a timer then deletes them.</li>
+                <li>Letters are E2E encrypted. Timer deletes them.</li>
                 <li>
                   If something feels wrong, do not engage — report when you can.
                 </li>
@@ -505,8 +528,8 @@ export default function LettersPage() {
           <div className="w-full max-w-md bg-zinc-950 border border-cyan-500/20 rounded-3xl p-6">
             <h2 className="text-xl font-semibold mb-3">Before you open</h2>
             <ul className="text-sm text-zinc-300 space-y-2 mb-4 list-disc pl-5">
-              <li>This letter is one-time. A timer starts when you open it.</li>
-              <li>Do not share passwords, codes, or money details.</li>
+              <li>This letter is encrypted and one-time.</li>
+              <li>A timer starts when you open it.</li>
               <li>If something feels wrong, close and do not engage.</li>
             </ul>
             <p className="text-xs sm:text-sm font-semibold text-cyan-300/95 mb-5 leading-relaxed uppercase tracking-wide">
@@ -550,7 +573,7 @@ export default function LettersPage() {
                     Message
                   </p>
                   <p className="text-[15px] leading-relaxed text-zinc-50 whitespace-pre-wrap break-words">
-                    {displayBody(reading)}
+                    {reading.body}
                   </p>
                 </div>
                 <div className="rounded-xl border border-amber-500/45 bg-amber-500/10 px-3 py-2.5">
