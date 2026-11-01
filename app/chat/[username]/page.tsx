@@ -5,7 +5,8 @@ import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   encryptText, decryptText, looksEncrypted, encryptBytes, decryptBytes,
-  generateSafetyCode, importPrivateKey, importPublicKey, deriveSharedKey
+  generateSafetyCode, importPrivateKey, importPublicKey, deriveSharedKey,
+  generateKeyPair, exportPublicKey, exportPrivateKey // ADDED: Key generation imports
 } from '@/lib/e2ee'
 
 const REPORT_TYPES = ['Spam', 'Harassment', 'Threats', 'Scam / fraud', 'Sexual content', 'Hate / abuse', 'Other']
@@ -172,6 +173,7 @@ export default function ChatPage() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
+  // Visibility Blur
   useEffect(() => {
     const handleVisibilityChange = () => {
       const chatContainer = document.getElementById('chat-messages-container')
@@ -195,7 +197,7 @@ export default function ChatPage() {
       if (!isMounted) return
       setUser(user)
 
-      // FIXED: Use select('*') to avoid missing public_key column errors
+      // Use select('*') to prevent database errors redirect loops
       const { data: myProfile, error: myError } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
       
       if (myError) {
@@ -216,7 +218,6 @@ export default function ChatPage() {
       }
       if (!isUsernameActive(myProfile)) { router.push('/username'); return }
 
-      // FIXED: Use select('*') for target profile as well
       const { data: targetProfile, error: targetError } = await supabase.from('profiles').select('*').ilike('username', targetUsername).maybeSingle()
       
       if (targetError || !targetProfile || !isUsernameActive(targetProfile)) { 
@@ -232,23 +233,46 @@ export default function ChatPage() {
       const convId = [myProfile.username, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
-      // --- ECDH KEY DERIVATION ---
+      // --- ROBUST ECDH KEY DERIVATION ---
       let aesKey: CryptoKey | undefined = undefined
-      const privKeyJwkStr = localStorage.getItem('vanish_priv_key')
-      
-      if (privKeyJwkStr && myProfile?.public_key && targetProfile?.public_key) {
+      let myPubKey = myProfile.public_key
+      let targetPubKey = targetProfile.public_key
+      let privKeyJwkStr = localStorage.getItem('vanish_priv_key')
+
+      // 1. If you don't have keys, generate them right now
+      if (!privKeyJwkStr || !myPubKey) {
+        try {
+          const pair = await generateKeyPair()
+          const exportedPub = await exportPublicKey(pair.publicKey)
+          const exportedPriv = await exportPrivateKey(pair.privateKey)
+          localStorage.setItem('vanish_priv_key', JSON.stringify(exportedPriv))
+          await supabase.from('profiles').update({ public_key: exportedPub }).eq('id', user.id)
+          myPubKey = exportedPub
+          privKeyJwkStr = JSON.stringify(exportedPriv)
+        } catch (e) {
+          console.warn("Failed to auto-generate keys", e)
+        }
+      }
+
+      // 2. Derive the encryption key and the Safety Code
+      if (privKeyJwkStr && myPubKey && targetPubKey) {
         try {
           const privKeyJwk = JSON.parse(privKeyJwkStr)
           const privKey = await importPrivateKey(privKeyJwk)
-          const pubKey = await importPublicKey(targetProfile.public_key)
+          const pubKey = await importPublicKey(targetPubKey)
+          
           aesKey = await deriveSharedKey(privKey, pubKey)
           setSharedAesKey(aesKey)
           
-          const code = await generateSafetyCode(myProfile.public_key, targetProfile.public_key)
+          const code = await generateSafetyCode(myPubKey, targetPubKey)
           setSafetyCode(code)
         } catch (e) {
-          console.warn("ECDH derivation failed, falling back to PBKDF2", e)
+          console.warn("ECDH derivation failed", e)
         }
+      } else if (!targetPubKey) {
+        // Fallback: The other person hasn't opened the app since the update.
+        const fallbackCode = await generateSafetyCode(convId, convId)
+        setSafetyCode(fallbackCode + ' (Legacy)')
       }
 
       const { data: settings } = await supabase.from('conversation_settings').select('*').eq('conversation_id', convId).maybeSingle()
