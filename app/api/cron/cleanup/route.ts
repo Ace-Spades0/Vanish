@@ -22,11 +22,34 @@ export async function GET(req: Request) {
   const now = new Date().toISOString()
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
-  const results: Record<string, string | number | boolean> = {
-    ok: true,
-    at: now,
+  const results: Record<string, string | number | boolean> = { ok: true, at: now }
+
+  // --- Delete Media Files from Storage ---
+  try {
+    const { data: expiredMedia } = await supabase
+      .from('messages')
+      .select('content')
+      .in('type', ['image', 'video', 'file'])
+      .or(`expires_at.lt.${now},and(deleted.eq.true,created_at.lt.${weekAgo})`)
+
+    if (expiredMedia && expiredMedia.length > 0) {
+      const filePaths = expiredMedia
+        .map((m) => {
+          const parts = m.content.split('/chat-photos/')
+          return parts.length > 1 ? parts[1] : null
+        })
+        .filter(Boolean) as string[]
+
+      if (filePaths.length > 0) {
+        const { error: storageError } = await supabase.storage.from('chat-photos').remove(filePaths)
+        results.storage_deleted = storageError ? storageError.message : filePaths.length
+      }
+    }
+  } catch (err: any) {
+    results.storage_error = err.message
   }
 
+  // --- Database Deletions ---
   {
     const { error, count } = await supabase
       .from('messages')
