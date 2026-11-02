@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import {
   encryptText, decryptText, looksEncrypted, encryptBytes, decryptBytes,
   generateSafetyCode, importPrivateKey, importPublicKey, deriveSharedKey,
-  generateKeyPair, exportPublicKey, exportPrivateKey // ADDED: Key generation imports
+  generateKeyPair, exportPublicKey, exportPrivateKey
 } from '@/lib/e2ee'
 
 const REPORT_TYPES = ['Spam', 'Harassment', 'Threats', 'Scam / fraud', 'Sexual content', 'Hate / abuse', 'Other']
@@ -197,7 +197,6 @@ export default function ChatPage() {
       if (!isMounted) return
       setUser(user)
 
-      // Use select('*') to prevent database errors redirect loops
       const { data: myProfile, error: myError } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
       
       if (myError) {
@@ -206,10 +205,7 @@ export default function ChatPage() {
         setLoading(false)
         return
       }
-      if (!myProfile) {
-        router.push('/auth')
-        return
-      }
+      if (!myProfile) { router.push('/auth'); return }
 
       if (myProfile.status === 'banned') { await supabase.auth.signOut(); router.push('/auth'); return }
       if (myProfile.status === 'suspended') {
@@ -239,7 +235,6 @@ export default function ChatPage() {
       let targetPubKey = targetProfile.public_key
       let privKeyJwkStr = localStorage.getItem('vanish_priv_key')
 
-      // 1. If you don't have keys, generate them right now
       if (!privKeyJwkStr || !myPubKey) {
         try {
           const pair = await generateKeyPair()
@@ -254,7 +249,6 @@ export default function ChatPage() {
         }
       }
 
-      // 2. Derive the encryption key and the Safety Code
       if (privKeyJwkStr && myPubKey && targetPubKey) {
         try {
           const privKeyJwk = JSON.parse(privKeyJwkStr)
@@ -270,7 +264,6 @@ export default function ChatPage() {
           console.warn("ECDH derivation failed", e)
         }
       } else if (!targetPubKey) {
-        // Fallback: The other person hasn't opened the app since the update.
         const fallbackCode = await generateSafetyCode(convId, convId)
         setSafetyCode(fallbackCode + ' (Legacy)')
       }
@@ -419,7 +412,9 @@ export default function ChatPage() {
 
   const saveSettings = async (patch: { seal_user_ids?: string[]; quiet_user_ids?: string[]; duration_by_user?: Record<string, number> }) => {
     const { error } = await supabase.from('conversation_settings').upsert({
-      conversation_id: conversationId, updated_at: new Date().toISOString(),
+      conversation_id: conversationId, 
+      updated_at: new Date().toISOString(),
+      expires_at: chatEndsAt || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // ADDED: Prevents DB constraint errors
       duration_by_user: patch.duration_by_user ?? durationByUser,
       seal_user_ids: patch.seal_user_ids ?? sealUserIds,
       quiet_user_ids: patch.quiet_user_ids ?? quietUserIds,
@@ -528,13 +523,28 @@ export default function ChatPage() {
 
     if (error) { alert(error.message); setNewMessage(content); return }
 
+    // FIXED: Ghost mode waits 3 seconds before vanishing
     if (ghostReply) {
-      ghostArmedRef.current = true; setGhostReply(false); setMessages([]); setFileCount(0); setVideoCount(0); setMediaUrls({}); setSealed(true); setChatExpired(true); setFirstMsgAt(null); setChatEndsAt(null); hadMessagesRef.current = false
-      const nextSeals = Array.from(new Set([...sealUserIds, user.id, ...(targetUser?.id ? [targetUser.id] : [])]))
-      setSealUserIds(nextSeals)
-      await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
-      await supabase.from('messages').update({ deleted: true, expires_at: new Date().toISOString() }).eq('conversation_id', conversationId)
-      await saveSettings({ seal_user_ids: nextSeals })
+      setGhostReply(false)
+      setTimeout(async () => {
+        ghostArmedRef.current = true
+        setMessages([])
+        setFileCount(0)
+        setVideoCount(0)
+        setMediaUrls({})
+        setSealed(true)
+        setChatExpired(true)
+        setFirstMsgAt(null)
+        setChatEndsAt(null)
+        hadMessagesRef.current = false
+
+        const nextSeals = Array.from(new Set([...sealUserIds, user.id, ...(targetUser?.id ? [targetUser.id] : [])]))
+        setSealUserIds(nextSeals)
+
+        await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
+        await supabase.from('messages').update({ deleted: true, expires_at: new Date().toISOString() }).eq('conversation_id', conversationId)
+        await saveSettings({ seal_user_ids: nextSeals })
+      }, 3000)
     }
   }
 
@@ -582,13 +592,28 @@ export default function ChatPage() {
 
     if (error) alert(error.message)
 
+    // FIXED: Ghost mode waits 3 seconds before vanishing
     if (ghostReply) {
-      ghostArmedRef.current = true; setGhostReply(false); setMessages([]); setFileCount(0); setVideoCount(0); setMediaUrls({}); setSealed(true); setChatExpired(true); setFirstMsgAt(null); setChatEndsAt(null); hadMessagesRef.current = false
-      const nextSeals = Array.from(new Set([...sealUserIds, user.id, ...(targetUser?.id ? [targetUser.id] : [])]))
-      setSealUserIds(nextSeals)
-      await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
-      await supabase.from('messages').update({ deleted: true, expires_at: new Date().toISOString() }).eq('conversation_id', conversationId)
-      await saveSettings({ seal_user_ids: nextSeals })
+      setGhostReply(false)
+      setTimeout(async () => {
+        ghostArmedRef.current = true
+        setMessages([])
+        setFileCount(0)
+        setVideoCount(0)
+        setMediaUrls({})
+        setSealed(true)
+        setChatExpired(true)
+        setFirstMsgAt(null)
+        setChatEndsAt(null)
+        hadMessagesRef.current = false
+
+        const nextSeals = Array.from(new Set([...sealUserIds, user.id, ...(targetUser?.id ? [targetUser.id] : [])]))
+        setSealUserIds(nextSeals)
+
+        await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
+        await supabase.from('messages').update({ deleted: true, expires_at: new Date().toISOString() }).eq('conversation_id', conversationId)
+        await saveSettings({ seal_user_ids: nextSeals })
+      }, 3000)
     }
   }
 
