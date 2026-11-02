@@ -406,16 +406,26 @@ export default function ChatPage() {
   }, [chatEndsAt, chatExpired, conversationId])
 
   const saveSettings = async (patch: { seal_user_ids?: string[]; quiet_user_ids?: string[]; duration_by_user?: Record<string, number>; sealed_by?: string | null }) => {
-    const { error } = await supabase.from('conversation_settings').upsert({
-      conversation_id: conversationId, 
-      updated_at: new Date().toISOString(),
-      expires_at: chatEndsAt || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      duration_by_user: patch.duration_by_user ?? durationByUser,
-      seal_user_ids: patch.seal_user_ids ?? sealUserIds,
-      quiet_user_ids: patch.quiet_user_ids ?? quietUserIds,
-      sealed_by: patch.sealed_by !== undefined ? patch.sealed_by : sealedBy,
-    }, { onConflict: 'conversation_id' })
-    return error
+    try {
+      const { error } = await supabase.from('conversation_settings').upsert({
+        conversation_id: conversationId, 
+        updated_at: new Date().toISOString(),
+        duration_minutes: myDuration, // Added in case it is a required column
+        expires_at: chatEndsAt || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        duration_by_user: patch.duration_by_user ?? durationByUser,
+        seal_user_ids: patch.seal_user_ids ?? sealUserIds,
+        quiet_user_ids: patch.quiet_user_ids ?? quietUserIds,
+        sealed_by: patch.sealed_by !== undefined ? patch.sealed_by : sealedBy,
+      }, { onConflict: 'conversation_id' })
+      
+      if (error) {
+        console.error("Save Settings Database Error:", error.message, error.details, error.hint)
+      }
+      return error
+    } catch (err: any) {
+      console.error("Save Settings Catch Error:", err)
+      return err
+    }
   }
 
   const pickMyDuration = async (minutes: number) => {
@@ -443,7 +453,6 @@ export default function ChatPage() {
       nextSealedBy = user.id
     } else {
       next = next.filter((id) => id !== user.id)
-      // If the person turning it off was the one who sealed it, clear sealed_by
       if (sealedBy === user.id) nextSealedBy = null
     }
 
@@ -865,7 +874,12 @@ export default function ChatPage() {
             <p className="text-sm text-zinc-400 mb-4">After your next message is sent: you go offline (others cannot find you in Search until you turn Offline off in Profile), this chat vanishes for both of you in realtime, and they will not see Start a new chat.</p>
             <div className="flex gap-2">
               <button onClick={() => setModal(null)} className="flex-1 bg-zinc-800 py-2.5 rounded-xl">Cancel</button>
-              <button onClick={() => { setGhostReply(true); setModal(null) }} className="flex-1 bg-emerald-600 py-2.5 rounded-xl font-medium">Enable Ghost</button>
+              <button 
+                onClick={() => { setGhostReply(!ghostReply); setModal(null) }} 
+                className={`flex-1 py-2.5 rounded-xl font-medium ${ghostReply ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+              >
+                {ghostReply ? 'Disable Ghost' : 'Enable Ghost'}
+              </button>
             </div>
           </div>
         </div>
