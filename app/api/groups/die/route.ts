@@ -19,9 +19,7 @@ export async function POST(req: Request) {
       { global: { headers: { Authorization: authHeader } } }
     )
 
-    const {
-      data: { user },
-    } = await supabaseUser.auth.getUser()
+    const { data: { user } } = await supabaseUser.auth.getUser()
     if (!user) {
       return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
     }
@@ -31,12 +29,7 @@ export async function POST(req: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    const { data: group } = await admin
-      .from('vanish_groups')
-      .select('id, admin_id')
-      .eq('id', group_id)
-      .maybeSingle()
-
+    const { data: group } = await admin.from('vanish_groups').select('id, admin_id').eq('id', group_id).maybeSingle()
     if (!group) {
       return NextResponse.json({ error: 'Group not found' }, { status: 404 })
     }
@@ -47,31 +40,39 @@ export async function POST(req: Request) {
     const now = new Date().toISOString()
 
     // 1) Realtime UPDATE so every open client sees "vanished"
-    await admin
-      .from('vanish_groups')
-      .update({ died_at: now })
-      .eq('id', group_id)
+    await admin.from('vanish_groups').update({ died_at: now }).eq('id', group_id)
+    await admin.from('vanish_group_invites').update({ revoked_at: now }).eq('group_id', group_id)
 
-    await admin
-      .from('vanish_group_invites')
-      .update({ revoked_at: now })
-      .eq('group_id', group_id)
+    // 2) NEW: Delete media from Storage
+    try {
+      const { data: mediaMsgs } = await admin
+        .from('vanish_group_messages')
+        .select('media_path')
+        .eq('group_id', group_id)
+        .not('media_path', 'is', null)
 
-    // 2) Wipe contents (group row kept briefly so subscribers get died_at)
+      if (mediaMsgs && mediaMsgs.length > 0) {
+        const paths = mediaMsgs.map((m) => m.media_path).filter(Boolean)
+        if (paths.length > 0) {
+          await admin.storage.from('chat-photos').remove(paths)
+        }
+      }
+    } catch (e) {
+      console.error("Storage cleanup failed", e)
+    }
+
+    // 3) Wipe contents
     await admin.from('vanish_group_messages').delete().eq('group_id', group_id)
     await admin.from('vanish_group_members').delete().eq('group_id', group_id)
     await admin.from('vanish_group_exits').delete().eq('group_id', group_id)
     await admin.from('vanish_group_invites').delete().eq('group_id', group_id)
     await admin.from('reports').delete().eq('conversation_id', group_id)
 
-    // 3) Remove group row
+    // 4) Remove group row
     await admin.from('vanish_groups').delete().eq('id', group_id)
 
     return NextResponse.json({ success: true })
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || 'Failed to end group' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: err?.message || 'Failed to end group' }, { status: 500 })
   }
 }

@@ -24,7 +24,7 @@ export async function GET(req: Request) {
 
   const results: Record<string, string | number | boolean> = { ok: true, at: now }
 
-  // --- Delete Media Files from Storage ---
+  // 1-on-1 Chat Media
   try {
     const { data: expiredMedia } = await supabase
       .from('messages')
@@ -45,41 +45,54 @@ export async function GET(req: Request) {
         results.storage_deleted = storageError ? storageError.message : filePaths.length
       }
     }
-  } catch (err: any) {
-    results.storage_error = err.message
-  }
+  } catch (err: any) { results.storage_error = err.message }
 
-  // --- Database Deletions ---
+  // NEW: Group Chat Media (Delete media for dead groups)
+  try {
+    const { data: deadGroups } = await supabase
+      .from('vanish_groups')
+      .select('id')
+      .or(`died_at.not.is.null,expires_at.lt.${now}`)
+
+    if (deadGroups && deadGroups.length > 0) {
+      const gIds = deadGroups.map(g => g.id)
+      const { data: gMedia } = await supabase
+        .from('vanish_group_messages')
+        .select('media_path')
+        .in('group_id', gIds)
+        .not('media_path', 'is', null)
+
+      if (gMedia && gMedia.length > 0) {
+        const paths = gMedia.map(m => m.media_path).filter(Boolean)
+        if (paths.length > 0) {
+          const { error: gStorageError } = await supabase.storage.from('chat-photos').remove(paths)
+          results.group_storage_deleted = gStorageError ? gStorageError.message : paths.length
+        }
+      }
+    }
+  } catch (err: any) { results.group_storage_error = err.message }
+
+  // Database Deletions
   {
-    const { error, count } = await supabase
-      .from('messages')
-      .delete({ count: 'exact' })
-      .or(`expires_at.lt.${now},and(deleted.eq.true,created_at.lt.${weekAgo})`)
+    const { error, count } = await supabase.from('messages').delete({ count: 'exact' }).or(`expires_at.lt.${now},and(deleted.eq.true,created_at.lt.${weekAgo})`)
     results.messages = error ? error.message : count ?? 0
   }
-
   {
-    const { error, count } = await supabase
-      .from('letters')
-      .delete({ count: 'exact' })
-      .or(`expires_at.lt.${now},read_at.not.is.null`)
+    const { error, count } = await supabase.from('letters').delete({ count: 'exact' }).or(`expires_at.lt.${now},read_at.not.is.null`)
     results.letters = error ? error.message : count ?? 0
   }
-
   {
-    const { error, count } = await supabase
-      .from('invites')
-      .delete({ count: 'exact' })
-      .or(`used_at.not.is.null,expires_at.lt.${now}`)
+    const { error, count } = await supabase.from('invites').delete({ count: 'exact' }).or(`used_at.not.is.null,expires_at.lt.${now}`)
     results.invites = error ? error.message : count ?? 0
   }
-
   {
-    const { error, count } = await supabase
-      .from('conversation_settings')
-      .delete({ count: 'exact' })
-      .lt('expires_at', now)
+    const { error, count } = await supabase.from('conversation_settings').delete({ count: 'exact' }).lt('expires_at', now)
     results.conversation_settings = error ? error.message : count ?? 0
+  }
+  {
+    // NEW: Delete dead groups from DB
+    const { error, count } = await supabase.from('vanish_groups').delete({ count: 'exact' }).or(`died_at.not.is.null,expires_at.lt.${now}`)
+    results.groups = error ? error.message : count ?? 0
   }
 
   return NextResponse.json(results)

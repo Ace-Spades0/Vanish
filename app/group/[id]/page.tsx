@@ -4,39 +4,23 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { emojiFromUsername } from '@/lib/groupEmojis'
+import {
+  encryptText, decryptText, looksEncrypted, encryptBytes, decryptBytes, generateSafetyCode
+} from '@/lib/e2ee'
 
-const REPORT_TYPES = [
-  'Spam',
-  'Harassment',
-  'Threats',
-  'Scam / fraud',
-  'Sexual content',
-  'Hate / abuse',
-  'Other',
-]
-
-const DURATION_OPTIONS = [
-  { minutes: 30, label: '30m' },
-  { minutes: 60, label: '1h' },
-  { minutes: 180, label: '3h' },
-  { minutes: 1440, label: '24h' },
-]
+const REPORT_TYPES = ['Spam', 'Harassment', 'Threats', 'Scam / fraud', 'Sexual content', 'Hate / abuse', 'Other']
+const DURATION_OPTIONS = [{ minutes: 30, label: '30m' }, { minutes: 60, label: '1h' }, { minutes: 180, label: '3h' }, { minutes: 1440, label: '24h' }]
 
 function shortTag(username?: string | null) {
   const u = (username || '???').toString()
   return u.slice(-3).toUpperCase()
 }
 
-function isActiveUsername(profile: {
-  username?: string | null
-  username_claimed_at?: string | null
-  is_permanent_username?: boolean | null
-}) {
+function isActiveUsername(profile: any) {
   if (!profile?.username) return false
   if (profile.is_permanent_username) return true
   if (!profile.username_claimed_at) return false
-  const hoursPassed =
-    (Date.now() - new Date(profile.username_claimed_at).getTime()) / 3600000
+  const hoursPassed = (Date.now() - new Date(profile.username_claimed_at).getTime()) / 3600000
   return hoursPassed < 24
 }
 
@@ -44,6 +28,47 @@ function extractMessageIdFromReason(reason?: string | null) {
   if (!reason) return null
   const m = String(reason).match(/message_id:([a-zA-Z0-9_-]+)/)
   return m?.[1] || null
+}
+
+function guessMimeFromUrl(url: string): string {
+  const u = url.toLowerCase()
+  if (u.includes('.png')) return 'image/png'
+  if (u.includes('.gif')) return 'image/gif'
+  if (u.includes('.webp')) return 'image/webp'
+  if (u.includes('.mp4')) return 'video/mp4'
+  if (u.includes('.webm')) return 'video/webm'
+  if (u.includes('.mov')) return 'video/quicktime'
+  if (u.includes('.pdf')) return 'application/pdf'
+  return 'image/jpeg'
+}
+
+async function mediaDisplayUrl(groupId: string, url: string): Promise<string> {
+  if (!url) return url
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return url
+    const buf = await res.arrayBuffer()
+    const plain = await decryptBytes(groupId, buf)
+    const bytes = new Uint8Array(plain)
+    const copy = new Uint8Array(bytes.byteLength)
+    copy.set(bytes)
+    const mime = guessMimeFromUrl(url)
+    const blob = new Blob([copy], { type: mime })
+    return URL.createObjectURL(blob)
+  } catch { return url }
+}
+
+async function decryptGroupRow(groupId: string, row: any) {
+  if (!row) return row
+  let newRow = { ...row }
+  if (newRow.body && looksEncrypted(newRow.body)) {
+    try { newRow.body = await decryptText(groupId, newRow.body) } 
+    catch { newRow.body = '[Unable to decrypt]' }
+  }
+  if (newRow.media_url) {
+    newRow.displayUrl = await mediaDisplayUrl(groupId, newRow.media_url)
+  }
+  return newRow
 }
 
 export default function GroupRoomPage() {
@@ -65,9 +90,7 @@ export default function GroupRoomPage() {
   const [members, setMembers] = useState<any[]>([])
   const [profilesById, setProfilesById] = useState<Record<string, any>>({})
   const [memberReports, setMemberReports] = useState<any[]>([])
-  const [readReportIds, setReadReportIds] = useState<Record<string, boolean>>(
-    {}
-  )
+  const [readReportIds, setReadReportIds] = useState<Record<string, boolean>>({})
   const [showMembers, setShowMembers] = useState(false)
   const [leaveModal, setLeaveModal] = useState(false)
   const [vanishedOpen, setVanishedOpen] = useState(false)
@@ -76,13 +99,12 @@ export default function GroupRoomPage() {
   const [reportType, setReportType] = useState('')
   const [reportReason, setReportReason] = useState('')
   const [reportMessageId, setReportMessageId] = useState<string | null>(null)
-  const [reportTo, setReportTo] = useState<'platform' | 'admin' | 'both'>(
-    'platform'
-  )
+  const [reportTo, setReportTo] = useState<'platform' | 'admin' | 'both'>('platform')
   const [msgMenuId, setMsgMenuId] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [editText, setEditText] = useState('')
   const [maxMembersEdit, setMaxMembersEdit] = useState(12)
+  const [safetyCode, setSafetyCode] = useState('')
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -95,9 +117,7 @@ export default function GroupRoomPage() {
   const unreadReports = memberReports.filter((r) => !readReportIds[r.id])
   const adminReportCount = unreadReports.length
 
-  useEffect(() => {
-    groupRef.current = group
-  }, [group])
+  useEffect(() => { groupRef.current = group }, [group])
 
   const grow = () => {
     const el = textRef.current
@@ -106,108 +126,62 @@ export default function GroupRoomPage() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }
 
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  // ADDED: Visibility Blur
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  const markVanished = () => {
-    setVanishedOpen(true)
-    setError('This group has vanished')
-    setMessages([])
-  }
-
-  const markRemovedByAdmin = () => {
-    setRemovedByAdmin(true)
-    setMessages([])
-    setError('')
-    setInfo('')
-  }
-
-  const goLandingClearSession = async () => {
-    try {
-      await supabase.auth.signOut()
-    } catch {
-      /* ignore */
+    const handleVisibilityChange = () => {
+      const chatContainer = document.getElementById('chat-messages-container')
+      if (document.hidden && chatContainer) {
+        chatContainer.style.filter = 'blur(20px)'
+      } else if (chatContainer) {
+        chatContainer.style.filter = 'none'
+      }
     }
-    router.replace('/')
-  }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
+
+  const markVanished = () => { setVanishedOpen(true); setError('This group has vanished'); setMessages([]) }
+  const markRemovedByAdmin = () => { setRemovedByAdmin(true); setMessages([]); setError(''); setInfo('') }
+  const goLandingClearSession = async () => { try { await supabase.auth.signOut() } catch {} router.replace('/') }
 
   const loadMemberReports = async () => {
     if (!groupId) return
-    const { data } = await supabase
-      .from('reports')
-      .select('*')
-      .eq('conversation_id', groupId)
-      .order('created_at', { ascending: false })
-      .limit(40)
+    const { data } = await supabase.from('reports').select('*').eq('conversation_id', groupId).order('created_at', { ascending: false }).limit(40)
     setMemberReports(data || [])
   }
 
   const loadMembers = async (token?: string) => {
-    // Direct Supabase first (faster for admin)
-    const { data: rows } = await supabase
-      .from('vanish_group_members')
-      .select('user_id')
-      .eq('group_id', groupId)
+    const { data: rows } = await supabase.from('vanish_group_members').select('user_id').eq('group_id', groupId)
     const ids = (rows || []).map((r) => r.user_id)
     if (ids.length) {
-      const { data: profs } = await supabase
-        .from('profiles')
-        .select('id, username, avatar_icon')
-        .in('id', ids)
+      const { data: profs } = await supabase.from('profiles').select('id, username, avatar_icon').in('id', ids)
       const map: Record<string, any> = {}
-      ;(profs || []).forEach((p) => {
-        map[p.id] = p
-      })
+      ;(profs || []).forEach((p) => { map[p.id] = p })
       setProfilesById((prev) => ({ ...prev, ...map }))
-      setMembers(
-        ids.map((id) => ({
-          user_id: id,
-          username: map[id]?.username || null,
-          avatar_icon: map[id]?.avatar_icon || null,
-        }))
-      )
-    } else {
-      setMembers([])
-    }
-    // API backup if token given
+      setMembers(ids.map((id) => ({ user_id: id, username: map[id]?.username || null, avatar_icon: map[id]?.avatar_icon || null })))
+    } else { setMembers([]) }
     if (token) {
       try {
-        const res = await fetch(`/api/groups/members?group_id=${groupId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const res = await fetch(`/api/groups/members?group_id=${groupId}`, { headers: { Authorization: `Bearer ${token}` } })
         const data = await res.json().catch(() => ({}))
         if (data.members && data.members.length) {
           setMembers(data.members)
           const map: Record<string, any> = {}
-          data.members.forEach((m: any) => {
-            map[m.user_id] = {
-              id: m.user_id,
-              username: m.username,
-              avatar_icon: m.avatar_icon,
-            }
-          })
+          data.members.forEach((m: any) => { map[m.user_id] = { id: m.user_id, username: m.username, avatar_icon: m.avatar_icon } })
           setProfilesById((prev) => ({ ...prev, ...map }))
         }
-      } catch {
-        /* keep direct list */
-      }
+      } catch {}
     }
   }
 
   const refreshSenderProfiles = async (msgs: any[]) => {
-    const ids = Array.from(
-      new Set(msgs.map((m) => m.sender_id).filter(Boolean))
-    )
+    const ids = Array.from(new Set(msgs.map((m) => m.sender_id).filter(Boolean)))
     if (!ids.length) return
-    const { data: profs } = await supabase
-      .from('profiles')
-      .select('id, username, avatar_icon')
-      .in('id', ids)
+    const { data: profs } = await supabase.from('profiles').select('id, username, avatar_icon').in('id', ids)
     const map: Record<string, any> = {}
-    ;(profs || []).forEach((p) => {
-      map[p.id] = p
-    })
+    ;(profs || []).forEach((p) => { map[p.id] = p })
     setProfilesById((prev) => ({ ...prev, ...map }))
   }
 
@@ -216,298 +190,125 @@ export default function GroupRoomPage() {
     let expiryTimer: ReturnType<typeof setInterval> | null = null
 
     const dieGroupAsAdminSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
       await fetch('/api/groups/die', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ group_id: groupId }),
       })
       markVanished()
     }
 
     const init = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) {
-        router.replace('/')
-        return
-      }
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.replace('/'); return }
       if (!mounted) return
       setUser(user)
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      if (!profile || !isActiveUsername(profile)) {
-        await goLandingClearSession()
-        return
-      }
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+      if (!profile || !isActiveUsername(profile)) { await goLandingClearSession(); return }
       if (!mounted) return
       setMyProfile(profile)
 
-      const { data: g, error: gErr } = await supabase
-        .from('vanish_groups')
-        .select('*')
-        .eq('id', groupId)
-        .maybeSingle()
-
-      if (gErr || !g) {
-        setError('Group not found or already vanished')
-        setVanishedOpen(true)
-        setLoading(false)
-        return
-      }
-      if (
-        g.died_at ||
-        (g.expires_at && new Date(g.expires_at).getTime() <= Date.now())
-      ) {
-        markVanished()
-        setGroup(g)
-        setLoading(false)
-        return
+      const { data: g, error: gErr } = await supabase.from('vanish_groups').select('*').eq('id', groupId).maybeSingle()
+      if (gErr || !g) { setError('Group not found or already vanished'); setVanishedOpen(true); setLoading(false); return }
+      if (g.died_at || (g.expires_at && new Date(g.expires_at).getTime() <= Date.now())) {
+        markVanished(); setGroup(g); setLoading(false); return
       }
       setGroup(g)
       setMaxMembersEdit(Math.min(12, g.max_members || 12))
+      
+      // ADDED: Safety Code for Group
+      const code = await generateSafetyCode(groupId, groupId)
+      setSafetyCode(code)
 
-      const { data: membership } = await supabase
-        .from('vanish_group_members')
-        .select('user_id')
-        .eq('group_id', groupId)
-        .eq('user_id', user.id)
-        .maybeSingle()
+      const { data: membership } = await supabase.from('vanish_group_members').select('user_id').eq('group_id', groupId).eq('user_id', user.id).maybeSingle()
+      if (!membership) { if (!mounted) return; markRemovedByAdmin(); setLoading(false); return }
 
-      if (!membership) {
-        if (!mounted) return
-        markRemovedByAdmin()
-        setLoading(false)
-        return
-      }
-
-      const { data: msgs } = await supabase
-        .from('vanish_group_messages')
-        .select('*')
-        .eq('group_id', groupId)
-        .or('deleted.is.null,deleted.eq.false')
-        .order('created_at', { ascending: true })
-        .limit(200)
-
+      const { data: msgs } = await supabase.from('vanish_group_messages').select('*').eq('group_id', groupId).or('deleted.is.null,deleted.eq.false').order('created_at', { ascending: true }).limit(200)
+      
+      // ADDED: Decrypt Group Messages
       const list = msgs || []
-      setMessages(list)
-      await refreshSenderProfiles(list)
+      const decryptedList = await Promise.all(list.map(m => decryptGroupRow(groupId, m)))
+      setMessages(decryptedList)
+      await refreshSenderProfiles(decryptedList)
       setLoading(false)
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (session) {
-        await loadMembers(session.access_token)
-      }
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) await loadMembers(session.access_token)
+      if (g.admin_id === user.id) await loadMemberReports()
 
-      if (g.admin_id === user.id) {
-        await loadMemberReports()
-      }
+      if (channelRef.current) supabase.removeChannel(channelRef.current)
 
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
-      }
-
-      const ch = supabase
-        .channel(`group-rt-${groupId}-${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'vanish_group_messages',
-            filter: `group_id=eq.${groupId}`,
-          },
-          (payload) => {
+      const ch = supabase.channel(`group-rt-${groupId}-${user.id}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vanish_group_messages', filter: `group_id=eq.${groupId}` },
+          async (payload) => {
             const row: any = payload.new
             if (!row || row.deleted) return
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === row.id)) return prev
-              return [...prev, row]
-            })
-            refreshSenderProfiles([row])
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'vanish_group_messages',
-            filter: `group_id=eq.${groupId}`,
-          },
-          (payload) => {
+            const dec = await decryptGroupRow(groupId, row)
+            setMessages((prev) => prev.some((m) => m.id === dec.id) ? prev : [...prev, dec])
+            refreshSenderProfiles([dec])
+          })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vanish_group_messages', filter: `group_id=eq.${groupId}` },
+          async (payload) => {
             const row: any = payload.new
             if (!row) return
-            setMessages((prev) =>
-              prev
-                .map((m) => (m.id === row.id ? row : m))
-                .filter((m) => !m.deleted)
-            )
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'DELETE',
-            schema: 'public',
-            table: 'vanish_group_messages',
-            filter: `group_id=eq.${groupId}`,
-          },
+            if (row.deleted) {
+              setMessages((prev) => prev.filter((m) => m.id !== row.id))
+            } else {
+              const dec = await decryptGroupRow(groupId, row)
+              setMessages((prev) => prev.map((m) => (m.id === dec.id ? dec : m)))
+            }
+          })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'vanish_group_messages', filter: `group_id=eq.${groupId}` },
           (payload) => {
             const row: any = payload.old
-            if (!row?.id) return
-            setMessages((prev) => prev.filter((m) => m.id !== row.id))
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'vanish_groups',
-            filter: `id=eq.${groupId}`,
-          },
+            if (row?.id) setMessages((prev) => prev.filter((m) => m.id !== row.id))
+          })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vanish_groups', filter: `id=eq.${groupId}` },
           (payload) => {
             const row: any = payload.new
-            if (row?.died_at) {
-              setGroup(row)
-              markVanished()
-            } else if (row) {
-              setGroup(row)
-            }
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'DELETE',
-            schema: 'public',
-            table: 'vanish_groups',
-            filter: `id=eq.${groupId}`,
-          },
-          () => {
-            markVanished()
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'vanish_group_members',
-            filter: `group_id=eq.${groupId}`,
-          },
+            if (row?.died_at) { setGroup(row); markVanished() } else if (row) { setGroup(row) }
+          })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'vanish_groups', filter: `id=eq.${groupId}` }, () => markVanished())
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vanish_group_members', filter: `group_id=eq.${groupId}` },
           async () => {
-            const {
-              data: { session },
-            } = await supabase.auth.getSession()
+            const { data: { session } } = await supabase.auth.getSession()
             if (session) await loadMembers(session.access_token)
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: 'DELETE',
-            schema: 'public',
-            table: 'vanish_group_members',
-            filter: `group_id=eq.${groupId}`,
-          },
+          })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'vanish_group_members', filter: `group_id=eq.${groupId}` },
           async (payload) => {
             const oldRow: any = payload.old
-            const {
-              data: { user: u },
-            } = await supabase.auth.getUser()
-            if (u && oldRow?.user_id === u.id) {
-              markRemovedByAdmin()
-              return
-            }
-            const {
-              data: { session },
-            } = await supabase.auth.getSession()
+            const { data: { user: u } } = await supabase.auth.getUser()
+            if (u && oldRow?.user_id === u.id) { markRemovedByAdmin(); return }
+            const { data: { session } } = await supabase.auth.getSession()
             if (session) await loadMembers(session.access_token)
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log('Go Vanish group realtime on', groupId)
-          }
-        })
+          })
+        .subscribe()
 
       channelRef.current = ch
 
       expiryTimer = setInterval(async () => {
-        const {
-          data: { user: u },
-        } = await supabase.auth.getUser()
-        if (!u) {
-          router.replace('/')
-          return
-        }
+        const { data: { user: u } } = await supabase.auth.getUser()
+        if (!u) { router.replace('/'); return }
 
-        const { data: myP } = await supabase
-          .from('profiles')
-          .select(
-            'username, username_claimed_at, is_permanent_username'
-          )
-          .eq('id', u.id)
-          .maybeSingle()
-
-        if (!myP || !isActiveUsername(myP)) {
-          if (expiryTimer) clearInterval(expiryTimer)
-          await goLandingClearSession()
-          return
-        }
+        const { data: myP } = await supabase.from('profiles').select('username, username_claimed_at, is_permanent_username').eq('id', u.id).maybeSingle()
+        if (!myP || !isActiveUsername(myP)) { if (expiryTimer) clearInterval(expiryTimer); await goLandingClearSession(); return }
         setMyProfile((prev: any) => ({ ...prev, ...myP }))
 
-        const { data: stillMember } = await supabase
-          .from('vanish_group_members')
-          .select('user_id')
-          .eq('group_id', groupId)
-          .eq('user_id', u.id)
-          .maybeSingle()
-        if (!stillMember) {
-          markRemovedByAdmin()
-          return
-        }
+        const { data: stillMember } = await supabase.from('vanish_group_members').select('user_id').eq('group_id', groupId).eq('user_id', u.id).maybeSingle()
+        if (!stillMember) { markRemovedByAdmin(); return }
 
         const gNow = groupRef.current
         const adminId = gNow?.admin_id
         if (adminId && !gNow?.died_at) {
-          const { data: adminP } = await supabase
-            .from('profiles')
-            .select(
-              'username, username_claimed_at, is_permanent_username'
-            )
-            .eq('id', adminId)
-            .maybeSingle()
-
+          const { data: adminP } = await supabase.from('profiles').select('username, username_claimed_at, is_permanent_username').eq('id', adminId).maybeSingle()
           if (!adminP || !isActiveUsername(adminP)) {
             if (u.id === adminId) {
               await dieGroupAsAdminSession()
             } else {
-              const { error: dieErr } = await supabase
-                .from('vanish_groups')
-                .update({ died_at: new Date().toISOString() })
-                .eq('id', groupId)
-              if (!dieErr) {
-                markVanished()
-              } else {
-                markVanished()
-              }
+              await supabase.from('vanish_groups').update({ died_at: new Date().toISOString() }).eq('id', groupId)
+              markVanished()
             }
           }
         }
@@ -518,10 +319,7 @@ export default function GroupRoomPage() {
     return () => {
       mounted = false
       if (expiryTimer) clearInterval(expiryTimer)
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
-        channelRef.current = null
-      }
+      if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null }
     }
   }, [groupId, router])
 
@@ -532,23 +330,18 @@ export default function GroupRoomPage() {
     setText('')
     if (textRef.current) textRef.current.style.height = 'auto'
 
-    const { data: inserted, error: insErr } = await supabase
-      .from('vanish_group_messages')
-      .insert({
-        group_id: groupId,
-        sender_id: user.id,
-        body,
-        type: 'text',
-      })
-      .select('*')
-      .maybeSingle()
+    // ADDED: Encrypt Group Text
+    let stored = body
+    try { stored = await encryptText(groupId, body) } catch {}
+
+    const { data: inserted, error: insErr } = await supabase.from('vanish_group_messages').insert({
+      group_id: groupId, sender_id: user.id, body: stored, type: 'text',
+    }).select('*').maybeSingle()
 
     if (insErr) setError(insErr.message)
     else if (inserted) {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === inserted.id)) return prev
-        return [...prev, inserted]
-      })
+      const dec = await decryptGroupRow(groupId, inserted)
+      setMessages((prev) => prev.some((m) => m.id === dec.id) ? prev : [...prev, dec])
     }
     setSending(false)
   }
@@ -557,713 +350,271 @@ export default function GroupRoomPage() {
     if (!user || !group || vanishedOpen || removedByAdmin) return
     setUploading(true)
     setError('')
-    const path = `${groupId}/${user.id}/${Date.now()}-${file.name.replace(
-      /[^a-zA-Z0-9._-]/g,
-      '_'
-    )}`
-    const { error: upErr } = await supabase.storage
-      .from('chat-photos')
-      .upload(path, file, { upsert: false })
-    if (upErr) {
-      setError(upErr.message)
-      setUploading(false)
-      return
-    }
+    const path = `${groupId}/${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    
+    // ADDED: Encrypt Group Media
+    let uploadBody: Blob = file
+    try {
+      const buf = await file.arrayBuffer()
+      const enc = await encryptBytes(groupId, buf)
+      const copy = new Uint8Array(enc.byteLength)
+      copy.set(enc)
+      uploadBody = new Blob([copy], { type: 'application/octet-stream' })
+    } catch {}
+
+    const { error: upErr } = await supabase.storage.from('chat-photos').upload(path, uploadBody, { contentType: 'application/octet-stream', upsert: false })
+    if (upErr) { setError(upErr.message); setUploading(false); return }
+    
     const { data: pub } = supabase.storage.from('chat-photos').getPublicUrl(path)
-    const { data: inserted, error: insErr } = await supabase
-      .from('vanish_group_messages')
-      .insert({
-        group_id: groupId,
-        sender_id: user.id,
-        body: kind === 'file' ? file.name : '',
-        type: kind,
-        media_url: pub?.publicUrl || '',
-        media_path: path,
-      })
-      .select('*')
-      .maybeSingle()
+    const { data: inserted, error: insErr } = await supabase.from('vanish_group_messages').insert({
+      group_id: groupId, sender_id: user.id, body: kind === 'file' ? file.name : '', type: kind, media_url: pub?.publicUrl || '', media_path: path,
+    }).select('*').maybeSingle()
+
     if (insErr) setError(insErr.message)
     else if (inserted) {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === inserted.id)) return prev
-        return [...prev, inserted]
-      })
+      const dec = await decryptGroupRow(groupId, inserted)
+      setMessages((prev) => prev.some((m) => m.id === dec.id) ? prev : [...prev, dec])
     }
     setUploading(false)
   }
 
   const onMediaPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (file.type.startsWith('video/')) await uploadMedia(file, 'video')
-    else await uploadMedia(file, 'image')
+    const file = e.target.files?.[0]; e.target.value = ''; if (!file) return
+    if (file.type.startsWith('video/')) await uploadMedia(file, 'video'); else await uploadMedia(file, 'image')
   }
-
   const onFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+    const file = e.target.files?.[0]; e.target.value = ''; if (!file) return
     await uploadMedia(file, 'file')
   }
 
   const createInvite = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     const res = await fetch('/api/groups/invite', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ group_id: groupId }),
     })
     const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
+    if (data.error) { setError(data.error); return }
     const code = data.code || data.inviteCode
     if (code) {
-      const origin =
-        typeof window !== 'undefined'
-          ? window.location.origin
-          : 'https://vanish-pearl.vercel.app'
-      setInviteLink(`${origin}/g/${code}`)
-      setInfo('Link ready — copy it')
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vanish-pearl.vercel.app'
+      setInviteLink(`${origin}/g/${code}`); setInfo('Link ready — copy it')
     }
   }
 
   const copyLink = async () => {
     if (!inviteLink) return
-    try {
-      await navigator.clipboard.writeText(inviteLink)
-      setInfo('Link copied')
-    } catch {
-      setError('Could not copy')
-    }
+    try { await navigator.clipboard.writeText(inviteLink); setInfo('Link copied') } catch { setError('Could not copy') }
   }
 
   const endGroup = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     const res = await fetch('/api/groups/die', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ group_id: groupId }),
     })
     const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
+    if (data.error) { setError(data.error); return }
     markVanished()
   }
 
   const leaveAsMember = async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session || !user) return
-
-    await supabase.from('vanish_group_exits').upsert({
-      group_id: groupId,
-      user_id: user.id,
-      left_at: new Date().toISOString(),
-    })
-
+    await supabase.from('vanish_group_exits').upsert({ group_id: groupId, user_id: user.id, left_at: new Date().toISOString() })
     const res = await fetch('/api/groups/members', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
+      method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ group_id: groupId, member_id: user.id }),
     })
-    const data = await res.json().catch(() => ({}))
-
-    if (!res.ok) {
-      await supabase
-        .from('vanish_group_members')
-        .delete()
-        .eq('group_id', groupId)
-        .eq('user_id', user.id)
-    } else if (data.error) {
-      setError(data.error)
-      return
-    }
+    if (!res.ok) await supabase.from('vanish_group_members').delete().eq('group_id', groupId).eq('user_id', user.id)
     router.replace('/home')
   }
 
-  const confirmLeave = async () => {
-    setLeaveModal(false)
-    if (isAdmin) await endGroup()
-    else await leaveAsMember()
-  }
+  const confirmLeave = async () => { setLeaveModal(false); if (isAdmin) await endGroup(); else await leaveAsMember() }
 
   const saveSettings = async (duration_minutes?: number) => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
-    let max = Math.floor(Number(maxMembersEdit) || 12)
-    if (max < 2) max = 2
-    if (max > 12) max = 12
+    let max = Math.floor(Number(maxMembersEdit) || 12); if (max < 2) max = 2; if (max > 12) max = 12
     const res = await fetch('/api/groups/settings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        group_id: groupId,
-        duration_minutes,
-        max_members: max,
-      }),
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ group_id: groupId, duration_minutes, max_members: max }),
     })
     const data = await res.json().catch(() => ({}))
-    if (data.error) {
-      setError(data.error)
-      return
-    }
-    if (data.group) setGroup(data.group)
-    setInfo('Group settings updated')
+    if (data.error) { setError(data.error); return }
+    if (data.group) setGroup(data.group); setInfo('Group settings updated')
   }
 
   const removeMember = async (member_id: string) => {
     if (!isAdmin || !member_id || member_id === user?.id) return
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     setError('')
-    // Block rejoin
-    try {
-      await supabase.from('vanish_group_exits').upsert({
-        group_id: groupId,
-        user_id: member_id,
-        left_at: new Date().toISOString(),
-      })
-    } catch {
-      /* optional table */
-    }
-    const res = await fetch('/api/groups/members', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
+    try { await supabase.from('vanish_group_exits').upsert({ group_id: groupId, user_id: member_id, left_at: new Date().toISOString() }) } catch {}
+    await fetch('/api/groups/members', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ group_id: groupId, member_id }),
     })
-    const data = await res.json().catch(() => ({}))
-    // Always hard-delete membership so remove is real (not soft UI only)
-    const { error: delErr } = await supabase
-      .from('vanish_group_members')
-      .delete()
-      .eq('group_id', groupId)
-      .eq('user_id', member_id)
-    if (data.error && delErr) {
-      setError(data.error || delErr.message)
-      return
-    }
-    setMembers((prev) => prev.filter((m) => m.user_id !== member_id))
-    setInfo('Member removed')
+    await supabase.from('vanish_group_members').delete().eq('group_id', groupId).eq('user_id', member_id)
+    setMembers((prev) => prev.filter((m) => m.user_id !== member_id)); setInfo('Member removed')
   }
 
   const adminRemoveMessage = async (messageId: string) => {
     if (!isAdmin || !messageId) return
-    const { error: upErr } = await supabase
-      .from('vanish_group_messages')
-      .update({ deleted: true })
-      .eq('id', messageId)
-      .eq('group_id', groupId)
-    if (upErr) {
-      setError(upErr.message)
-      return
-    }
-    setMessages((prev) => prev.filter((m) => m.id !== messageId))
-    setInfo('Message removed by admin')
+    await supabase.from('vanish_group_messages').update({ deleted: true }).eq('id', messageId).eq('group_id', groupId)
+    setMessages((prev) => prev.filter((m) => m.id !== messageId)); setInfo('Message removed by admin')
   }
 
-  const adminMarkReportRead = (reportId: string) => {
-    setReadReportIds((prev) => ({ ...prev, [reportId]: true }))
-    setInfo('Report marked read')
-  }
+  const adminMarkReportRead = (reportId: string) => { setReadReportIds((prev) => ({ ...prev, [reportId]: true })); setInfo('Report marked read') }
 
   const saveEdit = async () => {
     if (!msgMenuId || !user || !editText.trim()) return
     const msg = messages.find((m) => m.id === msgMenuId)
     if (!msg || msg.sender_id !== user.id) return
 
-    const { error: upErr } = await supabase
-      .from('vanish_group_messages')
-      .update({
-        body: editText.trim(),
-        edited_at: new Date().toISOString(),
-      })
-      .eq('id', msgMenuId)
-      .eq('sender_id', user.id)
+    let stored = editText.trim()
+    try { stored = await encryptText(groupId, stored) } catch {}
 
+    const { error: upErr } = await supabase.from('vanish_group_messages').update({ body: stored, edited_at: new Date().toISOString() }).eq('id', msgMenuId).eq('sender_id', user.id)
     if (upErr) setError(upErr.message)
-    setEditOpen(false)
-    setMsgMenuId(null)
-    setEditText('')
+    setEditOpen(false); setMsgMenuId(null); setEditText('')
   }
 
-  const openMsgActions = (m: any) => {
-    if (vanishedOpen || removedByAdmin) return
-    setMsgMenuId(m.id)
-    setEditOpen(false)
-    setEditText(m.body || '')
-  }
+  const openMsgActions = (m: any) => { if (vanishedOpen || removedByAdmin) return; setMsgMenuId(m.id); setEditOpen(false); setEditText(m.body || '') }
 
   const submitReport = async () => {
-    if (!reportType.trim() || !reportReason.trim()) {
-      setError('Choose a type and explain')
-      return
-    }
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    if (!reportType.trim() || !reportReason.trim()) { setError('Choose a type and explain'); return }
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
-
-    const toLabel =
-      reportTo === 'admin'
-        ? 'GROUP_ADMIN'
-        : reportTo === 'both'
-          ? 'ADMIN_AND_PLATFORM'
-          : 'PLATFORM'
-
-    const msg = reportMessageId
-      ? messages.find((m) => m.id === reportMessageId)
-      : null
-    const msgSnippet = msg?.body
-      ? String(msg.body).slice(0, 120)
-      : reportMessageId
-        ? `[media:${msg?.type || 'file'}]`
-        : ''
-
+    const toLabel = reportTo === 'admin' ? 'GROUP_ADMIN' : reportTo === 'both' ? 'ADMIN_AND_PLATFORM' : 'PLATFORM'
+    const msg = reportMessageId ? messages.find((m) => m.id === reportMessageId) : null
+    const msgSnippet = msg?.body ? String(msg.body).slice(0, 120) : reportMessageId ? `[media:${msg?.type || 'file'}]` : ''
     const sendPlatform = reportTo === 'platform' || reportTo === 'both'
     const sendAdmin = reportTo === 'admin' || reportTo === 'both'
 
     if (modal === 'report-msg' && reportMessageId) {
       let platformData: any = {}
-
       if (sendPlatform) {
         const resP = await fetch('/api/report', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            reported_id: msg?.sender_id || group?.admin_id,
-            conversation_id: groupId,
-            reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ reported_id: msg?.sender_id || group?.admin_id, conversation_id: groupId, reason: `[GROUP] [PLATFORM] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}` }),
         })
         platformData = await resP.json().catch(() => ({}))
-        if (platformData.error) {
-          setError(platformData.error)
-          return
-        }
+        if (platformData.error) { setError(platformData.error); return }
       }
-
       if (sendAdmin) {
         const resA = await fetch('/api/groups/report-message', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            group_id: groupId,
-            message_id: reportMessageId,
-            report_type: reportType,
-            reason: `[to:${toLabel}] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}`,
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ group_id: groupId, message_id: reportMessageId, report_type: reportType, reason: `[to:${toLabel}] ${reportType}: ${reportReason} | message_id:${reportMessageId} | msg:${msgSnippet}` }),
         })
         const adminData = await resA.json().catch(() => ({}))
-        if (adminData.error) {
-          setError(adminData.error)
-          return
-        }
+        if (adminData.error) { setError(adminData.error); return }
       }
-
-      // Platform AI: remove ONLY on verified high risk (not forced/false reports)
-      const aiHigh =
-        platformData.ai_risk === 'high' &&
-        platformData.ai_verified === true &&
-        platformData.removed === true
-
-      if (aiHigh) {
-        setMessages((prev) => prev.filter((m) => m.id !== reportMessageId))
-        setInfo('Verified high-risk content removed by platform')
-      } else if (reportTo === 'both') {
-        setInfo(
-          'Reported to Go Vanish and group admin — message stays unless verified high risk or admin removes it'
-        )
-      } else if (reportTo === 'admin') {
-        setInfo(
-          'Report sent to group admin — message stays until admin removes it'
-        )
-      } else {
-        setInfo(
-          'Report sent to Go Vanish — message stays unless AI verifies high risk'
-        )
-      }
-
+      if (platformData.ai_risk === 'high' && platformData.ai_verified === true && platformData.removed === true) {
+        setMessages((prev) => prev.filter((m) => m.id !== reportMessageId)); setInfo('Verified high-risk content removed by platform')
+      } else if (reportTo === 'both') setInfo('Reported to Go Vanish and group admin')
+      else if (reportTo === 'admin') setInfo('Report sent to group admin')
+      else setInfo('Report sent to Go Vanish')
       if (isAdmin) await loadMemberReports()
     } else {
-      // Report group
       if (sendPlatform) {
-        const res = await fetch('/api/report', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            reported_id: group?.admin_id,
-            conversation_id: groupId,
-            reason: `[GROUP] [to:${toLabel}] ${reportType}: ${reportReason}`,
-          }),
+        await fetch('/api/report', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ reported_id: group?.admin_id, conversation_id: groupId, reason: `[GROUP] [to:${toLabel}] ${reportType}: ${reportReason}` }),
         })
-        const data = await res.json().catch(() => ({}))
-        if (data.error) {
-          setError(data.error)
-          return
-        }
       }
       if (sendAdmin) {
         await fetch('/api/groups/report-message', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            group_id: groupId,
-            message_id: null,
-            report_type: reportType,
-            reason: `[to:${toLabel}] GROUP: ${reportType}: ${reportReason}`,
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ group_id: groupId, message_id: null, report_type: reportType, reason: `[to:${toLabel}] GROUP: ${reportType}: ${reportReason}` }),
         }).catch(() => null)
       }
-      setInfo(
-        reportTo === 'both'
-          ? 'Group reported to Go Vanish and admin'
-          : reportTo === 'admin'
-            ? 'Group reported to admin'
-            : 'Group reported to Go Vanish'
-      )
+      setInfo(reportTo === 'both' ? 'Group reported to Go Vanish and admin' : reportTo === 'admin' ? 'Group reported to admin' : 'Group reported to Go Vanish')
       if (isAdmin) await loadMemberReports()
     }
-
-    setModal(null)
-    setReportType('')
-    setReportReason('')
-    setReportMessageId(null)
-    setMsgMenuId(null)
-    setReportTo('platform')
+    setModal(null); setReportType(''); setReportReason(''); setReportMessageId(null); setMsgMenuId(null); setReportTo('platform')
   }
 
-  const displayEmoji = (userId: string, username?: string | null) => {
-    return emojiFromUsername(username, userId)
-  }
+  const displayEmoji = (userId: string, username?: string | null) => emojiFromUsername(username, userId)
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading group…</p>
+  if (loading) return <div className="min-h-screen bg-black text-white flex items-center justify-center"><p className="text-zinc-400">Loading group…</p></div>
+  if (removedByAdmin) return (
+    <div className="min-h-screen bg-black text-white flex items-center justify-center px-6">
+      <div className="w-full max-w-sm text-center">
+        <p className="text-2xl font-semibold text-cyan-400 mb-3">You have been removed</p>
+        <p className="text-zinc-400 text-sm mb-8">All chats have vanished.</p>
+        <button type="button" onClick={() => router.replace('/home')} className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl">Back home</button>
       </div>
-    )
-  }
-
-  // Removed by admin — solid screen only, no chat behind
-  if (removedByAdmin) {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center px-6">
-        <div className="w-full max-w-sm text-center">
-          <p className="text-2xl font-semibold text-cyan-400 mb-3">
-            You have been removed
-          </p>
-          <p className="text-zinc-400 text-sm mb-8">
-            All chats have vanished.
-          </p>
-          <button
-            type="button"
-            onClick={() => router.replace('/home')}
-            className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-3 rounded-xl"
-          >
-            Back home
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if ((error && !group) || (vanishedOpen && !group)) {
-    return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 gap-4">
-        <p className="text-red-400 text-center">
-          {error || 'This group has vanished'}
-        </p>
-        <button
-          type="button"
-          onClick={() => router.push('/home')}
-          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
-        >
-          ← Back to Home
-        </button>
-      </div>
-    )
-  }
+    </div>
+  )
+  if ((error && !group) || (vanishedOpen && !group)) return (
+    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 gap-4">
+      <p className="text-red-400 text-center">{error || 'This group has vanished'}</p>
+      <button type="button" onClick={() => router.push('/home')} className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition">← Back to Home</button>
+    </div>
+  )
 
   return (
-    <div
-      className="min-h-screen text-white flex flex-col h-screen"
-      style={{
-        backgroundColor: '#000000',
-        backgroundImage: `
-          radial-gradient(ellipse 85% 50% at 50% -15%, rgba(34,211,238,0.28) 0%, transparent 52%),
-          radial-gradient(ellipse 40% 35% at 100% 100%, rgba(8,47,73,0.55) 0%, transparent 55%),
-          radial-gradient(ellipse 35% 30% at 0% 85%, rgba(34,211,238,0.08) 0%, transparent 50%),
-          linear-gradient(180deg, #04040a 0%, #000000 42%, #020617 100%)
-        `,
-      }}
-    >
+    <div className="min-h-screen text-white flex flex-col h-screen" style={{ backgroundColor: '#000000', backgroundImage: `radial-gradient(ellipse 85% 50% at 50% -15%, rgba(34,211,238,0.28) 0%, transparent 52%), radial-gradient(ellipse 40% 35% at 100% 100%, rgba(8,47,73,0.55) 0%, transparent 55%), radial-gradient(ellipse 35% 30% at 0% 85%, rgba(34,211,238,0.08) 0%, transparent 50%), linear-gradient(180deg, #04040a 0%, #000000 42%, #020617 100%)` }}>
       <div className="shrink-0 border-b border-cyan-500/15 bg-black/50 backdrop-blur-md p-3 space-y-2">
-        <button
-          type="button"
-          onClick={() =>
-            vanishedOpen ? router.push('/home') : setLeaveModal(true)
-          }
-          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition"
-        >
-          ← Back to Home
-        </button>
-
+        <button type="button" onClick={() => vanishedOpen ? router.push('/home') : setLeaveModal(true)} className="inline-flex items-center gap-2 text-sm font-medium text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2.5 rounded-full transition">← Back to Home</button>
         <div className="min-w-0">
-          <p className="text-cyan-400 font-semibold text-lg truncate">
-            Vanishing group
-          </p>
-          <p className="text-[11px] text-zinc-500">
-            Temporary · Media view-only · Max {group?.max_members ?? 12} members
-          </p>
-          <p className="text-[11px] text-zinc-500">
-            No last seen. No read receipts. Text encrypted.
-          </p>
+          <p className="text-cyan-400 font-semibold text-lg truncate">Vanishing group</p>
+          <p className="text-[11px] text-zinc-500">Temporary · Media view-only · Max {group?.max_members ?? 12} members</p>
+          <p className="text-[11px] text-zinc-500">No last seen. No read receipts. Text encrypted.</p>
+          {safetyCode && <p className="text-xs text-cyan-400/90 mt-1 font-mono tracking-wider">Safety Code: <span className="font-bold text-cyan-300">{safetyCode}</span></p>}
         </div>
-
         {isAdmin && !vanishedOpen && (
           <div className="rounded-xl border border-cyan-800/50 bg-zinc-950/80 p-2 space-y-2">
-            <p className="text-[11px] text-cyan-300/90">
-              Ends:{' '}
-              {group?.expires_at
-                ? new Date(group.expires_at).toLocaleString()
-                : '—'}{' '}
-              · Max members: {group?.max_members ?? '—'}
-            </p>
+            <p className="text-[11px] text-cyan-300/90">Ends: {group?.expires_at ? new Date(group.expires_at).toLocaleString() : '—'} · Max members: {group?.max_members ?? '—'}</p>
             <div className="flex flex-wrap gap-1.5 items-center">
               {DURATION_OPTIONS.map((o) => (
-                <button
-                  key={o.minutes}
-                  type="button"
-                  onClick={() => saveSettings(o.minutes)}
-                  className={`text-[11px] px-2 py-1 rounded-lg border ${
-                    Number(group?.duration_minutes) === o.minutes
-                      ? 'bg-cyan-500 text-black border-cyan-400'
-                      : 'bg-zinc-900 border-zinc-700 text-zinc-300'
-                  }`}
-                >
-                  {o.label}
-                </button>
+                <button key={o.minutes} type="button" onClick={() => saveSettings(o.minutes)} className={`text-[11px] px-2 py-1 rounded-lg border ${Number(group?.duration_minutes) === o.minutes ? 'bg-cyan-500 text-black border-cyan-400' : 'bg-zinc-900 border-zinc-700 text-zinc-300'}`}>{o.label}</button>
               ))}
-              <input
-                type="number"
-                min={2}
-                max={12}
-                value={maxMembersEdit}
-                onChange={(e) => setMaxMembersEdit(Number(e.target.value) || 2)}
-                className="w-16 text-[11px] p-1 rounded-lg bg-zinc-900 border border-zinc-700"
-              />
-              <button
-                type="button"
-                onClick={() => saveSettings()}
-                className="text-[11px] px-2 py-1 rounded-lg bg-zinc-800 border border-zinc-600"
-              >
-                Save max
-              </button>
+              <input type="number" min={2} max={12} value={maxMembersEdit} onChange={(e) => setMaxMembersEdit(Number(e.target.value) || 2)} className="w-16 text-[11px] p-1 rounded-lg bg-zinc-900 border border-zinc-700" />
+              <button type="button" onClick={() => saveSettings()} className="text-[11px] px-2 py-1 rounded-lg bg-zinc-800 border border-zinc-600">Save max</button>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={createInvite}
-                className="text-xs font-medium bg-cyan-600 hover:bg-cyan-500 px-3 py-2 rounded-xl"
-              >
-                Vanish link
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMembers(true)
-                  loadMemberReports()
-                }}
-                className="relative text-xs font-medium bg-zinc-800 border border-zinc-600 px-3 py-2 rounded-xl"
-              >
-                Members
-                {adminReportCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-[10px] font-bold flex items-center justify-center">
-                    {adminReportCount > 9 ? '9+' : adminReportCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setLeaveModal(true)}
-                className="text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-2 rounded-xl"
-              >
-                End group
-              </button>
+              <button type="button" onClick={createInvite} className="text-xs font-medium bg-cyan-600 hover:bg-cyan-500 px-3 py-2 rounded-xl">Vanish link</button>
+              <button type="button" onClick={() => { setShowMembers(true); loadMemberReports() }} className="relative text-xs font-medium bg-zinc-800 border border-zinc-600 px-3 py-2 rounded-xl">Members{adminReportCount > 0 && <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-[10px] font-bold flex items-center justify-center">{adminReportCount > 9 ? '9+' : adminReportCount}</span>}</button>
+              <button type="button" onClick={() => setLeaveModal(true)} className="text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-2 rounded-xl">End group</button>
             </div>
-            {inviteLink && (
-              <div className="flex gap-2 items-start">
-                <p className="flex-1 text-xs text-cyan-300 break-all bg-black/50 p-2 rounded-lg">
-                  {inviteLink}
-                </p>
-                <button
-                  type="button"
-                  onClick={copyLink}
-                  className="shrink-0 text-xs font-semibold bg-cyan-500 text-black px-3 py-2 rounded-xl"
-                >
-                  Copy
-                </button>
-              </div>
-            )}
+            {inviteLink && <div className="flex gap-2 items-start"><p className="flex-1 text-xs text-cyan-300 break-all bg-black/50 p-2 rounded-lg">{inviteLink}</p><button type="button" onClick={copyLink} className="shrink-0 text-xs font-semibold bg-cyan-500 text-black px-3 py-2 rounded-xl">Copy</button></div>}
           </div>
         )}
-
-        {!vanishedOpen && (
-          <button
-            type="button"
-            onClick={() => {
-              setModal('report-group')
-              setReportMessageId(null)
-              setReportTo('platform')
-            }}
-            className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl"
-          >
-            Report group
-          </button>
-        )}
+        {!vanishedOpen && <button type="button" onClick={() => { setModal('report-group'); setReportMessageId(null); setReportTo('platform') }} className="text-xs font-medium bg-yellow-700 hover:bg-yellow-600 px-3 py-2 rounded-xl">Report group</button>}
         {info && <p className="text-xs text-cyan-400">{info}</p>}
-        {error && !vanishedOpen && (
-          <p className="text-xs text-red-400">{error}</p>
-        )}
+        {error && !vanishedOpen && <p className="text-xs text-red-400">{error}</p>}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* ADDED: id="chat-messages-container" for Visibility Blur */}
+      <div id="chat-messages-container" className="flex-1 overflow-y-auto p-4 space-y-4 transition-all duration-300">
         {messages.length === 0 ? (
-          <p className="text-center text-zinc-500 text-sm py-16">
-            No messages yet. This group will vanish.
-          </p>
+          <p className="text-center text-zinc-500 text-sm py-16">No messages yet. This group will vanish.</p>
         ) : (
           messages.map((m) => {
             if (m.deleted) return null
             const mine = m.sender_id === user?.id
             const p = profilesById[m.sender_id]
-            const uname = mine
-              ? myProfile?.username || p?.username
-              : p?.username
+            const uname = mine ? myProfile?.username || p?.username : p?.username
             const icon = displayEmoji(m.sender_id, uname)
             const tag = shortTag(uname)
-
             return (
-              <div
-                key={m.id}
-                className={`flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}
-              >
-                {!mine && (
-                  <div className="text-xl shrink-0 mt-6" title={uname || ''}>
-                    {icon}
-                  </div>
-                )}
+              <div key={m.id} className={`flex gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
+                {!mine && <div className="text-xl shrink-0 mt-6" title={uname || ''}>{icon}</div>}
                 <div className="max-w-[85%] flex flex-col">
-                  <p className="text-sm font-semibold text-zinc-200 mb-1 px-1">
-                    <span className="mr-1">{icon}</span>
-                    <span className="text-cyan-300/90">{tag}</span>
-                    {mine ? (
-                      <span className="text-zinc-500 font-normal"> · you</span>
-                    ) : null}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => openMsgActions(m)}
-                    className={`text-left px-3.5 py-2.5 rounded-2xl text-[15px] ${
-                      mine
-                        ? 'bg-cyan-600 text-white rounded-br-md shadow-[0_0_24px_rgba(34,211,238,0.25)]'
-                        : 'bg-black/70 text-zinc-100 rounded-bl-md border border-cyan-500/25'
-                    }`}
-                  >
-                    {m.type === 'image' && m.media_url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={m.media_url}
-                        alt=""
-                        className="max-w-[220px] max-h-[280px] rounded-xl object-cover select-none pointer-events-none"
-                        draggable={false}
-                        onContextMenu={(e) => e.preventDefault()}
-                      />
-                    )}
-                    {m.type === 'video' && m.media_url && (
-                      <video
-                        src={m.media_url}
-                        controls
-                        controlsList="nodownload noplaybackrate noremoteplayback"
-                        disablePictureInPicture
-                        className="max-w-[220px] max-h-[280px] rounded-xl"
-                        onClick={(e) => e.stopPropagation()}
-                        onContextMenu={(e) => e.preventDefault()}
-                      />
-                    )}
-                    {m.type === 'file' && (
-                      <p className="text-sm">
-                        File (view in session only): {m.body || 'attachment'}
-                      </p>
-                    )}
-                    {(!m.type || m.type === 'text') && (
-                      <p className="whitespace-pre-wrap break-words leading-relaxed">
-                        {m.body}
-                      </p>
-                    )}
-                    <p
-                      className={`text-[10px] mt-1 ${
-                        mine ? 'text-cyan-100/70 text-right' : 'text-zinc-500'
-                      }`}
-                    >
-                      {m.created_at
-                        ? new Date(m.created_at).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : ''}
-                      {m.edited_at ? ' · edited' : ''}
-                    </p>
+                  <p className="text-sm font-semibold text-zinc-200 mb-1 px-1"><span className="mr-1">{icon}</span><span className="text-cyan-300/90">{tag}</span>{mine ? <span className="text-zinc-500 font-normal"> · you</span> : null}</p>
+                  <button type="button" onClick={() => openMsgActions(m)} className={`text-left px-3.5 py-2.5 rounded-2xl text-[15px] ${mine ? 'bg-cyan-600 text-white rounded-br-md shadow-[0_0_24px_rgba(34,211,238,0.25)]' : 'bg-black/70 text-zinc-100 rounded-bl-md border border-cyan-500/25'}`}>
+                    {m.type === 'image' && m.displayUrl && <img src={m.displayUrl} alt="" className="max-w-[220px] max-h-[280px] rounded-xl object-cover select-none pointer-events-none" draggable={false} onContextMenu={(e) => e.preventDefault()} />}
+                    {m.type === 'video' && m.displayUrl && <video src={m.displayUrl} controls controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture className="max-w-[220px] max-h-[280px] rounded-xl" onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()} />}
+                    {m.type === 'file' && <p className="text-sm">File (view in session only): {m.body || 'attachment'}</p>}
+                    {(!m.type || m.type === 'text') && <p className="whitespace-pre-wrap break-words leading-relaxed">{m.body}</p>}
+                    <p className={`text-[10px] mt-1 ${mine ? 'text-cyan-100/70 text-right' : 'text-zinc-500'}`}>{m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}{m.edited_at ? ' · edited' : ''}</p>
                   </button>
                 </div>
-                {mine && (
-                  <div className="text-xl shrink-0 mt-6" title={uname || ''}>
-                    {icon}
-                  </div>
-                )}
+                {mine && <div className="text-xl shrink-0 mt-6" title={uname || ''}>{icon}</div>}
               </div>
             )
           })
@@ -1274,55 +625,12 @@ export default function GroupRoomPage() {
       {!vanishedOpen && (
         <div className="shrink-0 border-t border-cyan-500/15 bg-black/70 backdrop-blur p-3">
           <div className="flex gap-2 items-end">
-            <input
-              ref={mediaRef}
-              type="file"
-              accept="image/*,video/*"
-              className="hidden"
-              onChange={onMediaPick}
-            />
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              onChange={onFilePick}
-            />
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => mediaRef.current?.click()}
-              className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
-            >
-              📷
-            </button>
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileRef.current?.click()}
-              className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg"
-            >
-              📎
-            </button>
-            <textarea
-              ref={textRef}
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value)
-                requestAnimationFrame(grow)
-              }}
-              placeholder="Message…"
-              rows={1}
-              className="flex-1 min-w-0 p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-[15px] resize-none overflow-hidden focus:outline-none focus:border-cyan-400"
-              style={{ maxHeight: 160 }}
-            />
-            <button
-              type="button"
-              onClick={sendText}
-              disabled={sending || uploading}
-              className="shrink-0 bg-cyan-500 text-black font-medium px-4 h-11 rounded-xl disabled:opacity-50"
-            >
-              Send
-            </button>
+            <input ref={mediaRef} type="file" accept="image/*,video/*" className="hidden" onChange={onMediaPick} />
+            <input ref={fileRef} type="file" className="hidden" onChange={onFilePick} />
+            <button type="button" disabled={uploading} onClick={() => mediaRef.current?.click()} className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg">📷</button>
+            <button type="button" disabled={uploading} onClick={() => fileRef.current?.click()} className="shrink-0 w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-600 flex items-center justify-center text-lg">📎</button>
+            <textarea ref={textRef} value={text} onChange={(e) => { setText(e.target.value); requestAnimationFrame(grow) }} placeholder="Message…" rows={1} className="flex-1 min-w-0 p-3 rounded-xl bg-zinc-900 border border-zinc-700 text-[15px] resize-none overflow-hidden focus:outline-none focus:border-cyan-400" style={{ maxHeight: 160 }} />
+            <button type="button" onClick={sendText} disabled={sending || uploading} className="shrink-0 bg-cyan-500 text-black font-medium px-4 h-11 rounded-xl disabled:opacity-50">Send</button>
           </div>
         </div>
       )}
@@ -1330,19 +638,9 @@ export default function GroupRoomPage() {
       {vanishedOpen && (
         <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-950 border border-cyan-500/30 rounded-3xl p-6 text-center">
-            <p className="text-2xl font-semibold text-cyan-400 mb-2">
-              This group has vanished
-            </p>
-            <p className="text-sm text-zinc-400 mb-6">
-              Everything in this group is gone. Invite links no longer work.
-            </p>
-            <button
-              type="button"
-              onClick={() => router.replace('/home')}
-              className="w-full bg-cyan-500 text-black font-semibold py-3 rounded-xl"
-            >
-              Back to Home
-            </button>
+            <p className="text-2xl font-semibold text-cyan-400 mb-2">This group has vanished</p>
+            <p className="text-sm text-zinc-400 mb-6">Everything in this group is gone. Invite links no longer work.</p>
+            <button type="button" onClick={() => router.replace('/home')} className="w-full bg-cyan-500 text-black font-semibold py-3 rounded-xl">Back to Home</button>
           </div>
         </div>
       )}
@@ -1350,29 +648,11 @@ export default function GroupRoomPage() {
       {leaveModal && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-950 border border-zinc-700 rounded-2xl p-5">
-            <h3 className="text-lg font-semibold mb-2">
-              {isAdmin ? 'End group and leave?' : 'Leave this group?'}
-            </h3>
-            <p className="text-sm text-zinc-400 mb-4">
-              {isAdmin
-                ? 'You are admin. Leaving deletes this group everywhere for everyone. Invite links stop working.'
-                : 'If you leave, you cannot join this group again with the invite link.'}
-            </p>
+            <h3 className="text-lg font-semibold mb-2">{isAdmin ? 'End group and leave?' : 'Leave this group?'}</h3>
+            <p className="text-sm text-zinc-400 mb-4">{isAdmin ? 'You are admin. Leaving deletes this group everywhere for everyone. Invite links stop working.' : 'If you leave, you cannot join this group again with the invite link.'}</p>
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setLeaveModal(false)}
-                className="flex-1 bg-zinc-800 py-2.5 rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmLeave}
-                className="flex-1 bg-red-600 py-2.5 rounded-xl font-medium"
-              >
-                {isAdmin ? 'End & leave' : 'Leave'}
-              </button>
+              <button type="button" onClick={() => setLeaveModal(false)} className="flex-1 bg-zinc-800 py-2.5 rounded-xl">Cancel</button>
+              <button type="button" onClick={confirmLeave} className="flex-1 bg-red-600 py-2.5 rounded-xl font-medium">{isAdmin ? 'End & leave' : 'Leave'}</button>
             </div>
           </div>
         </div>
@@ -1381,58 +661,13 @@ export default function GroupRoomPage() {
       {msgMenuId && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-4">
-            {messages.find((m) => m.id === msgMenuId)?.sender_id ===
-              user?.id && (
+            {messages.find((m) => m.id === msgMenuId)?.sender_id === user?.id && (
               <>
-                {!editOpen ? (
-                  <button
-                    type="button"
-                    className="w-full text-left py-3 border-b border-zinc-800"
-                    onClick={() => setEditOpen(true)}
-                  >
-                    Edit message
-                  </button>
-                ) : (
-                  <div className="py-2 border-b border-zinc-800">
-                    <textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      rows={3}
-                      className="w-full p-2 mb-2 rounded-xl bg-zinc-950 border border-zinc-700 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={saveEdit}
-                      className="w-full bg-cyan-500 text-black font-medium py-2 rounded-xl mb-1"
-                    >
-                      Save
-                    </button>
-                  </div>
-                )}
+                {!editOpen ? <button type="button" className="w-full text-left py-3 border-b border-zinc-800" onClick={() => setEditOpen(true)}>Edit message</button> : <div className="py-2 border-b border-zinc-800"><textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} className="w-full p-2 mb-2 rounded-xl bg-zinc-950 border border-zinc-700 text-sm" /><button type="button" onClick={saveEdit} className="w-full bg-cyan-500 text-black font-medium py-2 rounded-xl mb-1">Save</button></div>}
               </>
             )}
-            <button
-              type="button"
-              className="w-full text-left py-3 border-b border-zinc-800 text-yellow-400"
-              onClick={() => {
-                setReportMessageId(msgMenuId)
-                setModal('report-msg')
-                setMsgMenuId(null)
-                setEditOpen(false)
-              }}
-            >
-              Report this message
-            </button>
-            <button
-              type="button"
-              className="w-full text-left py-3 text-zinc-400"
-              onClick={() => {
-                setMsgMenuId(null)
-                setEditOpen(false)
-              }}
-            >
-              Cancel
-            </button>
+            <button type="button" className="w-full text-left py-3 border-b border-zinc-800 text-yellow-400" onClick={() => { setReportMessageId(msgMenuId); setModal('report-msg'); setMsgMenuId(null); setEditOpen(false) }}>Report this message</button>
+            <button type="button" className="w-full text-left py-3 text-zinc-400" onClick={() => { setMsgMenuId(null); setEditOpen(false) }}>Cancel</button>
           </div>
         </div>
       )}
@@ -1440,110 +675,37 @@ export default function GroupRoomPage() {
       {showMembers && isAdmin && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl p-5 max-h-[75vh] overflow-y-auto">
-            <div className="flex justify-between mb-4">
-              <p className="font-semibold text-base">Members</p>
-              <button
-                type="button"
-                onClick={() => setShowMembers(false)}
-                className="text-sm text-zinc-400 hover:text-white transition"
-              >
-                Close
-              </button>
-            </div>
-
+            <div className="flex justify-between mb-4"><p className="font-semibold text-base">Members</p><button type="button" onClick={() => setShowMembers(false)} className="text-sm text-zinc-400 hover:text-white transition">Close</button></div>
             {memberReports.length > 0 && (
               <div className="mb-4 space-y-2">
-                <p className="text-sm font-semibold text-red-400">
-                  Reports ({adminReportCount} unread / {memberReports.length})
-                </p>
+                <p className="text-sm font-semibold text-red-400">Reports ({adminReportCount} unread / {memberReports.length})</p>
                 {memberReports.map((r) => {
                   const reason = String(r.reason || '')
-                  const typeMatch = reason.match(
-                    /(Spam|Harassment|Threats|Scam \/ fraud|Sexual content|Hate \/ abuse|Other)/i
-                  )
+                  const typeMatch = reason.match(/(Spam|Harassment|Threats|Scam \/ fraud|Sexual content|Hate \/ abuse|Other)/i)
                   const typeLabel = typeMatch ? typeMatch[1] : 'Report'
-                  const msgPart = reason.includes('msg:')
-                    ? reason.split('msg:').slice(1).join('msg:').trim()
-                    : reason
+                  const msgPart = reason.includes('msg:') ? reason.split('msg:').slice(1).join('msg:').trim() : reason
                   const mid = extractMessageIdFromReason(reason)
-                  const who =
-                    profilesById[r.reported_id]?.username ||
-                    String(r.reported_id || '').slice(0, 8)
+                  const who = profilesById[r.reported_id]?.username || String(r.reported_id || '').slice(0, 8)
                   const isRead = !!readReportIds[r.id]
                   return (
-                    <div
-                      key={r.id}
-                      className={`rounded-xl border p-3 text-sm ${
-                        isRead
-                          ? 'border-zinc-700 bg-zinc-900/60 opacity-70'
-                          : 'border-red-500/40 bg-red-950/40'
-                      }`}
-                    >
-                      <p className="font-semibold text-red-300">
-                        {typeLabel}
-                        {isRead ? ' · read' : ''}
-                      </p>
+                    <div key={r.id} className={`rounded-xl border p-3 text-sm ${isRead ? 'border-zinc-700 bg-zinc-900/60 opacity-70' : 'border-red-500/40 bg-red-950/40'}`}>
+                      <p className="font-semibold text-red-300">{typeLabel}{isRead ? ' · read' : ''}</p>
                       <p className="text-zinc-300 mt-1 break-words">{msgPart}</p>
-                      <p className="text-[11px] text-zinc-500 mt-1">
-                        About: {who}
-                        {r.created_at
-                          ? ` · ${new Date(r.created_at).toLocaleString()}`
-                          : ''}
-                      </p>
+                      <p className="text-[11px] text-zinc-500 mt-1">About: {who}{r.created_at ? ` · ${new Date(r.created_at).toLocaleString()}` : ''}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
-                        {!isRead && (
-                          <button
-                            type="button"
-                            onClick={() => adminMarkReportRead(r.id)}
-                            className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg"
-                          >
-                            Mark read
-                          </button>
-                        )}
-                        {mid && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              adminRemoveMessage(mid)
-                              adminMarkReportRead(r.id)
-                            }}
-                            className="text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-lg"
-                          >
-                            Remove message
-                          </button>
-                        )}
+                        {!isRead && <button type="button" onClick={() => adminMarkReportRead(r.id)} className="text-xs font-medium bg-zinc-700 hover:bg-zinc-600 px-3 py-1.5 rounded-lg">Mark read</button>}
+                        {mid && <button type="button" onClick={() => { adminRemoveMessage(mid); adminMarkReportRead(r.id) }} className="text-xs font-medium bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-lg">Remove message</button>}
                       </div>
                     </div>
                   )
                 })}
               </div>
             )}
-
             <div className="space-y-2">
               {members.map((m) => (
-                <div
-                  key={m.user_id}
-                  className="flex items-center justify-between py-2 border-b border-zinc-800"
-                >
-                  <span className="text-base font-semibold">
-                    {displayEmoji(m.user_id, m.username)}{' '}
-                    <span className="text-cyan-300">{m.username}</span>
-                    {m.user_id === group?.admin_id ? (
-                      <span className="text-zinc-500 font-normal text-sm">
-                        {' '}
-                        · Admin
-                      </span>
-                    ) : null}
-                  </span>
-                  {m.user_id !== group?.admin_id && (
-                    <button
-                      type="button"
-                      onClick={() => removeMember(m.user_id)}
-                      className="text-xs text-red-400"
-                    >
-                      Remove
-                    </button>
-                  )}
+                <div key={m.user_id} className="flex items-center justify-between py-2 border-b border-zinc-800">
+                  <span className="text-base font-semibold">{displayEmoji(m.user_id, m.username)} <span className="text-cyan-300">{m.username}</span>{m.user_id === group?.admin_id ? <span className="text-zinc-500 font-normal text-sm"> · Admin</span> : null}</span>
+                  {m.user_id !== group?.admin_id && <button type="button" onClick={() => removeMember(m.user_id)} className="text-xs text-red-400">Remove</button>}
                 </div>
               ))}
             </div>
@@ -1554,85 +716,20 @@ export default function GroupRoomPage() {
       {modal && !vanishedOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl p-5">
-            <h3 className="text-lg font-semibold mb-3">
-              {modal === 'report-group' ? 'Report group' : 'Report message'}
-            </h3>
-
+            <h3 className="text-lg font-semibold mb-3">{modal === 'report-group' ? 'Report group' : 'Report message'}</h3>
             <p className="text-xs text-zinc-400 mb-2">Send report to</p>
             <div className="flex flex-col gap-2 mb-3">
-              <button
-                type="button"
-                onClick={() => setReportTo('platform')}
-                className={`w-full py-2.5 rounded-xl text-sm font-medium ${
-                  reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'
-                }`}
-              >
-                REPORT TO GO VANISH
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportTo('admin')}
-                className={`w-full py-2.5 rounded-xl text-sm font-medium ${
-                  reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'
-                }`}
-              >
-                REPORT TO ADMIN
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportTo('both')}
-                className={`w-full py-2.5 rounded-xl text-sm font-medium ${
-                  reportTo === 'both' ? 'bg-yellow-600' : 'bg-zinc-800'
-                }`}
-              >
-                REPORT TO BOTH ADMIN &amp; GO VANISH
-              </button>
+              <button type="button" onClick={() => setReportTo('platform')} className={`w-full py-2.5 rounded-xl text-sm font-medium ${reportTo === 'platform' ? 'bg-yellow-600' : 'bg-zinc-800'}`}>REPORT TO GO VANISH</button>
+              <button type="button" onClick={() => setReportTo('admin')} className={`w-full py-2.5 rounded-xl text-sm font-medium ${reportTo === 'admin' ? 'bg-yellow-600' : 'bg-zinc-800'}`}>REPORT TO ADMIN</button>
+              <button type="button" onClick={() => setReportTo('both')} className={`w-full py-2.5 rounded-xl text-sm font-medium ${reportTo === 'both' ? 'bg-yellow-600' : 'bg-zinc-800'}`}>REPORT TO BOTH ADMIN &amp; GO VANISH</button>
             </div>
-
             <div className="flex flex-wrap gap-2 mb-3">
-              {REPORT_TYPES.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setReportType(type)}
-                  className={`text-xs px-2.5 py-1.5 rounded-lg border ${
-                    reportType === type
-                      ? 'bg-yellow-600 border-yellow-500'
-                      : 'bg-zinc-800 border-zinc-700'
-                  }`}
-                >
-                  {type}
-                </button>
-              ))}
+              {REPORT_TYPES.map((type) => <button key={type} type="button" onClick={() => setReportType(type)} className={`text-xs px-2.5 py-1.5 rounded-lg border ${reportType === type ? 'bg-yellow-600 border-yellow-500' : 'bg-zinc-800 border-zinc-700'}`}>{type}</button>)}
             </div>
-            <textarea
-              value={reportReason}
-              onChange={(e) => setReportReason(e.target.value.slice(0, 400))}
-              rows={3}
-              placeholder="What happened?"
-              className="w-full p-3 mb-2 rounded-xl bg-zinc-800 border border-zinc-700 text-sm"
-            />
+            <textarea value={reportReason} onChange={(e) => setReportReason(e.target.value.slice(0, 400))} rows={3} placeholder="What happened?" className="w-full p-3 mb-2 rounded-xl bg-zinc-800 border border-zinc-700 text-sm" />
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setModal(null)
-                  setReportType('')
-                  setReportReason('')
-                  setReportMessageId(null)
-                  setReportTo('platform')
-                }}
-                className="flex-1 bg-zinc-700 py-2.5 rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitReport}
-                className="flex-1 bg-yellow-600 py-2.5 rounded-xl font-medium"
-              >
-                Submit
-              </button>
+              <button type="button" onClick={() => { setModal(null); setReportType(''); setReportReason(''); setReportMessageId(null); setReportTo('platform') }} className="flex-1 bg-zinc-700 py-2.5 rounded-xl">Cancel</button>
+              <button type="button" onClick={submitReport} className="flex-1 bg-yellow-600 py-2.5 rounded-xl font-medium">Submit</button>
             </div>
           </div>
         </div>
