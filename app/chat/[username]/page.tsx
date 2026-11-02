@@ -108,6 +108,7 @@ export default function ChatPage() {
   const [sealUserIds, setSealUserIds] = useState<string[]>([])
   const [quietUserIds, setQuietUserIds] = useState<string[]>([])
   const [durationByUser, setDurationByUser] = useState<Record<string, number>>({})
+  const [sealedBy, setSealedBy] = useState<string | null>(null)
   const [savingSeal, setSavingSeal] = useState(false)
   const [savingQuiet, setSavingQuiet] = useState(false)
   const [savingDuration, setSavingDuration] = useState(false)
@@ -173,7 +174,6 @@ export default function ChatPage() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  // Visibility Blur
   useEffect(() => {
     const handleVisibilityChange = () => {
       const chatContainer = document.getElementById('chat-messages-container')
@@ -229,7 +229,6 @@ export default function ChatPage() {
       const convId = [myProfile.username, targetProfile.username].sort().join('_')
       setConversationId(convId)
 
-      // --- ROBUST ECDH KEY DERIVATION ---
       let aesKey: CryptoKey | undefined = undefined
       let myPubKey = myProfile.public_key
       let targetPubKey = targetProfile.public_key
@@ -244,9 +243,7 @@ export default function ChatPage() {
           await supabase.from('profiles').update({ public_key: exportedPub }).eq('id', user.id)
           myPubKey = exportedPub
           privKeyJwkStr = JSON.stringify(exportedPriv)
-        } catch (e) {
-          console.warn("Failed to auto-generate keys", e)
-        }
+        } catch (e) { console.warn("Failed to auto-generate keys", e) }
       }
 
       if (privKeyJwkStr && myPubKey && targetPubKey) {
@@ -254,15 +251,11 @@ export default function ChatPage() {
           const privKeyJwk = JSON.parse(privKeyJwkStr)
           const privKey = await importPrivateKey(privKeyJwk)
           const pubKey = await importPublicKey(targetPubKey)
-          
           aesKey = await deriveSharedKey(privKey, pubKey)
           setSharedAesKey(aesKey)
-          
           const code = await generateSafetyCode(myPubKey, targetPubKey)
           setSafetyCode(code)
-        } catch (e) {
-          console.warn("ECDH derivation failed", e)
-        }
+        } catch (e) { console.warn("ECDH derivation failed", e) }
       } else if (!targetPubKey) {
         const fallbackCode = await generateSafetyCode(convId, convId)
         setSafetyCode(fallbackCode + ' (Legacy)')
@@ -278,6 +271,7 @@ export default function ChatPage() {
       if (seals.length === 0 && settings?.sealed_by) seals = [settings.sealed_by]
       setSealUserIds(seals)
       setQuietUserIds(asIdList(settings?.quiet_user_ids))
+      setSealedBy(settings?.sealed_by || null)
 
       await supabase.from('messages').delete().eq('conversation_id', convId).lt('expires_at', new Date().toISOString())
 
@@ -359,6 +353,7 @@ export default function ChatPage() {
           if (row.duration_by_user) setDurationByUser(asDurationMap(row.duration_by_user))
           if (row.seal_user_ids) setSealUserIds(asIdList(row.seal_user_ids))
           if (row.quiet_user_ids) setQuietUserIds(asIdList(row.quiet_user_ids))
+          if (row.sealed_by !== undefined) setSealedBy(row.sealed_by)
         }).subscribe()
 
       supabase.channel(`chat-blocks-${convId}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'blocks', filter: `blocked_id=eq.${user.id}` },
@@ -410,14 +405,15 @@ export default function ChatPage() {
     return () => clearInterval(id)
   }, [chatEndsAt, chatExpired, conversationId])
 
-  const saveSettings = async (patch: { seal_user_ids?: string[]; quiet_user_ids?: string[]; duration_by_user?: Record<string, number> }) => {
+  const saveSettings = async (patch: { seal_user_ids?: string[]; quiet_user_ids?: string[]; duration_by_user?: Record<string, number>; sealed_by?: string | null }) => {
     const { error } = await supabase.from('conversation_settings').upsert({
       conversation_id: conversationId, 
       updated_at: new Date().toISOString(),
-      expires_at: chatEndsAt || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // ADDED: Prevents DB constraint errors
+      expires_at: chatEndsAt || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       duration_by_user: patch.duration_by_user ?? durationByUser,
       seal_user_ids: patch.seal_user_ids ?? sealUserIds,
       quiet_user_ids: patch.quiet_user_ids ?? quietUserIds,
+      sealed_by: patch.sealed_by !== undefined ? patch.sealed_by : sealedBy,
     }, { onConflict: 'conversation_id' })
     return error
   }
@@ -432,25 +428,53 @@ export default function ChatPage() {
   }
 
   const requestSealToggle = () => { if (user && conversationId && !savingSeal) setSealConfirm(mySealOn ? 'off' : 'on') }
+  
   const confirmSealToggle = async () => {
     if (!user || !conversationId || !sealConfirm) return
-    setSavingSeal(true); setSealConfirm(null)
+    setSavingSeal(true); 
+    const action = sealConfirm;
+    setSealConfirm(null)
+    
     let next = [...sealUserIds]
-    if (sealConfirm === 'on') { if (!next.includes(user.id)) next.push(user.id) } else next = next.filter((id) => id !== user.id)
-    const error = await saveSettings({ seal_user_ids: next })
-    if (error) { alert(error.message); setSavingSeal(false); return }
-    setSealUserIds(next); setSavingSeal(false)
+    let nextSealedBy = sealedBy;
+
+    if (action === 'on') {
+      if (!next.includes(user.id)) next.push(user.id)
+      nextSealedBy = user.id
+    } else {
+      next = next.filter((id) => id !== user.id)
+      // If the person turning it off was the one who sealed it, clear sealed_by
+      if (sealedBy === user.id) nextSealedBy = null
+    }
+
+    const error = await saveSettings({ seal_user_ids: next, sealed_by: nextSealedBy })
+    if (error) { alert("Error saving Seal: " + error.message); setSavingSeal(false); return }
+    
+    setSealUserIds(next); 
+    setSealedBy(nextSealedBy);
+    setSavingSeal(false)
   }
 
   const requestQuietToggle = () => { if (user && conversationId && !savingQuiet) setQuietConfirm(myQuietOn ? 'off' : 'on') }
+  
   const confirmQuietToggle = async () => {
     if (!user || !conversationId || !quietConfirm) return
-    setSavingQuiet(true); setQuietConfirm(null)
+    setSavingQuiet(true); 
+    const action = quietConfirm;
+    setQuietConfirm(null)
+    
     let next = [...quietUserIds]
-    if (quietConfirm === 'on') { if (!next.includes(user.id)) next.push(user.id) } else next = next.filter((id) => id !== user.id)
+    if (action === 'on') { 
+      if (!next.includes(user.id)) next.push(user.id) 
+    } else { 
+      next = next.filter((id) => id !== user.id) 
+    }
+    
     const error = await saveSettings({ quiet_user_ids: next })
-    if (error) { alert(error.message); setSavingQuiet(false); return }
-    setQuietUserIds(next); setSavingQuiet(false)
+    if (error) { alert("Error saving Quiet mode: " + error.message); setSavingQuiet(false); return }
+    
+    setQuietUserIds(next); 
+    setSavingQuiet(false)
   }
 
   const runStartNewChat = async () => {
@@ -523,24 +547,13 @@ export default function ChatPage() {
 
     if (error) { alert(error.message); setNewMessage(content); return }
 
-    // FIXED: Ghost mode waits 3 seconds before vanishing
     if (ghostReply) {
       setGhostReply(false)
       setTimeout(async () => {
         ghostArmedRef.current = true
-        setMessages([])
-        setFileCount(0)
-        setVideoCount(0)
-        setMediaUrls({})
-        setSealed(true)
-        setChatExpired(true)
-        setFirstMsgAt(null)
-        setChatEndsAt(null)
-        hadMessagesRef.current = false
-
+        setMessages([]); setFileCount(0); setVideoCount(0); setMediaUrls({}); setSealed(true); setChatExpired(true); setFirstMsgAt(null); setChatEndsAt(null); hadMessagesRef.current = false
         const nextSeals = Array.from(new Set([...sealUserIds, user.id, ...(targetUser?.id ? [targetUser.id] : [])]))
         setSealUserIds(nextSeals)
-
         await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
         await supabase.from('messages').update({ deleted: true, expires_at: new Date().toISOString() }).eq('conversation_id', conversationId)
         await saveSettings({ seal_user_ids: nextSeals })
@@ -592,24 +605,13 @@ export default function ChatPage() {
 
     if (error) alert(error.message)
 
-    // FIXED: Ghost mode waits 3 seconds before vanishing
     if (ghostReply) {
       setGhostReply(false)
       setTimeout(async () => {
         ghostArmedRef.current = true
-        setMessages([])
-        setFileCount(0)
-        setVideoCount(0)
-        setMediaUrls({})
-        setSealed(true)
-        setChatExpired(true)
-        setFirstMsgAt(null)
-        setChatEndsAt(null)
-        hadMessagesRef.current = false
-
+        setMessages([]); setFileCount(0); setVideoCount(0); setMediaUrls({}); setSealed(true); setChatExpired(true); setFirstMsgAt(null); setChatEndsAt(null); hadMessagesRef.current = false
         const nextSeals = Array.from(new Set([...sealUserIds, user.id, ...(targetUser?.id ? [targetUser.id] : [])]))
         setSealUserIds(nextSeals)
-
         await supabase.from('profiles').update({ is_offline: true }).eq('id', user.id)
         await supabase.from('messages').update({ deleted: true, expires_at: new Date().toISOString() }).eq('conversation_id', conversationId)
         await saveSettings({ seal_user_ids: nextSeals })
