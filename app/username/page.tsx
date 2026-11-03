@@ -32,7 +32,6 @@ export default function UsernamePage() {
       }
 
       if (hasName && active) {
-        // Generate ECDH Keys if they don't exist
         if (!localStorage.getItem('vanish_priv_key')) {
           try {
             const pair = await generateKeyPair()

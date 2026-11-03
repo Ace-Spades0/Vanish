@@ -28,9 +28,7 @@ export default function GroupInvitePage() {
         saveReturnTo(`/g/${codeParam}`)
       }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      const { data: { user } } = await supabase.auth.getUser()
 
       if (!user) {
         router.push('/auth')
@@ -46,9 +44,7 @@ export default function GroupInvitePage() {
       const hasName = !!profile?.username
       let active = !!profile?.is_permanent_username
       if (hasName && profile?.username_claimed_at && !active) {
-        const hours =
-          (Date.now() - new Date(profile.username_claimed_at).getTime()) /
-          (1000 * 60 * 60)
+        const hours = (Date.now() - new Date(profile.username_claimed_at).getTime()) / (1000 * 60 * 60)
         active = hours < 24
       }
 
@@ -85,10 +81,7 @@ export default function GroupInvitePage() {
         setLoading(false)
         return
       }
-      if (
-        invite.expires_at &&
-        new Date(invite.expires_at).getTime() <= Date.now()
-      ) {
+      if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
         setError('Group not available. This link has expired.')
         setLoading(false)
         return
@@ -114,9 +107,7 @@ export default function GroupInvitePage() {
         .maybeSingle()
 
       if (exited) {
-        setError(
-          'You left this group. You cannot join this group again with this link.'
-        )
+        setError('You left this group. You cannot join this group again with this link.')
         setLoading(false)
         return
       }
@@ -133,9 +124,7 @@ export default function GroupInvitePage() {
     setJoining(true)
     setError('')
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
       router.push('/auth')
       return
@@ -189,11 +178,7 @@ export default function GroupInvitePage() {
           {error ? (
             <div className="space-y-4">
               <p className="text-red-400 text-sm">{error}</p>
-              <button
-                type="button"
-                onClick={() => router.push('/home')}
-                className="w-full bg-zinc-800 py-3 rounded-xl"
-              >
+              <button type="button" onClick={() => router.push('/home')} className="w-full bg-zinc-800 py-3 rounded-xl">
                 Go home
               </button>
             </div>
@@ -205,26 +190,13 @@ export default function GroupInvitePage() {
                 <li>Do not share passwords, codes, or money details.</li>
               </ul>
               <p className="text-[11px] font-semibold text-cyan-300/95 uppercase tracking-wide leading-relaxed">
-                NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE
-                SECRETS YOU CANNOT AFFORD TO EXPOSE.
+                NO ONLINE SERVICE CAN GUARANTEE PERFECT SECURITY. DO NOT SHARE SECRETS YOU CANNOT AFFORD TO EXPOSE.
               </p>
               <label className="flex items-start gap-3 text-sm text-zinc-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={accepted}
-                  onChange={(e) => setAccepted(e.target.checked)}
-                  className="mt-1"
-                />
-                <span>
-                  I understand. If I leave, I cannot join this group again.
-                </span>
+                <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} className="mt-1" />
+                <span>I understand. If I leave, I cannot join this group again.</span>
               </label>
-              <button
-                type="button"
-                disabled={!accepted || joining || !ready}
-                onClick={join}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl"
-              >
+              <button type="button" disabled={!accepted || joining || !ready} onClick={join} className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold py-3 rounded-xl">
                 {joining ? 'Joining…' : 'Join group'}
               </button>
             </div>

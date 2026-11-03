@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { supabase } from '@/lib/supabase'
 import { Turnstile } from '@marsidev/react-turnstile'
 import { getLang, setLang, translations, type Lang } from '@/lib/i18n'
+import { takeReturnTo } from '@/lib/returnTo' // ADDED
 
 function randomCode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -30,15 +31,14 @@ export default function AuthPage() {
   useEffect(() => {
     setLangState(getLang())
     const init = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         const { data: profile } = await supabase
           .from('profiles')
           .select('username, username_claimed_at, is_permanent_username, status')
           .eq('id', user.id)
           .maybeSingle()
+        
         if (profile?.status === 'banned') {
           await supabase.auth.signOut()
           setChecking(false)
@@ -49,15 +49,15 @@ export default function AuthPage() {
           return
         }
         if (profile?.is_permanent_username && profile.username) {
-          router.push('/home')
+          const ret = takeReturnTo()
+          router.push(ret || '/home') // FIXED
           return
         }
         if (profile?.username && profile.username_claimed_at) {
-          const hours =
-            (Date.now() - new Date(profile.username_claimed_at).getTime()) /
-            3600000
+          const hours = (Date.now() - new Date(profile.username_claimed_at).getTime()) / 3600000
           if (hours < 24) {
-            router.push('/home')
+            const ret = takeReturnTo()
+            router.push(ret || '/home') // FIXED
             return
           }
         }
@@ -65,7 +65,7 @@ export default function AuthPage() {
       setChecking(false)
     }
     init()
-  }, [])
+  }, [router])
 
   const changeLang = (l: Lang) => {
     setLang(l)
@@ -108,9 +108,7 @@ export default function AuthPage() {
     }
 
     try {
-      let {
-        data: { user },
-      } = await supabase.auth.getUser()
+      let { data: { user } } = await supabase.auth.getUser()
 
       if (!user) {
         const { data, error } = await supabase.auth.signInAnonymously(
@@ -159,9 +157,7 @@ export default function AuthPage() {
       const stillValid =
         existing?.is_permanent_username ||
         (existing?.username_claimed_at &&
-          (Date.now() - new Date(existing.username_claimed_at).getTime()) /
-            3600000 <
-            24)
+          (Date.now() - new Date(existing.username_claimed_at).getTime()) / 3600000 < 24)
 
       if (!name || !stillValid) {
         name = await assignUniqueUsername(user.id)
@@ -169,7 +165,10 @@ export default function AuthPage() {
 
       setAssignedName(name)
       setMessage('Your temporary name is ready.')
-      setTimeout(() => router.push('/home'), 900)
+      setTimeout(() => {
+        const ret = takeReturnTo()
+        router.push(ret || '/home') // FIXED
+      }, 900)
     } catch (e: any) {
       setMessage(e?.message || 'Something went wrong')
     }
@@ -188,98 +187,42 @@ export default function AuthPage() {
     <div className="min-h-screen bg-black text-white flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-zinc-900 p-8 rounded-2xl shadow-lg border border-zinc-800">
         <div className="flex justify-end gap-2 mb-4">
-          <button
-            type="button"
-            onClick={() => changeLang('en')}
-            className={`text-xs px-2 py-1 rounded ${
-              lang === 'en' ? 'text-cyan-400' : 'text-zinc-500'
-            }`}
-          >
-            EN
-          </button>
-          <button
-            type="button"
-            onClick={() => changeLang('sw')}
-            className={`text-xs px-2 py-1 rounded ${
-              lang === 'sw' ? 'text-cyan-400' : 'text-zinc-500'
-            }`}
-          >
-            SW
-          </button>
+          <button type="button" onClick={() => changeLang('en')} className={`text-xs px-2 py-1 rounded ${lang === 'en' ? 'text-cyan-400' : 'text-zinc-500'}`}>EN</button>
+          <button type="button" onClick={() => changeLang('sw')} className={`text-xs px-2 py-1 rounded ${lang === 'sw' ? 'text-cyan-400' : 'text-zinc-500'}`}>SW</button>
         </div>
 
         <div className="mb-4 flex justify-center">
-          <Image
-            src="/logo.png"
-            alt="Go Vanish"
-            width={88}
-            height={88}
-            className="drop-shadow-[0_0_24px_rgba(34,211,238,0.35)]"
-            priority
-          />
+          <Image src="/logo.png" alt="Go Vanish" width={88} height={88} className="drop-shadow-[0_0_24px_rgba(34,211,238,0.35)]" priority />
         </div>
 
         <h1 className="text-3xl font-bold mb-2 text-center">{t.appName}</h1>
         <p className="text-zinc-400 text-center mb-2">{t.tagline}</p>
-        <p className="text-zinc-500 text-center text-sm mb-8">
-          No email. No password. We assign a temporary 6-character name.
-        </p>
+        <p className="text-zinc-500 text-center text-sm mb-8">No email. No password. We assign a temporary 6-character name.</p>
 
         <label className="flex items-start gap-2 mb-4 text-sm text-zinc-400 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={acceptedTerms}
-            onChange={(e) => setAcceptedTerms(e.target.checked)}
-            className="mt-1"
-          />
+          <input type="checkbox" checked={acceptedTerms} onChange={(e) => setAcceptedTerms(e.target.checked)} className="mt-1" />
           <span>{t.acceptTerms}</span>
         </label>
 
         {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && (
           <div className="mb-4 flex justify-center">
-            <Turnstile
-              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
-              onSuccess={setCaptchaToken}
-            />
+            <Turnstile siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY} onSuccess={setCaptchaToken} />
           </div>
         )}
 
-        <button
-          onClick={handleGetStarted}
-          disabled={loading}
-          className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg transition disabled:opacity-50"
-        >
+        <button onClick={handleGetStarted} disabled={loading} className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-medium py-3 rounded-lg transition disabled:opacity-50">
           {loading ? t.pleaseWait : t.getStarted}
         </button>
 
-        {assignedName && (
-          <p className="mt-6 text-center text-2xl font-bold tracking-[0.2em] text-cyan-400">
-            {assignedName}
-          </p>
-        )}
+        {assignedName && <p className="mt-6 text-center text-2xl font-bold tracking-[0.2em] text-cyan-400">{assignedName}</p>}
+        {message && <p className="mt-4 text-center text-sm text-cyan-400">{message}</p>}
 
-        {message && (
-          <p className="mt-4 text-center text-sm text-cyan-400">{message}</p>
-        )}
-
-        <p className="mt-6 text-[11px] text-zinc-500 text-center leading-relaxed">
-          Clearing browser data creates a new identity. Names last 24 hours.
-        </p>
+        <p className="mt-6 text-[11px] text-zinc-500 text-center leading-relaxed">Clearing browser data creates a new identity. Names last 24 hours.</p>
 
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-zinc-500">
-          <button
-            onClick={() => router.push('/terms')}
-            className="hover:text-cyan-400"
-          >
-            {t.termsShort}
-          </button>
+          <button onClick={() => router.push('/terms')} className="hover:text-cyan-400">{t.termsShort}</button>
           <span>•</span>
-          <button
-            onClick={() => router.push('/privacy')}
-            className="hover:text-cyan-400"
-          >
-            {t.privacyShort}
-          </button>
+          <button onClick={() => router.push('/privacy')} className="hover:text-cyan-400">{t.privacyShort}</button>
         </div>
       </div>
     </div>
